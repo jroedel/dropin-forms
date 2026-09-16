@@ -1,0 +1,59 @@
+# Seeded from /opt/projects/eumaeus, minus everything about its vault and its
+# deploy apparatus. What is left is the ordinary set plus two entries that are
+# about what this service does.
+
+# Compiled binaries. The build output is named after the module and lands in
+# the repository root, which is why the bare name is here rather than a /bin/.
+/dropin-forms
+*.exe
+*.test
+*.out
+
+# Coverage and profiles
+*.prof
+coverage.*
+
+# Storage. Plain SQLite here -- no vault -- so the database file and its two
+# write-ahead companions are the whole of it. A developer's local database is
+# full of whatever they typed into a test form, and that is exactly the kind of
+# thing that should not reach a public repository.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Configuration that carries a secret. The example file is tracked and is the
+# documentation; the real one never is.
+config.toml
+*.env
+.env*
+!config.example.toml
+
+# What people submit. A form-intake service accumulates uploads and exports in
+# the working directory during development, and none of it is source.
+/uploads/
+/submissions/
+*.csv
+
+# Keys of any kind. This project does no cryptography of its own, but the SSH
+# key somebody drops in a project directory to test a deploy is the reason this
+# block exists in every repository that has ever leaked one.
+*.key
+*.pem
+id_rsa
+id_ecdsa
+id_ed25519
+*_ed25519
+
+# Local tooling and editor state
+/tools/
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Claude Code working state. The skills and CLAUDE.md are tracked on purpose --
+# they are how the project is built. The worktrees and caches are not.
+.claude/worktrees/
+.claude/settings.local.json

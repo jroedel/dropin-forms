@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+#
+# go test, with the passing packages counted instead of listed.
+#
+#     scripts/go-test -race ./...          # what "make test-unit" runs
+#
+# Seventy "ok" lines are about a seventh of that target's output and say one
+# thing between them. Left in, the habit they train is a hand-rolled filter on
+# the end of every run -- "grep -v '^ok\|no test files'" has been written five
+# different ways in the history of the repository this came from, and a filter
+# written in a hurry is one that will one day hide a FAIL.
+#
+# So it is written once, here, where it can be read. Everything that is not a
+# pass line is printed untouched and in order, and this exits with go's status
+# rather than the filter's.
+#
+# A script rather than a pipeline in the Makefile because make runs recipes
+# with /bin/sh, which on Debian is dash, and dash has no "set -o pipefail" --
+# without which a failing "go test" piped into a filter exits 0, and a red
+# build looks green.
+
+set -uo pipefail
+
+status=0
+
+"${GO:-go}" test "$@" 2>&1 | awk '
+	/^ok +[^ ]+/    { passed++; next }
+	/no test files/ { skipped++; next }
+	                { print }
+	END {
+		printf "%d packages ok, %d with no test files\n", passed, skipped
+	}
+' || status=$?
+
+exit "$status"

@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+#
+# Where is this symbol, and what is its declaration?
+#
+#     make sym NAME=Claim
+#     make sym NAME=backupbus.Repository
+#
+# One call instead of the grope this replaces: grep for "^func.*Claim", read
+# the line numbers, sed the region around each, discover two of the three were
+# a comment mentioning it. gopls answers from the type checker, so it knows
+# which Claim is a method on which type, and it brings the doc comment with it.
+#
+# # What it prints
+#
+# For every exact match, the declaration and its doc comment, headed by
+# file:line:col -- which is what the rest of the tooling takes as an address.
+# When nothing matches exactly it falls back to gopls's fuzzy search and prints
+# locations only, because a fuzzy match is a list to choose from rather than an
+# answer.
+#
+# # What it is not
+#
+# Go only. A setting name, a SQL column, a template variable or anything in
+# docs/ is not a symbol and grep is the right tool for it. This is for the
+# 300-odd searches a session spent, in the repository this came from, looking
+# for a Go declaration the compiler
+# could have pointed at.
+
+set -euo pipefail
+
+name=${1:-}
+
+if [ -z "$name" ]; then
+	echo "usage: make sym NAME=<symbol>" >&2
+	exit 2
+fi
+
+if ! command -v gopls >/dev/null; then
+	echo "gopls is not installed. Run: make dev-tools" >&2
+	exit 1
+fi
+
+# The bare symbol, for matching: "backupbus.Repository" and "Repository" should
+# find the same declaration, and gopls reports methods as "Type.Method".
+bare=${name##*.}
+
+# Locations first. gopls prints "path:line:col-endcol Qualified.Name Kind".
+matches=$(gopls workspace_symbol -matcher=caseinsensitive "$bare" || true)
+
+if [ -z "$matches" ]; then
+	echo "no symbol matching $name"
+	exit 1
+fi
+
+# An exact match is one whose last name component is the symbol asked for.
+# Anything else is the fuzzy matcher being helpful, which is worth showing and
+# not worth expanding.
+exact=$(echo "$matches" | awk -v want="$bare" '
+	{
+		qualified = $2
+		n = split(qualified, parts, ".")
+		if (parts[n] == want) print
+	}
+')
+
+if [ -z "$exact" ]; then
+	echo "nothing named exactly $bare. Nearest, by gopls:"
+	echo "$matches" | head -20
+	exit 0
+fi
+
+# Cap it. A name like "New" is on every type in the program, and forty
+# declarations is the wall of text this script exists to avoid.
+total=$(echo "$exact" | wc -l)
+shown=0
+
+while read -r line; do
+	[ -z "$line" ] && continue
+
+	shown=$((shown + 1))
+	if [ "$shown" -gt 12 ]; then
+		echo "… and $((total - 12)) more. Narrow it: make sym NAME=Type.Method"
+		break
+	fi
+
+	# "path:line:col-endcol" -> "path:line:col", which is what definition wants.
+	where=${line%% *}
+	where=${where%-*}
+
+	echo
+	echo "── $where"
+
+	# Capped, because a doc comment in this repository can run to eighty lines
+	# of reasoning and the question asked was where something is. The address
+	# above opens the rest.
+	if ! body=$(gopls definition "$where" 2>/dev/null); then
+		echo "   (gopls could not resolve it)"
+		continue
+	fi
+
+	lines=$(echo "$body" | wc -l)
+
+	echo "$body" | head -30
+
+	if [ "$lines" -gt 30 ]; then
+		echo "   … $((lines - 30)) more lines of doc comment at $where"
+	fi
+done <<<"$exact"
