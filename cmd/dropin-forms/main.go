@@ -40,11 +40,44 @@ func main() {
 
 func run() error {
 	configPath := flag.String("config", "config.toml", "path to the configuration file")
+
+	// -check exists for the deploy, not for a person.
+	//
+	// A binary and its configuration file travel by different routes: the
+	// binary through CD, the file through `make secrets-install` from a
+	// laptop, because the Stripe and SMTP credentials in it deliberately
+	// never pass through GitHub. So the two can disagree, and the way that
+	// disagreement used to present was a service that ran happily until
+	// something restarted it and then would not start at all -- loadConfig
+	// refuses a key it does not recognise, which is right, and silent until
+	// the worst moment.
+	//
+	// With this flag the deploy can ask the incoming binary whether it
+	// accepts the config already on the server, while the outgoing one is
+	// still running and nothing has been swapped.
+	check := flag.Bool("check", false, "load the configuration, report whether it is usable, and exit")
+
 	flag.Parse()
 
 	cfg, err := loadConfig(*configPath)
 	if err != nil {
 		return err
+	}
+
+	if *check {
+		// Deliberately terse and free of secrets: this runs over SSH and its
+		// output lands in a deploy log. It names what it read, never a value
+		// from it.
+		fmt.Printf("config ok: %s\n", *configPath)
+		fmt.Printf("  embed          %s\n", cfg.Server.EmbedAddr)
+		fmt.Printf("  admin          %s\n", cfg.Server.AdminAddr)
+		fmt.Printf("  admin base url %s\n", cfg.Server.AdminBaseURL)
+		fmt.Printf("  database       %s\n", cfg.DB.Path)
+		fmt.Printf("  embed origins  %d\n", len(cfg.Embed.allowed))
+		fmt.Printf("  mail relay     %s\n", either(cfg.Mail.Host != "", "configured", "none: mail will not be sent"))
+		fmt.Printf("  bootstrap      %s\n", either(cfg.Auth.BootstrapSecret != "", "route mounted", "route not mounted"))
+
+		return nil
 	}
 
 	logFile, shouldClose, err := openLog(cfg.Log.File)
@@ -191,4 +224,14 @@ func newSender(log *slog.Logger, cfg config) (mail.Sender, string, error) {
 	}
 
 	return sender, fmt.Sprintf("%s:%d as %s", cfg.Mail.Host, cfg.Mail.Port, cfg.Mail.From), nil
+}
+
+// either is a ternary for a log line, so the -check output above stays a list
+// of one-line facts rather than a run of if statements.
+func either(cond bool, yes, no string) string {
+	if cond {
+		return yes
+	}
+
+	return no
 }
