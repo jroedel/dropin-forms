@@ -5,6 +5,7 @@
 # "make help" reads.
 
 GO                   := go
+APP                  := dropin-forms
 TOOLS_DIR            := $(shell $(GO) env GOPATH)/bin
 GOPLS_VERSION        ?= 0.23.0
 STATICCHECK_VERSION  ?= 2026.1
@@ -122,3 +123,53 @@ cover: ## Unit tests with a coverage summary
 .PHONY: tidy
 tidy: ## Tidy go.mod
 	$(GO) mod tidy
+
+# ---------------------------------------------------------------------------
+# Building and running locally.
+
+.PHONY: build
+build: ## Build the binary for this machine
+	$(GO) build -o $(APP) ./cmd/$(APP)
+
+.PHONY: run
+run: build ## Build and run against ./config.toml
+	@[ -f config.toml ] || { \
+		echo "config.toml does not exist. Start from the documented example:" >&2; \
+		echo "    cp config.example.toml config.toml" >&2; \
+		exit 1; \
+	}
+	./$(APP) -config config.toml
+
+.PHONY: release
+release: ## Build the static linux/amd64 binary the server runs
+	@# CGO off is not a preference. The SQLite driver is pure Go, so the result
+	@# is one file with no libc on the server to match against; an ordinary
+	@# build links this machine's glibc and dies there with GLIBC_2.xx not
+	@# found.
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+		$(GO) build -trimpath -ldflags='-s -w' -o $(APP)-linux-amd64 ./cmd/$(APP)
+	@file $(APP)-linux-amd64 | grep -q 'statically linked' \
+		&& echo "$(APP)-linux-amd64 is statically linked" \
+		|| { echo "NOT statically linked -- the server will refuse to run this" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Secrets. One gitignored file, secrets.env, documented by the tracked
+# secrets.env.example -- and two destinations, because continuous deployment
+# needs enough to restart a binary and has no business holding a Stripe key.
+# scripts/secrets says why at length.
+
+.PHONY: secrets-check
+secrets-check: ## Name every missing key in secrets.env, printing no values
+	@scripts/secrets check
+
+.PHONY: secrets-push
+secrets-push: ## Send the deploy group to GitHub repository secrets (needs gh)
+	@scripts/secrets push
+
+.PHONY: secrets-install
+secrets-install: ## Write config.toml onto the server from secrets.env (needs ssh)
+	@scripts/secrets install
+
+.PHONY: secrets-keygen
+secrets-keygen: ## Mint the deploy key, pin the host key, fill both into secrets.env
+	@scripts/secrets keygen
