@@ -10,7 +10,7 @@
 #   deploy/deploy.sh ports        are our loopback ports free? (read-only)
 #   deploy/deploy.sh install      directories, .htaccess, cron. Safe to re-run,
 #                                 and required after changing a port.
-#   deploy/deploy.sh              build, upload, restart, health-check
+#   deploy/deploy.sh deploy       build, upload, restart, health-check
 #   deploy/deploy.sh --skip-tests skip `make test` (do not make a habit of it)
 #   deploy/deploy.sh restart      restart without shipping a new binary
 #   deploy/deploy.sh backup       back up the database, app left running
@@ -251,7 +251,7 @@ EOF
 	log "done. Next: point each konsoleH document root at"
 	log "    $EMBED_DOCROOT   (for $EMBED_HOST)"
 	log "    $ADMIN_DOCROOT   (for $ADMIN_HOST)"
-	log "then run: make secrets-install && deploy/deploy.sh"
+	log "then run: deploy/deploy.sh deploy"
 }
 
 # install_cron adds our two lines and must not disturb anybody else's.
@@ -406,6 +406,77 @@ cmd_deploy() {
 	push "$SCRIPT_DIR/run.sh" "$APP_DIR/run.sh"
 	push "$SCRIPT_DIR/supervise.sh" "$APP_DIR/supervise.sh"
 
+	# The configuration goes out with the binary that reads it, when we are
+	# somewhere that can render one.
+	#
+	# This is the fix for a real failure rather than tidiness. The binary and
+	# its config used to travel separately -- the binary through CD, the config
+	# through `make secrets-install` -- so a change to the config's *shape*
+	# left the two disagreeing, in whichever order you did them: a new binary
+	# requires settings an old config lacks, and an old binary refuses settings
+	# a new config carries. Either way the running process is unaffected,
+	# because it read its config at startup, and the failure waits until
+	# something restarts it. Then it will not start at all.
+	#
+	# CI cannot do this: it holds only the deploy key, never the Stripe or SMTP
+	# credentials, which is deliberate and worth keeping. So there, the config
+	# already on the server is checked against the incoming binary instead, and
+	# a mismatch refuses the deploy rather than discovering it later.
+	local shipping_config=no
+	if [ -r "$REPO_DIR/secrets.env" ]; then
+		log "rendering config.toml and sending it with the binary"
+
+		# Through a shell on the far side, never a local temporary file, so
+		# the rendered secrets touch neither disk.
+		if "$REPO_DIR/scripts/secrets" render |
+			ssh "${SSH_OPTS[@]}" -p "$DEPLOY_SSH_PORT" "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+				"cat > '$APP_DIR/config.toml.new' && chmod 600 '$APP_DIR/config.toml.new'"; then
+			shipping_config=yes
+		else
+			die "the config could not be rendered or sent; nothing has been changed"
+		fi
+	else
+		warn "no secrets.env here, so the config on the server is left as it is"
+		warn "(expected in CI, which deliberately holds no Stripe or SMTP credentials)"
+	fi
+
+	# The pre-flight. Run while the outgoing binary is still serving and
+	# nothing has been swapped, so a refusal here costs nothing.
+	log "asking the new binary whether it accepts the config it will run with"
+
+	local config_to_check=config.toml
+	if [ "$shipping_config" = yes ]; then
+		config_to_check=config.toml.new
+	fi
+
+	if ! remote_script <<EOF
+set -euo pipefail
+cd '$APP_DIR'
+
+if [ ! -s '$APP.new' ]; then
+  echo "deploy: $APP.new is missing or empty" >&2
+  exit 1
+fi
+if [ ! -f '$config_to_check' ]; then
+  echo "deploy: there is no $config_to_check on the server." >&2
+  echo "deploy: run this from a machine with secrets.env so the config ships with the binary." >&2
+  exit 1
+fi
+
+chmod 700 '$APP.new'
+./$APP.new -config '$config_to_check' -check
+EOF
+	then
+		remote_in_app "rm -f config.toml.new" || true
+		warn "the new binary will not run with that config, so nothing has been swapped."
+		warn "the service is still running on the old binary."
+		if [ "$shipping_config" = no ]; then
+			warn "this deploy shipped no config. Run 'deploy/deploy.sh deploy' from a machine"
+			warn "with secrets.env, so the binary and its config go out together."
+		fi
+		die "deploy refused before touching anything"
+	fi
+
 	log "stopping, backing up, swapping the binary, starting"
 	local swapped=yes
 	remote_script <<EOF || swapped=no
@@ -421,7 +492,13 @@ if [ ! -s '$APP.new' ]; then
 fi
 chmod 700 '$APP.new' run.sh supervise.sh
 
-[ -f config.toml ] || { echo "deploy: config.toml is missing; run make secrets-install first" >&2; exit 1; }
+# Both were already checked together by the pre-flight above, while the old
+# binary was still serving. Re-checked cheaply here because everything below
+# this line is destructive in order.
+if [ '$shipping_config' = yes ] && [ ! -s config.toml.new ]; then
+  echo "deploy: config.toml.new vanished between the check and the swap" >&2
+  exit 1
+fi
 
 ./supervise.sh stop || true
 
@@ -460,6 +537,14 @@ fi
 # health check can put it back.
 [ -f '$APP' ] && mv -f '$APP' '$APP.prev' || true
 mv -f '$APP.new' '$APP'
+
+# The config moves in the same window, keeping the outgoing one, so that a
+# rollback restores the pair that was known to work together. Rolling back
+# only the binary would leave it reading a config written for its successor.
+if [ '$shipping_config' = yes ]; then
+  [ -f config.toml ] && cp -p config.toml config.toml.prev || true
+  mv -f config.toml.new config.toml
+fi
 
 ./supervise.sh start
 EOF
@@ -503,7 +588,7 @@ EOF
 		exit 1
 	fi
 
-	remote_in_app "rm -f $APP.prev" || true
+	remote_in_app "rm -f $APP.prev config.toml.prev" || true
 	log "deployed"
 }
 
@@ -512,6 +597,7 @@ do_rollback() {
 set -euo pipefail
 cd '$APP_DIR'
 ./supervise.sh stop || true
+
 if [ -f '$APP.prev' ]; then
   mv -f '$APP' '$APP.failed'
   mv -f '$APP.prev' '$APP'
@@ -519,6 +605,16 @@ if [ -f '$APP.prev' ]; then
 else
   echo "no previous binary to restore" >&2
 fi
+
+# The config goes back with it. Restoring one without the other is how a
+# rollback produces a second, different failure: the previous binary reading
+# settings written for its successor, which it refuses outright.
+if [ -f config.toml.prev ]; then
+  mv -f config.toml config.toml.failed
+  mv -f config.toml.prev config.toml
+  echo "restored the previous config.toml (the failed one is kept as config.toml.failed)"
+fi
+
 ./supervise.sh start || true
 EOF
 }
@@ -568,7 +664,37 @@ cmd_status() {
 
 cmd_logs() { remote_in_app "tail -n ${1:-80} -f $APP.log"; }
 
-case "${1:-deploy}" in
+# No default subcommand, deliberately.
+#
+# This used to default to `deploy`, so `deploy/deploy.sh` with no arguments
+# shipped to production. That is the wrong default for the same reason CD is
+# triggered by a tag rather than by every push: a deploy should be something
+# somebody asked for. It also makes the script safe to run while finding out
+# what it does, which is exactly when nobody wants it to deploy.
+usage() {
+	cat >&2 <<'USAGE'
+usage: deploy/deploy.sh <command>
+
+read-only:
+  probe       what this server offers
+  ports       which loopback ports are free
+  status      is it running, and do the public URLs answer
+  logs [n]    tail the application log
+
+changes the server:
+  install     one-time: directories, .htaccess, cron
+  deploy      build, ship the binary and its config, health-check, roll back on failure
+  restart     stop and start, no new build
+  rollback    put the previous binary and config back
+  backup      back up the database, leaving the app running
+
+There is no default command. `deploy` is the one that touches production.
+USAGE
+	exit 2
+}
+
+case "${1:-}" in
+"") usage ;;
 probe) cmd_probe ;;
 ports) cmd_ports ;;
 install) cmd_install ;;
@@ -579,5 +705,8 @@ rollback) do_rollback ;;
 backup) cmd_backup ;;
 status) cmd_status ;;
 logs) cmd_logs "${2:-80}" ;;
-*) die "unknown command '$1' (try: probe, ports, install, deploy, restart, rollback, backup, status, logs)" ;;
+*)
+	printf '\033[31mxx\033[0m unknown command %s\n\n' "'$1'" >&2
+	usage
+	;;
 esac

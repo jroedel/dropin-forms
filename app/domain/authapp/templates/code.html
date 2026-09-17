@@ -1,0 +1,33 @@
+{{define "title"}}Use a backup code{{end}}
+{{define "content"}}
+<h1>Use a backup code</h1>
+
+{{with .Problem}}<p class="problem">{{.}}</p>{{end}}
+
+<p class="lede">For when email is not arriving. Each code works once.</p>
+
+<form method="post" action="/signin/code">
+  <input type="hidden" name="next" value="{{.Next}}">
+
+  <div class="field">
+    <label for="email">Your email address</label>
+    <input id="email" name="email" type="email" value="{{.Email}}"
+           required autocomplete="email" inputmode="email"
+           autocapitalize="off" spellcheck="false">
+  </div>
+
+  <div class="field">
+    <label for="code">Backup code</label>
+    <span class="help">The hyphens and the capitals do not matter.</span>
+    <input id="code" name="code" type="text" required autocomplete="off"
+           autocapitalize="characters" spellcheck="false"
+           placeholder="ABCD-EFGH-JKLM-NPQR">
+  </div>
+
+  <button type="submit">Sign in</button>
+</form>
+
+<div class="alternatives">
+  <p><a href="/signin">Email me a link instead</a>.</p>
+</div>
+{{end}}

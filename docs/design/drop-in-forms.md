@@ -759,6 +759,23 @@ Two gaps in the inherited `foundation/web` to fix while bootstrapping:
   link opens a page with a "Sign in" button that **POSTs** the token.
 - Rate-limit per address, and answer identically whether or not the address
   exists, or the login form is an account-enumeration oracle.
+- **"Answer identically" includes when sending the mail fails**, and that is a
+  real trade rather than a technicality. `userbus.RequestSignIn` returns no
+  error for an unknown address, and `authapp` holds up the other end by never
+  varying the response — so somebody whose relay is broken gets a page telling
+  them to check an inbox nothing will arrive in. The alternative is an error
+  that appears *only* for addresses that do have an account, which hands over
+  exactly the list this service should not be publishing; for a parish that
+  list is who is involved. The failure is logged loudly instead, and the
+  recovery paths are the backup codes and the bootstrap secret, which is why
+  both exist. A test compares the two responses byte for byte with the address
+  normalised out.
+- **Every failed attempt is one error.** `userbus` returns `ErrDenied` for an
+  unknown address, a disabled account, an expired link, a spent link, a wrong
+  secret, a wrong backup code and a spent bootstrap alike, so the app layer
+  cannot leak which half was wrong because it is never told. The refusal
+  *sentence* is chosen per page by `authapp`, which is as specific as this
+  service is willing to be.
 - **`accessbus`** — a grant is (user, form, role) with roles `admin` and
   `results`. Its own domain so `formbus` need not know what a user is.
 - **`mid.RequireFormRole(role)`** reads the slug from the path and checks the

@@ -1,0 +1,23 @@
+{{define "base"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{block "title" .Data}}Schoenstatt Austin forms{{end}}</title>
+<link rel="stylesheet" href="{{.Stylesheet}}">
+<link rel="icon" href="data:,">
+</head>
+<body>
+<header class="masthead">
+<a class="wordmark" href="/">Schoenstatt Austin forms</a>
+{{block "masthead" .Data}}{{end}}
+</header>
+<main>
+{{block "content" .Data}}{{end}}
+</main>
+<footer class="footnote">
+<p>Marian Shrine of Our Lady of Schoenstatt, Austin.</p>
+</footer>
+</body>
+</html>
+{{end}}
