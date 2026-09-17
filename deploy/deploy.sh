@@ -319,22 +319,75 @@ EOF
 
 # --- the deploy -------------------------------------------------------------
 
-report_source() {
-	local branch head dirty behind
+# ensure_main brings the checkout to origin/main before anything is built.
+#
+# This used to be two warnings -- "uncommitted changes will be included" and
+# "this checkout is N commits behind origin/main" -- and a warning during a
+# deploy is read afterwards, while working out why production is running
+# something nobody remembers merging. What actually goes to the server is
+# whatever happens to be in the working tree, so that is the thing to pin down
+# rather than to mention.
+#
+# It fast-forwards when it safely can and refuses otherwise. It never discards
+# anything: a dirty tree, a different branch and a diverged history are each a
+# refusal with the command to fix it, because the alternative is a deploy
+# script that can lose somebody's work.
+ensure_main() {
+	require git
+
+	# In CI the checkout is whatever commit was tagged, fetched by the
+	# workflow. Moving it would deploy something other than the release that
+	# was asked for, which is the opposite of the point.
+	if [ -n "${CI:-}" ]; then
+		log "CI: deploying the checked-out commit $(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo '?')"
+		return 0
+	fi
+
+	local branch dirty
 	branch=$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')
-	head=$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo '?')
-	log "building from $branch @ $head"
-
 	dirty=$(git -C "$REPO_DIR" status --porcelain 2>/dev/null | grep -cv '^??' || true)
+
 	if [ "${dirty:-0}" -gt 0 ]; then
-		warn "$dirty uncommitted change(s) in tracked files will be included in this build"
+		warn "$dirty uncommitted change(s) in tracked files:"
+		git -C "$REPO_DIR" status --short 2>/dev/null | grep -v '^??' >&2 || true
+		die "commit or stash these first -- a deploy must ship something that exists in git"
 	fi
 
-	git -C "$REPO_DIR" fetch -q origin 2>/dev/null || true
-	behind=$(git -C "$REPO_DIR" rev-list --count HEAD..origin/main 2>/dev/null || echo 0)
-	if [ "${behind:-0}" -gt 0 ]; then
-		warn "this checkout is $behind commit(s) behind origin/main"
+	if [ "$branch" != main ]; then
+		if [ "${DEPLOY_ALLOW_BRANCH:-}" != 1 ]; then
+			warn "this checkout is on '$branch', and production runs main."
+			warn "  to deploy main:            git switch main"
+			warn "  to deploy '$branch' anyway: DEPLOY_ALLOW_BRANCH=1 deploy/deploy.sh deploy"
+			die "refusing to deploy a branch by accident"
+		fi
+
+		# Deliberate, and sometimes necessary -- trying a fix on the server
+		# before merging it. Loud, because the next person to deploy main will
+		# silently replace it and wonder where it went.
+		warn "DEPLOY_ALLOW_BRANCH=1: deploying '$branch' rather than main"
+		log "building from $branch @ $(git -C "$REPO_DIR" rev-parse --short HEAD)"
+
+		return 0
 	fi
+
+	log "fetching origin"
+	git -C "$REPO_DIR" fetch -q origin main || die "could not reach origin; not deploying a checkout of unknown age"
+
+	# --ff-only, so this can only ever move forward to what origin already
+	# has. A diverged local main means somebody committed to it directly,
+	# which the house rule forbids, and resolving that is not a deploy
+	# script's business.
+	if ! git -C "$REPO_DIR" merge --ff-only origin/main 2>/dev/null; then
+		local ahead
+		ahead=$(git -C "$REPO_DIR" rev-list --count origin/main..HEAD 2>/dev/null || echo '?')
+
+		warn "local main has $ahead commit(s) origin/main does not, so it cannot be fast-forwarded."
+		warn "nothing here commits to main directly -- everything lands through a pull request --"
+		warn "so those commits want a branch and a PR rather than a deploy."
+		die "refusing to deploy a main that has diverged from origin"
+	fi
+
+	log "building from main @ $(git -C "$REPO_DIR" rev-parse --short HEAD)"
 }
 
 health_loopback() {
@@ -376,7 +429,11 @@ cmd_deploy() {
 	require scp
 	require curl
 
-	report_source
+	# First, before the build and before anything is asked of the server:
+	# what goes out has to be a commit that exists on origin/main. This also
+	# logs which commit that is, which is the other half of the record the
+	# server keeps after a successful swap.
+	ensure_main
 
 	log "checking the document root is not serving the application directory"
 	assert_not_exposed
