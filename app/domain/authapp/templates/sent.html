@@ -1,0 +1,15 @@
+{{define "title"}}Check your email{{end}}
+{{define "content"}}
+<h1>Check your email</h1>
+
+<p>If there is an account for <strong>{{.Email}}</strong>, a sign-in link is on
+its way to it. The link works once and stops working in fifteen minutes.</p>
+
+<p class="lede">We do not say whether an account exists, so this page looks the
+same either way.</p>
+
+<div class="alternatives">
+  <p>Nothing arriving? <a href="/signin/code">Use a backup code</a>, or
+  <a href="/signin">try a different address</a>.</p>
+</div>
+{{end}}

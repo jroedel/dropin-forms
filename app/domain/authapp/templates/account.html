@@ -1,0 +1,34 @@
+{{define "title"}}Your account{{end}}
+{{define "masthead"}}
+<form method="post" action="/signout">
+  <button type="submit" class="quiet">Sign out</button>
+</form>
+{{end}}
+{{define "content"}}
+<h1>Your account</h1>
+
+<p>Signed in as <strong>{{.Email}}</strong>.</p>
+
+{{if .Codes}}
+<h2>Your new backup codes</h2>
+
+<p class="notice">Write these down or print this page now. They are not shown
+again, and generating a new set stops these working.</p>
+
+<ul class="codes">
+  {{range .Codes}}<li>{{.}}</li>{{end}}
+</ul>
+
+<p class="lede">Each code works once. Use one on the
+<a href="/signin/code">backup code page</a> when email is not arriving.</p>
+{{else}}
+<h2>Backup codes</h2>
+
+<p>Backup codes let you sign in when email is not working. Generating a set
+replaces any codes you already have.</p>
+
+<form method="post" action="/account/backup-codes">
+  <button type="submit">Generate backup codes</button>
+</form>
+{{end}}
+{{end}}

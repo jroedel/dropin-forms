@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -17,8 +18,15 @@ import (
 // `make secrets-install` and never lives in git.
 type config struct {
 	Server struct {
-		EmbedAddr      string `toml:"embed_addr"`
-		AdminAddr      string `toml:"admin_addr"`
+		EmbedAddr string `toml:"embed_addr"`
+		AdminAddr string `toml:"admin_addr"`
+		// AdminBaseURL is this service's own admin origin, used to build the
+		// link that goes in a sign-in email. Not derived from the request: a
+		// link built from a Host header is one an attacker can aim at their
+		// own host with a single request, and whoever receives the mail
+		// cannot tell.
+		AdminBaseURL string `toml:"admin_base_url"`
+
 		ShutdownGrace  string `toml:"shutdown_grace"`
 		shutdownGraceD time.Duration
 	} `toml:"server"`
@@ -41,6 +49,23 @@ type config struct {
 		Level string `toml:"level"`
 		File  string `toml:"file"`
 	} `toml:"log"`
+
+	Auth struct {
+		// BootstrapSecret produces one session without sending mail, exactly
+		// once. Empty leaves those routes unmounted, which is the right answer
+		// once the service has accounts. See userbus.Business.Bootstrap for
+		// why it exists at all.
+		BootstrapSecret string `toml:"bootstrap_secret"`
+	} `toml:"auth"`
+
+	Mail struct {
+		Host     string `toml:"host"`
+		Port     int    `toml:"port"`
+		User     string `toml:"user"`
+		Password string `toml:"password"`
+		From     string `toml:"from"`
+		FromName string `toml:"from_name"`
+	} `toml:"mail"`
 }
 
 // loadConfig reads and validates the file.
@@ -51,6 +76,11 @@ type config struct {
 // unparseable origin in particular must never become a header -- it is the one
 // value in this file that a form owner types and that ends up in the CSP of a
 // page leading to a payment.
+// bootstrapMinLen is the shortest bootstrap secret this service will accept.
+// `openssl rand -base64 32` and `scripts/secrets keygen` both produce more
+// than this.
+const bootstrapMinLen = 32
+
 func loadConfig(path string) (config, error) {
 	var cfg config
 
@@ -91,6 +121,43 @@ func loadConfig(path string) (config, error) {
 			return config{}, fmt.Errorf("%s has a bad entry in embed.allowed_origins: %w", path, err)
 		}
 		cfg.Embed.allowed = append(cfg.Embed.allowed, o)
+	}
+
+	// The admin origin goes into an email as a link somebody clicks, so it is
+	// held to the same standard as an origin somebody may frame us from:
+	// https, a host, and nothing else. A trailing slash is trimmed rather than
+	// refused, since the routes appended to it all begin with one and the
+	// result would be a double slash -- a path that works but looks wrong in
+	// the one place a person is deciding whether to trust a link.
+	switch base := strings.TrimSuffix(cfg.Server.AdminBaseURL, "/"); {
+	case base == "":
+		return config{}, fmt.Errorf("%s needs server.admin_base_url, which is the address that goes into a sign-in email", path)
+	default:
+		o, err := types.ParseOrigin(base)
+		if err != nil {
+			return config{}, fmt.Errorf("%s has a bad server.admin_base_url: %w", path, err)
+		}
+
+		// Re-serialised from the parsed value rather than kept as written,
+		// for the same reason the frame-ancestors list is.
+		cfg.Server.AdminBaseURL = o.String()
+	}
+
+	// A short bootstrap secret is worse than none: it is a guessable route to
+	// a founding session that sends no mail and so leaves no trace anywhere
+	// but our own log. Refused at startup rather than accepted and warned
+	// about.
+	if secret := cfg.Auth.BootstrapSecret; secret != "" && len(secret) < bootstrapMinLen {
+		return config{}, fmt.Errorf("%s has an auth.bootstrap_secret of %d characters; use at least %d, or leave it empty to switch that route off", path, len(secret), bootstrapMinLen)
+	}
+
+	if cfg.Mail.Host != "" {
+		switch {
+		case cfg.Mail.Port <= 0 || cfg.Mail.Port > 65535:
+			return config{}, fmt.Errorf("%s has mail.host but mail.port is %d; 587 is the usual one", path, cfg.Mail.Port)
+		case cfg.Mail.From == "":
+			return config{}, fmt.Errorf("%s has mail.host but no mail.from; that address has to be one the relay will send as", path)
+		}
 	}
 
 	return cfg, nil

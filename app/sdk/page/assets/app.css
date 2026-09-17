@@ -1,0 +1,180 @@
+/* The whole stylesheet. No framework, no build step, no script -- the admin
+   Content-Security-Policy is default-src 'none' with style-src 'self', so
+   there is nothing here that could load anything. */
+
+:root {
+  color-scheme: light dark;
+
+  --ink: #1b1b1f;
+  --paper: #fdfdfb;
+  --muted: #5c5c66;
+  --rule: #d8d8d2;
+  --accent: #29527a;
+  --wrong: #8c2f21;
+  --right: #1f5c3d;
+  --tint: #f2f1ec;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e8e8ea;
+    --paper: #16161a;
+    --muted: #a0a0aa;
+    --rule: #33333c;
+    --accent: #8fb6dd;
+    --wrong: #e8907f;
+    --right: #86c9a3;
+    --tint: #1e1e24;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+main {
+  max-width: 34rem;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+}
+
+.masthead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 1rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.wordmark {
+  font-weight: 600;
+  color: inherit;
+  text-decoration: none;
+}
+
+h1 { font-size: 1.5rem; line-height: 1.25; margin: 0 0 0.75rem; }
+h2 { font-size: 1.1rem; margin: 2rem 0 0.5rem; }
+
+a { color: var(--accent); }
+
+p { margin: 0 0 1rem; }
+
+.lede { color: var(--muted); }
+
+form { margin: 1.5rem 0 0; }
+
+label {
+  display: block;
+  font-weight: 600;
+  margin: 0 0 0.25rem;
+}
+
+.help {
+  display: block;
+  font-weight: 400;
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin: 0 0 0.35rem;
+}
+
+input[type="email"],
+input[type="text"],
+input[type="password"] {
+  width: 100%;
+  padding: 0.55rem 0.6rem;
+  font: inherit;
+  color: inherit;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+input:focus-visible, button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Only complain about a field somebody has actually touched. :user-invalid is
+   the platform's own answer to that and needs no script. */
+input:user-invalid {
+  border-color: var(--wrong);
+}
+
+.field { margin: 0 0 1.1rem; }
+
+button {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.6rem 1.1rem;
+  color: var(--paper);
+  background: var(--accent);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+button.quiet {
+  color: var(--accent);
+  background: transparent;
+  border-color: var(--rule);
+}
+
+.notice, .problem {
+  padding: 0.75rem 0.9rem;
+  border-radius: 4px;
+  border: 1px solid var(--rule);
+  background: var(--tint);
+  margin: 0 0 1.25rem;
+}
+
+.problem {
+  border-color: var(--wrong);
+  color: var(--wrong);
+}
+
+.codes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: 0.4rem;
+  margin: 1rem 0;
+  padding: 0;
+  list-style: none;
+}
+
+.codes li {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1.05rem;
+  letter-spacing: 0.02em;
+  padding: 0.45rem 0.6rem;
+  background: var(--tint);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  text-align: center;
+}
+
+.alternatives {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--rule);
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.footnote {
+  max-width: 34rem;
+  margin: 0 auto;
+  padding: 1rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+@media print {
+  .masthead, .footnote, form { display: none; }
+}

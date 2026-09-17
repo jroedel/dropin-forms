@@ -11,6 +11,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/jroedel/dropin-forms/app/domain/authapp"
+	"github.com/jroedel/dropin-forms/app/sdk/page"
+	"github.com/jroedel/dropin-forms/business/domain/user/stores/userdb"
+	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
+	"github.com/jroedel/dropin-forms/foundation/mail"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -71,20 +77,55 @@ func run() error {
 	if err := sqldb.Init(ctx, db); err != nil {
 		return err
 	}
+	if err := userdb.Init(ctx, db); err != nil {
+		return err
+	}
 
 	// The schema is checked once at startup as well as on every health
 	// request. Failing here means the process never begins serving, which is
 	// what should happen when a binary and a database disagree -- the deploy
 	// is still one rename away from the previous one.
-	expected := sqldb.Infrastructure
+	//
+	// Each store contributes what it will read, so a table one of them needs
+	// and nothing created is caught here rather than on the first request
+	// that touches it.
+	expected := sqldb.Expected{}
+	for _, part := range []sqldb.Expected{sqldb.Infrastructure, userdb.Expected} {
+		for table, columns := range part {
+			if _, clash := expected[table]; clash {
+				return fmt.Errorf("two stores both claim the table %s", table)
+			}
+
+			expected[table] = columns
+		}
+	}
+
 	if err := sqldb.CheckSchema(ctx, db, expected); err != nil {
 		return fmt.Errorf("the database does not match this binary: %w", err)
+	}
+
+	users := userbus.NewBusiness(log, userdb.NewStore(db))
+
+	sender, howMail, err := newSender(log, cfg)
+	if err != nil {
+		return err
+	}
+
+	renderer, err := page.NewRenderer(log, authapp.Templates)
+	if err != nil {
+		return err
 	}
 
 	mc := muxer.Config{
 		Log:      log,
 		DB:       db,
 		Expected: expected,
+
+		Users:        users,
+		Mail:         sender,
+		Render:       renderer,
+		AdminBaseURL: cfg.Server.AdminBaseURL,
+		Bootstrap:    cfg.Auth.BootstrapSecret,
 
 		// Until a form carries its own list of embedding origins, every form
 		// gets the configured one. The signature is already per request so
@@ -98,12 +139,56 @@ func run() error {
 	log.Info("starting",
 		"embed", cfg.Server.EmbedAddr,
 		"admin", cfg.Server.AdminAddr,
+		"admin_base_url", cfg.Server.AdminBaseURL,
 		"db", cfg.DB.Path,
 		"embed_allowed_origins", len(cfg.Embed.allowed),
+		"mail", howMail,
+
+		// Whether the route exists, never the secret. Worth logging because
+		// a bootstrap route left mounted after the first sign-in is something
+		// somebody should notice and remove.
+		"bootstrap_route", cfg.Auth.BootstrapSecret != "",
 	)
+
+	admin, err := muxer.Admin(mc)
+	if err != nil {
+		return err
+	}
 
 	return web.Serve(ctx, log, cfg.Server.shutdownGraceD,
 		web.Surface{Name: "embed", Addr: cfg.Server.EmbedAddr, Handler: muxer.Embed(mc)},
-		web.Surface{Name: "admin", Addr: cfg.Server.AdminAddr, Handler: muxer.Admin(mc)},
+		web.Surface{Name: "admin", Addr: cfg.Server.AdminAddr, Handler: admin},
 	)
+}
+
+// newSender builds the outbound mailer, and returns a word for the log saying
+// which kind it is.
+//
+// With no relay configured it records messages instead of sending them, and
+// says so loudly rather than failing to start. That combination is deliberate:
+// this service's only ordinary way in is an emailed link, so a developer
+// running it locally needs it to come up without a relay -- and an operator
+// who has forgotten to configure one needs to find out from a line in the log
+// rather than from somebody reporting that no mail arrives.
+func newSender(log *slog.Logger, cfg config) (mail.Sender, string, error) {
+	if cfg.Mail.Host == "" {
+		log.Warn("no mail relay is configured, so no mail will be sent",
+			"consequence", "sign-in links cannot arrive; use auth.bootstrap_secret or a backup code")
+
+		return &mail.Recorder{}, "recorded, not sent", nil
+	}
+
+	sender, err := mail.NewSMTP(mail.Config{
+		Host:     cfg.Mail.Host,
+		Port:     cfg.Mail.Port,
+		User:     cfg.Mail.User,
+		Password: cfg.Mail.Password,
+		From:     cfg.Mail.From,
+		FromName: cfg.Mail.FromName,
+	})
+	if err != nil {
+		return nil, "", err
+	}
+
+	return sender, fmt.Sprintf("%s:%d as %s", cfg.Mail.Host, cfg.Mail.Port, cfg.Mail.From), nil
 }

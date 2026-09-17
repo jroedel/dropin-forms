@@ -1,0 +1,25 @@
+{{define "title"}}Sign in{{end}}
+{{define "content"}}
+<h1>Sign in</h1>
+
+{{if .Token}}
+<p>Press the button to finish signing in.</p>
+
+<form method="post" action="/signin/link">
+  <input type="hidden" name="token" value="{{.Token}}">
+  <input type="hidden" name="next" value="{{.Next}}">
+  <button type="submit">Sign in</button>
+</form>
+
+<div class="alternatives">
+  <p>There is a button here rather than an automatic sign-in because mail
+  scanners and link previewers open links in messages before anybody clicks
+  them. Requiring a press means your link is not spent by software on its way
+  to you.</p>
+</div>
+{{else}}
+<p class="problem">{{.Problem}}</p>
+
+<p><a href="/signin">Ask for a new link</a>.</p>
+{{end}}
+{{end}}

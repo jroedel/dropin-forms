@@ -1,0 +1,35 @@
+{{define "title"}}First sign-in{{end}}
+{{define "content"}}
+<h1>First sign-in</h1>
+
+{{with .Problem}}<p class="problem">{{.}}</p>{{end}}
+
+<p class="lede">This uses the one-time secret from the server's configuration
+file, and it sends no email. It exists so that a mail problem cannot lock you
+out of your own service.</p>
+
+<p>It works exactly once. After that this page will refuse every secret,
+including a new one written into the configuration.</p>
+
+<form method="post" action="/signin/bootstrap">
+  <div class="field">
+    <label for="email">The address this account should have</label>
+    <span class="help">An account will be created if there is not one already.</span>
+    <input id="email" name="email" type="email" value="{{.Email}}"
+           required autofocus autocomplete="email" inputmode="email"
+           autocapitalize="off" spellcheck="false">
+  </div>
+
+  <div class="field">
+    <label for="secret">The bootstrap secret</label>
+    <input id="secret" name="secret" type="password" required autocomplete="off">
+  </div>
+
+  <button type="submit">Sign in</button>
+</form>
+
+<div class="alternatives">
+  <p>Once you are in, generate backup codes straight away — they are the way
+  back if email is still not working.</p>
+</div>
+{{end}}

@@ -1,0 +1,28 @@
+{{define "title"}}Sign in{{end}}
+{{define "content"}}
+<h1>Sign in</h1>
+
+{{with .Problem}}<p class="problem">{{.}}</p>{{end}}
+
+<p class="lede">We will email you a link to sign in. There is no password to remember.</p>
+
+<form method="post" action="/signin">
+  <input type="hidden" name="next" value="{{.Next}}">
+
+  <div class="field">
+    <label for="email">Your email address</label>
+    <input id="email" name="email" type="email" value="{{.Email}}"
+           required autofocus autocomplete="email" inputmode="email"
+           autocapitalize="off" spellcheck="false">
+  </div>
+
+  <button type="submit">Email me a link</button>
+</form>
+
+<div class="alternatives">
+  <p>No email arriving? <a href="/signin/code">Use a backup code</a>.</p>
+  {{if .HaveBootstrap}}
+  <p>Setting this up for the first time? <a href="/signin/bootstrap">Use the bootstrap secret</a>.</p>
+  {{end}}
+</div>
+{{end}}

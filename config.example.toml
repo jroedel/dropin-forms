@@ -17,6 +17,12 @@
 embed_addr = "127.0.0.1:8410"
 admin_addr = "127.0.0.1:8411"
 
+# This service's own admin origin. It is the address that goes into a sign-in
+# email, and it is configured rather than taken from the request on purpose: a
+# link built from a Host header is one an attacker can aim at their own host by
+# sending a single request, and whoever receives the mail cannot tell.
+admin_base_url = "https://forms.schoenstatt.link"
+
 # How long in-flight requests get after a stop signal. Long enough for a
 # submission to finish writing, short enough that a restart is not a wait.
 shutdown_grace = "15s"
@@ -46,3 +52,38 @@ level = "info"
 # Empty means stderr, which is what a developer wants. On the server the
 # supervisor redirects stderr into a file, so this can stay empty there too.
 file = ""
+
+[auth]
+# One-time secret that produces a session without sending any mail.
+#
+# It exists because there is no CLI: reading submissions needs a session,
+# signing in needs mail, and mail needs to be configured correctly -- so
+# without a way in that sends nothing, a misconfigured relay is not an
+# inconvenience, it is being locked out of your own service.
+#
+# It works exactly once. The claim is recorded in the database, so restarting
+# does not restore it and writing a new secret here does not revive it. Leave
+# it empty to leave the route unmounted entirely, which is the right answer
+# once the service has accounts.
+#
+# At least 32 characters, refused at startup below that: a short one is a
+# guessable route to a founding session that leaves no trace anywhere but our
+# own log.
+bootstrap_secret = ""
+
+[mail]
+# The relay that sends sign-in links and receipts.
+#
+# It has to be a relay that already passes SPF and DKIM for the sending
+# domain. Mail sent straight from a small host lands in spam, and for a
+# sign-in link that means nobody can log in.
+#
+# Leave host empty to record messages instead of sending them, which is what a
+# local run wants. The process says so loudly in its log rather than failing to
+# start.
+host = ""
+port = 587
+user = ""
+password = ""
+from = "forms@schoenstatt.link"
+from_name = "Schoenstatt Austin"

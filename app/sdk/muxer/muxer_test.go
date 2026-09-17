@@ -9,9 +9,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/sdk/muxer"
+	"github.com/jroedel/dropin-forms/app/sdk/page"
+	"github.com/jroedel/dropin-forms/business/domain/user/stores/userdb"
+	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/business/types"
 	"github.com/jroedel/dropin-forms/foundation/logger"
+	"github.com/jroedel/dropin-forms/foundation/mail"
 	"github.com/jroedel/dropin-forms/foundation/sqldb"
 )
 
@@ -32,14 +37,47 @@ func newConfig(t *testing.T, origins []types.Origin, expected sqldb.Expected) mu
 		t.Fatalf("initialising the test database: %v", err)
 	}
 
+	log := logger.New(io.Discard, slog.LevelError)
+
+	// userdb's tables as well, because the admin surface mounts the sign-in
+	// routes and they need somewhere to write.
+	if err := userdb.Init(t.Context(), db); err != nil {
+		t.Fatalf("initialising the account tables: %v", err)
+	}
+
+	renderer, err := page.NewRenderer(log, authapp.Templates)
+	if err != nil {
+		t.Fatalf("building the renderer: %v", err)
+	}
+
 	return muxer.Config{
-		Log:      logger.New(io.Discard, slog.LevelError),
+		Log:      log,
 		DB:       db,
 		Expected: expected,
 		FrameAncestors: func(*http.Request) []types.Origin {
 			return origins
 		},
+
+		Users:        userbus.NewBusiness(log, userdb.NewStore(db)),
+		Mail:         &mail.Recorder{},
+		Render:       renderer,
+		AdminBaseURL: "https://forms.test",
 	}
+}
+
+// adminOf builds the admin surface, failing the test rather than returning an
+// error to every caller. Admin reports a Config missing a dependency instead
+// of dereferencing nil on the first request, and in a test that report is a
+// setup mistake.
+func adminOf(t *testing.T, cfg muxer.Config) http.Handler {
+	t.Helper()
+
+	h, err := muxer.Admin(cfg)
+	if err != nil {
+		t.Fatalf("muxer.Admin: %v", err)
+	}
+
+	return h
 }
 
 func mustOrigin(t *testing.T, s string) types.Origin {
@@ -66,7 +104,7 @@ func TestSurfacesEmitOneCSPEach(t *testing.T) {
 
 	for name, h := range map[string]http.Handler{
 		"embed": muxer.Embed(cfg),
-		"admin": muxer.Admin(cfg),
+		"admin": adminOf(t, cfg),
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := httptest.NewRecorder()
@@ -106,7 +144,7 @@ func TestAdminSurfaceRefusesFramingAndScripts(t *testing.T) {
 	cfg := newConfig(t, []types.Origin{mustOrigin(t, "https://schoenstatt-austin.us")}, sqldb.Infrastructure)
 
 	w := httptest.NewRecorder()
-	muxer.Admin(cfg).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	adminOf(t, cfg).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 
 	csp := w.Header().Get("Content-Security-Policy")
 	if !strings.Contains(csp, "frame-ancestors 'none'") {
@@ -309,7 +347,7 @@ func TestHealthPassesOnMatchingSchema(t *testing.T) {
 	cfg := newConfig(t, nil, sqldb.Infrastructure)
 
 	w := httptest.NewRecorder()
-	muxer.Admin(cfg).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	adminOf(t, cfg).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 
 	if w.Code != http.StatusOK {
 		t.Errorf("got %d, want 200 on a schema this binary understands", w.Code)
