@@ -10,13 +10,19 @@ import (
 	"testing"
 
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
+	"github.com/jroedel/dropin-forms/app/domain/embedapp"
 	"github.com/jroedel/dropin-forms/app/sdk/muxer"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/access/stores/accessdb"
+	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
+	"github.com/jroedel/dropin-forms/business/domain/form/stores/formtoml"
+	"github.com/jroedel/dropin-forms/business/domain/submission/stores/submissiondb"
+	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
 	"github.com/jroedel/dropin-forms/business/domain/user/stores/userdb"
 	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/business/types"
+	"github.com/jroedel/dropin-forms/forms"
 	"github.com/jroedel/dropin-forms/foundation/logger"
 	"github.com/jroedel/dropin-forms/foundation/mail"
 	"github.com/jroedel/dropin-forms/foundation/sqldb"
@@ -51,25 +57,75 @@ func newConfig(t *testing.T, origins []types.Origin, expected sqldb.Expected) mu
 		t.Fatalf("initialising the grant table: %v", err)
 	}
 
-	renderer, err := page.NewRenderer(log, authapp.Templates)
+	renderer, err := page.NewRenderer(log, page.AdminChrome(), authapp.Templates)
 	if err != nil {
 		t.Fatalf("building the renderer: %v", err)
+	}
+
+	embedPages, err := page.NewRenderer(log, page.EmbedChrome(), embedapp.Templates)
+	if err != nil {
+		t.Fatalf("building the embed renderer: %v", err)
+	}
+
+	// submissiondb's tables too, because the embed surface accepts writes.
+	if err := submissiondb.Init(t.Context(), db); err != nil {
+		t.Fatalf("initialising the submission tables: %v", err)
+	}
+
+	// The real definitions, so that these tests mount what production mounts.
+	definitions, err := formtoml.Load(forms.FS)
+	if err != nil {
+		t.Fatalf("loading the form definitions: %v", err)
 	}
 
 	return muxer.Config{
 		Log:      log,
 		DB:       db,
 		Expected: expected,
-		FrameAncestors: func(*http.Request) []types.Origin {
-			return origins
-		},
+		// The real resolver, so that the mounted surface in a test chooses
+		// its policy the way the mounted surface in production does. Tests
+		// that are about the policy itself rather than about the lookup
+		// replace this with a function of their own.
+		FrameAncestors: page.FormFrameAncestors(definitions, origins),
 
-		Users:        userbus.NewBusiness(log, userdb.NewStore(db)),
-		Access:       accessbus.NewBusiness(log, accessdb.NewStore(db)),
+		Users:  userbus.NewBusiness(log, userdb.NewStore(db)),
+		Access: accessbus.NewBusiness(log, accessdb.NewStore(db)),
+
+		Embed: embedapp.Config{
+			Log:         log,
+			Forms:       definitions,
+			Submissions: submissionbus.NewBusiness(log, submissiondb.NewStore(db)),
+			Render:      embedPages,
+			GrantKey:    grantKey,
+		},
 		Mail:         &mail.Recorder{},
 		Render:       renderer,
 		AdminBaseURL: "https://forms.test",
 	}
+}
+
+// grantKey is a signing key for the tests. Not a secret: it signs grants for
+// a database in a temporary directory that is deleted when the test ends.
+var grantKey = func() formbus.GrantKey {
+	k, err := formbus.ParseGrantKey("a-test-grant-signing-key-long-enough")
+	if err != nil {
+		panic(err)
+	}
+
+	return k
+}()
+
+// embedOf builds the embed surface, failing the test rather than returning an
+// error to every caller -- the same shape as adminOf, and for the same reason.
+func embedOf(t *testing.T, cfg muxer.Config) http.Handler {
+	t.Helper()
+
+	h, err := muxer.Embed(cfg)
+	if err != nil {
+		t.Fatalf("muxer.Embed: %v", err)
+	}
+
+	return h
 }
 
 // adminOf builds the admin surface, failing the test rather than returning an
@@ -110,7 +166,7 @@ func TestSurfacesEmitOneCSPEach(t *testing.T) {
 	cfg := newConfig(t, []types.Origin{mustOrigin(t, "https://schoenstatt-austin.us")}, sqldb.Infrastructure)
 
 	for name, h := range map[string]http.Handler{
-		"embed": muxer.Embed(cfg),
+		"embed": embedOf(t, cfg),
 		"admin": adminOf(t, cfg),
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -131,8 +187,11 @@ func TestSurfacesEmitOneCSPEach(t *testing.T) {
 func TestEmbedSurfaceIsFrameable(t *testing.T) {
 	cfg := newConfig(t, []types.Origin{mustOrigin(t, "https://schoenstatt-austin.us")}, sqldb.Infrastructure)
 
+	// A form page, not /healthz. frame-ancestors is now answered per form, so
+	// only a form page has an answer other than 'none' -- which is the point
+	// of the change and worth asserting on the page that is actually framed.
 	w := httptest.NewRecorder()
-	muxer.Embed(cfg).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	embedOf(t, cfg).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/f/feast-lunch-2026", nil))
 
 	csp := w.Header().Get("Content-Security-Policy")
 	if !strings.Contains(csp, "frame-ancestors https://schoenstatt-austin.us") {
@@ -185,7 +244,7 @@ func TestFrameAncestorsFailsClosed(t *testing.T) {
 			c.FrameAncestors = func(*http.Request) []types.Origin { return origins }
 
 			w := httptest.NewRecorder()
-			muxer.Embed(c).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+			embedOf(t, c).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 
 			csp := w.Header().Get("Content-Security-Policy")
 			if !strings.Contains(csp, "frame-ancestors 'none'") {
@@ -199,7 +258,7 @@ func TestFrameAncestorsFailsClosed(t *testing.T) {
 		c.FrameAncestors = nil
 
 		w := httptest.NewRecorder()
-		muxer.Embed(c).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+		embedOf(t, c).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 
 		csp := w.Header().Get("Content-Security-Policy")
 		if !strings.Contains(csp, "frame-ancestors 'none'") {
@@ -219,7 +278,7 @@ func TestFrameAncestorsFailsClosed(t *testing.T) {
 // any route.
 func TestSameOriginOnlyDecidesWrites(t *testing.T) {
 	cfg := newConfig(t, []types.Origin{mustOrigin(t, "https://schoenstatt-austin.us")}, sqldb.Infrastructure)
-	h := muxer.Embed(cfg)
+	h := embedOf(t, cfg)
 
 	const host = "f.schoenstatt.link"
 
@@ -338,7 +397,7 @@ func TestHealthFailsOnSchemaMismatch(t *testing.T) {
 	})
 
 	w := httptest.NewRecorder()
-	muxer.Embed(cfg).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	embedOf(t, cfg).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("got %d, want 503 when the database does not match the binary", w.Code)

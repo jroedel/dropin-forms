@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/types"
 	"github.com/jroedel/dropin-forms/foundation/web"
 )
@@ -110,6 +111,69 @@ func AdminPolicy() web.PolicyFor {
 			StrictTransport: hsts,
 		}
 	}
+}
+
+// FormFrameAncestors answers frame-ancestors from each form's own list, with a
+// fallback for a definition that names nobody.
+//
+// SecureHeaders runs above the mux, so r.PathValue is not populated yet and
+// the slug has to be taken from the path by hand. That is the cost of choosing
+// headers before a handler can write a body, and it is the right trade: a
+// policy chosen after routing is one a handler returning early can skip.
+//
+// Anything that is not a form page gets nothing, and the policy turns that
+// into 'none'. The stylesheet, the script and embed.js are framed by nobody,
+// and a slug naming no form has no list to consult -- in both cases the
+// fail-closed answer is also the correct one.
+//
+// The fallback is the configured installation-wide list, and it exists so that
+// adding a definition without remembering its origins is a form that works
+// rather than a blank box on a page with a console error nobody reads. It is
+// not a way to widen a form that *does* name its origins: a form with a list
+// gets exactly that list. When every definition carries one, the configured
+// list can go.
+func FormFrameAncestors(forms FormOrigins, fallback []types.Origin) FrameAncestorsFor {
+	return func(r *http.Request) []types.Origin {
+		slug, ok := formSlugOf(r.URL.Path)
+		if !ok {
+			return nil
+		}
+
+		id, err := types.ParseSlug(slug)
+		if err != nil {
+			return nil
+		}
+
+		f, err := forms.ByID(id)
+		if err != nil {
+			return nil
+		}
+
+		if len(f.Origins) == 0 {
+			return fallback
+		}
+
+		return f.Origins
+	}
+}
+
+// FormOrigins is the slice of the form store this needs.
+type FormOrigins interface {
+	ByID(slug types.Slug) (formbus.Form, error)
+}
+
+// formSlugOf extracts the slug from /f/{slug}, and nothing else.
+//
+// Deliberately exact rather than a prefix match. /f/x/y is not a form page,
+// and treating it as one would hand a form's embedding permissions to a URL
+// the mux will answer 404 for.
+func formSlugOf(path string) (string, bool) {
+	rest, ok := strings.CutPrefix(path, "/f/")
+	if !ok || rest == "" || strings.Contains(rest, "/") {
+		return "", false
+	}
+
+	return rest, true
 }
 
 // frameAncestorList renders the directive's value, failing closed.

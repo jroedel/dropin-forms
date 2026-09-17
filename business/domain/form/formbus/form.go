@@ -789,6 +789,23 @@ func show(m types.Money, currency string) string {
 	return symbols[currency] + m.String()
 }
 
+// Symbol is the currency's symbol on its own, for a page that puts one beside
+// an input rather than in front of a number.
+//
+// An unknown currency gives an empty string, the same way Show falls back to
+// the bare number. Check refuses such a form at load time.
+func Symbol(currency string) string { return symbols[currency] }
+
+// Show is show, for the app layer.
+//
+// Exported rather than left to whatever renders a page, because the table it
+// reads is here -- next to the list of currencies this service handles -- and
+// a second copy in a template helper is a second thing to remember when a
+// currency is added. A price beside a field and a price inside a violation
+// have to be written the same way, and this is the only way to be sure they
+// are.
+func Show(m types.Money, currency string) string { return show(m, currency) }
+
 // Stamp sets Version from the definition's content, and is what every store
 // calls after building a Form and before Check.
 func (f *Form) Stamp() { f.Version = f.Fingerprint() }

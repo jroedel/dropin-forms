@@ -716,6 +716,8 @@ business/domain/submission/submissionbus/
 business/domain/submission/stores/submissiondb/
 business/domain/payment/paybus/          Checkout sessions, webhook events
 business/domain/user/userbus/            accounts, magic-link tokens, backup codes
+business/domain/submission/submissionbus/ accepted submissions and status
+business/domain/submission/stores/submissiondb/ one JSON column and a nonce table
 business/domain/access/accessbus/        per-form role grants
 business/domain/access/stores/accessdb/  one row per (account, form)
 business/types/                          Slug, Money, Email, ID, Origin
@@ -851,6 +853,74 @@ precisely the trap the parent project's `RequireFormToken` set — §5.3.
 **There is no UI for granting yet.** Until there is, the bootstrap account is
 the only account with access, which is enough for October — one person reads
 the lunch numbers — and it is the first thing `formapp` needs in Track B.
+
+### The embedded form, as built
+
+Four decisions were made while writing `embedapp` that the plan did not settle.
+
+**One renderer per surface, not one renderer.** `page.NewRenderer` takes a
+`Chrome` — `AdminChrome()` or `EmbedChrome()` — because the two surfaces are
+not the same page with different contents. The admin app is a page somebody
+navigates, with a masthead and a footer. A form is a fragment inside an iframe
+on somebody else's website, where a masthead is a second heading under theirs
+and a footer is furniture inside a box the height of its contents. Each chrome
+carries its own `base.html` and `app.css`, and the stylesheet path contains a
+content hash, so the two cannot collide despite both being called `app.css`.
+The embed chrome also carries an `app.js`, which the admin chrome deliberately
+does not — its policy has no `script-src` to run one under.
+
+**The field-to-HTML mapping is Go, not template branches.** A template full of
+`{{if eq .Kind "email"}}` would be a second statement of what each kind means,
+in a language with no type checking and no tests. So `view.go` turns each
+`formbus.Field` into a shape and a set of attribute *values*, and the template
+renders those and decides nothing. This is also what keeps the ban on
+`template.HTML` cheap to honour: the mapping produces strings and numbers that
+`html/template` escapes normally, so an author-written label cannot become a
+tag. The one conversion that lives there and nowhere else is money — a
+definition holds an amount field's bounds in minor units and an `<input>` works
+in major ones, so `min="5.00"` is computed from `500`.
+
+**The resize channel is two files and they do different things.** `embed.js` is
+the parent half, served from a fixed path with an hour's cache because the path
+is baked into whatever somebody pasted and cannot be changed afterwards. It
+only ever *receives*: it checks `event.source` against each frame's
+`contentWindow`, `event.origin` by exact string equality, rejects the literal
+`"null"`, and clamps the height to 10,000px — an unclamped height is an iframe
+covering the owner's page. The child half is the embed chrome's `app.js`, which
+posts to an exact target origin the server put in the page only after checking
+it against *that form's* own embedder list. Never `'*'`. It reads the origin
+from an element rather than from `<body>`, because `html/template` will not let
+a template write into an attribute-name position — the right restriction, and
+not worth working around.
+
+**`frame-ancestors` is answered per form.** `page.FormFrameAncestors` takes the
+slug out of the path by hand, because `SecureHeaders` runs above the mux and
+`r.PathValue` is not populated yet. Anything that is not exactly `/f/<slug>`
+gets nothing, which the policy turns into `'none'` — the stylesheet, the script
+and `embed.js` are framed by nobody, and a slug naming no form has no list to
+consult. The configured `embed.allowed_origins` survives as the fallback for a
+definition that names none, so adding a form without remembering its origins is
+a form that works rather than a blank box with a console error nobody reads. It
+cannot widen a form that does name origins.
+
+Two smaller things worth writing down because they are easy to undo:
+
+- **`embedapp.Config.Now` is injectable.** The handler needs a clock to decide
+  whether a form is open, and the tests run against the *real* feast
+  definition so that what they assert is what the shrine's page serves. With
+  `time.Now()` hard-coded, every one of those tests would have started failing
+  on 18 October 2026 — the worst possible moment for a suite to go red.
+  `formbus.Form.Validate` already took its own `now` for the same reason; this
+  is the other half of it.
+- **`embed.grant_signing_key` is required and has no default.** Every form page
+  carries a grant, so a service without the key is a service with no forms
+  rather than a degraded one. It is refused at startup, where the deploy is
+  still one rename away from the previous release, and `deploy.sh` asks the new
+  binary `-check` before stopping anything.
+
+**Not built yet, and deliberately:** the payment. A submission with a total is
+stored `pending` and the confirmation says nothing has been charged. Section
+7.2's Checkout hand-off replaces that sentence with a `_top`-targeted button.
 
 ## 10. Dependencies
 

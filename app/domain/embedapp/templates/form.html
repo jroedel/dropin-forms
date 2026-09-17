@@ -1,0 +1,112 @@
+{{define "title"}}{{.Form.Title}}{{end}}
+
+{{define "content"}}
+<div id="dropin-root" data-parent-origin="{{.ParentOrigin}}" class="form-shell">
+<h1>{{.Form.Title}}</h1>
+{{with .Form.Intro}}<p class="intro">{{.}}</p>{{end}}
+
+{{/* The summary is first in the document, so that somebody reaching this page
+     with a screen reader after a refusal hears what is wrong before the
+     fields rather than after them. */}}
+{{if .Problems.Violations}}
+<div class="summary" role="alert">
+<h2>Please check these answers</h2>
+<ul>{{range .Problems.Violations}}<li>{{.Message}}</li>{{end}}</ul>
+</div>
+{{else if .Note}}
+<div class="summary" role="alert"><p>{{.Note}}</p></div>
+{{end}}
+
+{{/* Where the script writes what the browser caught before the round trip. It
+     is empty with JavaScript off, and the server still refuses and still
+     explains. */}}
+<p class="problem" data-live-summary aria-live="polite"></p>
+
+<form method="post" action="/f/{{.Form.ID}}" data-dropin-form>
+<input type="hidden" name="_grant" value="{{.Grant}}">
+
+{{range $fld := .Fields}}
+<div class="field{{if eq $fld.Shape "amount"}} amount-field{{end}}"
+  {{- with $fld.ShowIfField}} data-show-if-field="{{.}}"{{end}}
+  {{- with $fld.ShowIfValues}} data-show-if-values="{{.}}"{{end}}>
+
+{{if or (eq $fld.Shape "radios") (eq $fld.Shape "checkboxes")}}
+  <span class="group-label">{{$fld.Label}}{{if $fld.Required}} <span class="required-mark" title="required">*</span>{{end}}</span>
+  {{with $fld.Help}}<p class="help">{{.}}</p>{{end}}
+  {{range $opt := $fld.Options}}
+  <label class="choice">
+  <input type="{{$fld.BoxType}}" name="{{$fld.Name}}" value="{{$opt.Value}}"{{if $opt.Chosen}} checked{{end}}>
+  <span>{{$opt.Label}}</span>
+  </label>
+  {{end}}
+
+{{else if eq $fld.Shape "checkbox"}}
+  <label class="choice">
+  <input type="checkbox" name="{{$fld.Name}}" value="{{$fld.Value}}"{{if $fld.Values}} checked{{end}}{{if $fld.Required}} required{{end}}>
+  <span>{{$fld.Label}}{{if $fld.Required}} <span class="required-mark" title="required">*</span>{{end}}</span>
+  </label>
+  {{with $fld.Help}}<p class="help">{{.}}</p>{{end}}
+
+{{else if eq $fld.Shape "select"}}
+  <label for="f-{{$fld.Name}}">{{$fld.Label}}{{if $fld.Required}} <span class="required-mark" title="required">*</span>{{end}}</label>
+  {{with $fld.Help}}<p class="help">{{.}}</p>{{end}}
+  <select id="f-{{$fld.Name}}" name="{{$fld.Name}}"{{if $fld.Required}} required{{end}}>
+  <option value="">Please choose</option>
+  {{range $opt := $fld.Options}}<option value="{{$opt.Value}}"{{if $opt.Chosen}} selected{{end}}>{{$opt.Label}}</option>
+  {{end}}
+  </select>
+
+{{else if eq $fld.Shape "textarea"}}
+  <label for="f-{{$fld.Name}}">{{$fld.Label}}{{if $fld.Required}} <span class="required-mark" title="required">*</span>{{end}}</label>
+  {{with $fld.Help}}<p class="help">{{.}}</p>{{end}}
+  <textarea id="f-{{$fld.Name}}" name="{{$fld.Name}}"
+    {{- if $fld.Required}} required{{end}}
+    {{- with $fld.Placeholder}} placeholder="{{.}}"{{end}}
+    {{- if $fld.MinLength}} minlength="{{$fld.MinLength}}"{{end}}
+    {{- if $fld.MaxLength}} maxlength="{{$fld.MaxLength}}"{{end}}>{{$fld.Value}}</textarea>
+
+{{else}}
+  <label for="f-{{$fld.Name}}">{{$fld.Label}}{{if $fld.Required}} <span class="required-mark" title="required">*</span>{{end}}</label>
+  {{with $fld.Help}}<p class="help">{{.}}</p>{{end}}
+  {{with $fld.PatternNote}}<p class="help">{{.}}</p>{{end}}
+  {{if eq $fld.Shape "amount"}}<span class="currency">{{$.Symbol}}</span>{{end}}
+  <input id="f-{{$fld.Name}}" type="{{$fld.InputType}}" name="{{$fld.Name}}" value="{{$fld.Value}}"
+    {{- if $fld.Required}} required{{end}}
+    {{- with $fld.Placeholder}} placeholder="{{.}}"{{end}}
+    {{- with $fld.Autocomplete}} autocomplete="{{.}}"{{end}}
+    {{- with $fld.InputMode}} inputmode="{{.}}"{{end}}
+    {{- with $fld.Pattern}} pattern="{{.}}"{{end}}
+    {{- if $fld.MinLength}} minlength="{{$fld.MinLength}}"{{end}}
+    {{- if $fld.MaxLength}} maxlength="{{$fld.MaxLength}}"{{end}}
+    {{- with $fld.Min}} min="{{.}}"{{end}}
+    {{- with $fld.Max}} max="{{.}}"{{end}}
+    {{- with $fld.Step}} step="{{.}}"{{end}}>
+{{end}}
+
+{{range $fld.Problems}}<p class="problem" data-problem-for="{{$fld.Name}}">{{.Message}}</p>{{end}}
+</div>
+{{end}}
+
+{{if .Items}}
+<div class="items">
+{{with .OrderNote}}<p class="help">{{.}}</p>{{end}}
+{{range $it := .Items}}
+<div class="item">
+<label class="item-label" for="i-{{$it.ID}}">{{$it.Label}}</label>
+<span class="item-price">{{$it.Price}}</span>
+<input id="i-{{$it.ID}}" type="number" name="{{$it.Name}}" value="{{$it.Qty}}"
+  inputmode="numeric" min="0" step="1"{{with $it.Max}} max="{{.}}"{{end}}>
+</div>
+{{with $it.Note}}<p class="help">{{.}}</p>{{end}}
+{{range $it.Problems}}<p class="problem" data-problem-for="{{$it.Name}}">{{.Message}}</p>{{end}}
+{{end}}
+</div>
+{{end}}
+
+{{range .OrderProblems}}<p class="problem">{{.Message}}</p>{{end}}
+
+<button class="go" type="submit">{{if .Form.Sells}}Continue{{else}}Send{{end}}</button>
+{{with .Form.PaymentNote}}<p class="note">{{.}}</p>{{end}}
+</form>
+</div>
+{{end}}

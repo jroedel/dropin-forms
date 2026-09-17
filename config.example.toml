@@ -40,6 +40,30 @@ shutdown_grace = "15s"
 # https://*.example.org.
 allowed_origins = ["https://schoenstatt-austin.us"]
 
+# Signs the submission grant that every form page hands out and every
+# submission hands back: an HMAC over the form's id, its version, a nonce and
+# an expiry. It is what pins the price list into a public POST.
+#
+# Required. There is no default and no degraded mode, because a form page
+# cannot be rendered without a grant to put in it.
+#
+# Generate one with:  openssl rand -base64 48
+#
+# Rotating it invalidates every form page currently open in a browser, which
+# costs a reload and no data -- so rotate it freely, though not while tickets
+# are selling.
+grant_signing_key = ""
+
+# Whether X-Forwarded-For carries the visitor's address.
+#
+# False by default, and it has to be set rather than detected. In production
+# this process listens on the loopback behind Apache, so the socket's own
+# address is always 127.0.0.1 and the visitor's address exists only in a
+# header -- and a header is exactly as trustworthy as whatever put it there.
+# Trusting one with nothing in front means letting a stranger choose the
+# address that goes to Stripe's fraud checks, which is worse than having none.
+trust_proxy = false
+
 [db]
 # Above the document root, always. The deploy refuses to ship if this file can
 # be fetched over HTTPS.

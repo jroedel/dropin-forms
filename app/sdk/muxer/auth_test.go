@@ -65,7 +65,7 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 	access := accessbus.NewBusiness(log, accessdb.NewStore(db))
 	sent := &mail.Recorder{}
 
-	renderer, err := page.NewRenderer(log, authapp.Templates)
+	renderer, err := page.NewRenderer(log, page.AdminChrome(), authapp.Templates)
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
 	}
@@ -360,7 +360,7 @@ func newAdminWithBrokenMail(t *testing.T) harness {
 	users := userbus.NewBusiness(log, userdb.NewStore(db))
 	access := accessbus.NewBusiness(log, accessdb.NewStore(db))
 
-	renderer, err := page.NewRenderer(log, authapp.Templates)
+	renderer, err := page.NewRenderer(log, page.AdminChrome(), authapp.Templates)
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
 	}

@@ -11,6 +11,15 @@ import (
 	"github.com/jroedel/dropin-forms/business/types"
 )
 
+// QuantityField is the input name a quantity arrives under, and the field a
+// violation about it is keyed by.
+//
+// One function rather than a string built in two places. The app layer renders
+// the input and this package reads it, and a disagreement between them is a
+// form whose quantity is silently always zero -- not a crash, not a violation,
+// just a submission for nothing.
+func QuantityField(itemID string) string { return "qty_" + itemID }
+
 // Values is a submitted body: field names to the values sent under them.
 //
 // Its own type rather than net/url.Values, so this package does not import a
@@ -593,7 +602,7 @@ func (f Form) order(in Values) ([]Line, int, types.Money, []Violation) {
 	)
 
 	for _, it := range f.Items {
-		name := "qty_" + it.ID
+		name := QuantityField(it.ID)
 		raw := in[name]
 
 		if len(raw) > 1 {

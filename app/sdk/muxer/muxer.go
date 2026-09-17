@@ -57,6 +57,7 @@ import (
 	"net/http"
 
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
+	"github.com/jroedel/dropin-forms/app/domain/embedapp"
 	"github.com/jroedel/dropin-forms/app/sdk/health"
 	"github.com/jroedel/dropin-forms/app/sdk/mid"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
@@ -74,9 +75,15 @@ type Config struct {
 	Expected sqldb.Expected
 
 	// FrameAncestors answers which origins may frame a given form's page. It
-	// is a function because the answer is per form; until the form domain
-	// exists, main supplies one backed by the configured list.
+	// is a function because the answer is per form, and main builds one from
+	// the form store with page.FormFrameAncestors.
 	FrameAncestors page.FrameAncestorsFor
+
+	// Embed is what the public form surface needs. Its own config struct
+	// rather than more fields here, because the two surfaces share almost
+	// nothing and a flat Config made it easy to hand the embed surface a
+	// dependency only the admin surface should have.
+	Embed embedapp.Config
 
 	// Users, Access, Mail and Render are what the admin surface needs and the
 	// embed surface must not have. Embed ignores them entirely, which is the
@@ -100,18 +107,52 @@ type Config struct {
 }
 
 // Embed builds the public, embeddable surface.
-func Embed(cfg Config) http.Handler {
+//
+// Like Admin, it returns an error rather than a handler alone: this surface
+// cannot be built without a form store, a place to put submissions, a renderer
+// and a grant key, and a Config missing any of them used to be a nil
+// dereference on the first request -- a segfault in place of a sentence. A
+// surface that cannot be built should say so while the process is starting.
+func Embed(cfg Config) (http.Handler, error) {
+	switch {
+	case cfg.Embed.Forms == nil:
+		return nil, errors.New("the embed surface needs somewhere to read form definitions from")
+	case cfg.Embed.Submissions == nil:
+		return nil, errors.New("the embed surface needs somewhere to put submissions")
+	case cfg.Embed.Render == nil:
+		return nil, errors.New("the embed surface needs a renderer")
+	case cfg.Embed.GrantKey.Zero():
+		return nil, errors.New("the embed surface needs a grant signing key; every form page carries a grant")
+	}
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", health.Handler(cfg.Log, cfg.DB, cfg.Expected))
+
+	// No Authenticate and no Require, and that is the whole shape of this
+	// surface rather than an omission. It is framed cross-site, so SameSite
+	// withholds any cookie it might carry from every request the frame makes
+	// -- there is no session to establish and nothing for a CSRF gate to
+	// protect. What guards the POST is the submission grant, inside the
+	// handler, and embedapp's package comment says so at length.
+	//
+	// In particular: do not mount the parent project's RequireFormToken here.
+	// It passes through when there is no principal, which is correct there and
+	// would admit every POST unconditionally here.
+	embedapp.Routes(mux, cfg.Embed)
 
 	return web.Wrap(mux,
 		web.RequestID(),
 		web.Logging(cfg.Log),
 		web.Panics(cfg.Log),
 		web.SecureHeaders(page.EmbedPolicy(cfg.FrameAncestors)),
+
+		// Writes only. It refuses a cross-site POST from a browser, and by its
+		// own admission lets a header-less client through -- which is why it
+		// is one of several things in front of a submission rather than the
+		// thing in front of it.
 		web.SameOriginOnly(),
-	)
+	), nil
 }
 
 // Admin builds the management surface.
