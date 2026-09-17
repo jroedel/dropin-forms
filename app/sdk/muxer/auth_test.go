@@ -18,6 +18,8 @@ import (
 	"github.com/jroedel/dropin-forms/app/sdk/mid"
 	"github.com/jroedel/dropin-forms/app/sdk/muxer"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
+	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
+	"github.com/jroedel/dropin-forms/business/domain/access/stores/accessdb"
 	"github.com/jroedel/dropin-forms/business/domain/user/stores/userdb"
 	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/business/types"
@@ -32,9 +34,10 @@ const bootstrapSecret = "a-long-enough-one-time-bootstrap-secret"
 // about a handler called directly. The thing most worth testing about a route
 // is what sits in front of it.
 type harness struct {
-	h     http.Handler
-	users *userbus.Business
-	sent  *mail.Recorder
+	h      http.Handler
+	users  *userbus.Business
+	access *accessbus.Business
+	sent   *mail.Recorder
 }
 
 func newAdmin(t *testing.T, bootstrap string) harness {
@@ -53,9 +56,13 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 	if err := userdb.Init(t.Context(), db); err != nil {
 		t.Fatalf("userdb.Init: %v", err)
 	}
+	if err := accessdb.Init(t.Context(), db); err != nil {
+		t.Fatalf("accessdb.Init: %v", err)
+	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	users := userbus.NewBusiness(log, userdb.NewStore(db))
+	access := accessbus.NewBusiness(log, accessdb.NewStore(db))
 	sent := &mail.Recorder{}
 
 	renderer, err := page.NewRenderer(log, authapp.Templates)
@@ -70,12 +77,16 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 	for table, columns := range userdb.Expected {
 		expected[table] = columns
 	}
+	for table, columns := range accessdb.Expected {
+		expected[table] = columns
+	}
 
 	h, err := muxer.Admin(muxer.Config{
 		Log:          log,
 		DB:           db,
 		Expected:     expected,
 		Users:        users,
+		Access:       access,
 		Mail:         sent,
 		Render:       renderer,
 		AdminBaseURL: "https://forms.test",
@@ -85,7 +96,7 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 		t.Fatalf("muxer.Admin: %v", err)
 	}
 
-	return harness{h: h, users: users, sent: sent}
+	return harness{h: h, users: users, access: access, sent: sent}
 }
 
 func (a harness) get(t *testing.T, target string, cookie string) *httptest.ResponseRecorder {
@@ -341,9 +352,13 @@ func newAdminWithBrokenMail(t *testing.T) harness {
 	if err := userdb.Init(t.Context(), db); err != nil {
 		t.Fatalf("userdb.Init: %v", err)
 	}
+	if err := accessdb.Init(t.Context(), db); err != nil {
+		t.Fatalf("accessdb.Init: %v", err)
+	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	users := userbus.NewBusiness(log, userdb.NewStore(db))
+	access := accessbus.NewBusiness(log, accessdb.NewStore(db))
 
 	renderer, err := page.NewRenderer(log, authapp.Templates)
 	if err != nil {
@@ -357,12 +372,16 @@ func newAdminWithBrokenMail(t *testing.T) harness {
 	for table, columns := range userdb.Expected {
 		expected[table] = columns
 	}
+	for table, columns := range accessdb.Expected {
+		expected[table] = columns
+	}
 
 	h, err := muxer.Admin(muxer.Config{
 		Log:          log,
 		DB:           db,
 		Expected:     expected,
 		Users:        users,
+		Access:       access,
 		Mail:         brokenMail{},
 		Render:       renderer,
 		AdminBaseURL: "https://forms.test",
@@ -373,6 +392,7 @@ func newAdminWithBrokenMail(t *testing.T) harness {
 
 	a.h = h
 	a.users = users
+	a.access = access
 
 	return a
 }
@@ -469,6 +489,64 @@ func TestBootstrapWorksOnceAndCreatesTheFirstAccount(t *testing.T) {
 	if len(a.sent.Sent) != 0 {
 		t.Errorf("bootstrap sent %d messages, want none", len(a.sent.Sent))
 	}
+}
+
+// The bootstrap secret has to produce somebody who can grant, or it produces a
+// session that can see nothing and the service is unusable on its first day:
+// the only way to grant anything would be to already hold a grant.
+func TestBootstrapMakesTheFirstAccountASiteAdministrator(t *testing.T) {
+	a := newAdmin(t, bootstrapSecret)
+
+	w := a.post(t, "/signin/bootstrap", url.Values{
+		"email":  {"frjeff@schoenstatt.us"},
+		"secret": {bootstrapSecret},
+	}, "")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("bootstrap = %d, want 303:\n%s", w.Code, w.Body)
+	}
+
+	grants, err := a.access.All(t.Context())
+	if err != nil {
+		t.Fatalf("All: %v", err)
+	}
+	if len(grants) != 1 {
+		t.Fatalf("%d grants after bootstrapping, want 1", len(grants))
+	}
+
+	g := grants[0]
+
+	if !g.SiteWide() {
+		t.Errorf("the grant is on %q, want every form", g.Form)
+	}
+	if g.Role != accessbus.RoleAdmin {
+		t.Errorf("Role = %q, want %q", g.Role, accessbus.RoleAdmin)
+	}
+
+	// Nobody granted it. The configuration did, and the audit field says so
+	// rather than naming the account as its own granter.
+	if !g.GrantedBy.Zero() {
+		t.Errorf("GrantedBy = %q, want the zero id", g.GrantedBy)
+	}
+
+	// And it is enough to reach a form.
+	allowed, err := a.access.Allowed(t.Context(), g.UserID, mustSlug(t, "feast-lunch-2026"), accessbus.RoleAdmin)
+	if err != nil {
+		t.Fatalf("Allowed: %v", err)
+	}
+	if !allowed {
+		t.Error("the bootstrapped administrator cannot reach a form")
+	}
+}
+
+func mustSlug(t *testing.T, s string) types.Slug {
+	t.Helper()
+
+	slug, err := types.ParseSlug(s)
+	if err != nil {
+		t.Fatalf("ParseSlug(%q): %v", s, err)
+	}
+
+	return slug
 }
 
 func TestBackupCodeJourney(t *testing.T) {

@@ -9,12 +9,18 @@
 //	SameOriginOnly   refuses a write that came from somewhere else
 //	Authenticate     establishes who is asking, and refuses nobody
 //	  Require        refuses a request with no account behind it
-//	    the app
+//	    RequireFormRole  refuses an account with no grant on this form
+//	      the app
 //
 // [Authenticate] never refuses, which is what lets the sign-in page live in
 // the same chain as everything it protects. [Require] comes next, so a route
 // mounted without it fails by showing a signed-out page rather than by leaking
 // one.
+//
+// [RequireFormRole] is last, because "who is this" has to be settled before
+// "what may they do", and because the two refusals are different answers: one
+// sends somebody to the sign-in page and the other tells them they are signed
+// in as the wrong person.
 package mid
 
 import (
@@ -26,6 +32,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/business/types"
 	"github.com/jroedel/dropin-forms/foundation/web"
@@ -172,6 +179,96 @@ func Require(signInPath string) web.Middleware {
 
 			// 303, so that the browser follows with a GET whatever this was.
 			http.Redirect(w, r, to, http.StatusSeeOther)
+		})
+	}
+}
+
+// FormSlugParam is the path wildcard [RequireFormRole] reads. A route behind
+// that gate must name its wildcard this, and the gate says so loudly rather
+// than failing open when it does not.
+const FormSlugParam = "slug"
+
+// Authorizer is what this package needs in order to answer "may they", which
+// is a narrow enough slice of accessbus to be worth naming separately -- and
+// narrow enough that a test can supply it in three lines.
+type Authorizer interface {
+	Allowed(ctx context.Context, userID types.ID, form types.Slug, want accessbus.Role) (bool, error)
+}
+
+// RequireFormRole refuses a signed-in account that holds no sufficient grant
+// on the form this route names.
+//
+// It must be mounted under [Require]. Without a principal there is nothing to
+// check, and rather than fall through to the handler this refuses and logs it
+// as the mounting mistake it is -- a gate whose absent input makes it a no-op
+// is the trap the parent project's form-token middleware set, and it is
+// written down in app/sdk/muxer for the same reason.
+//
+// Three refusals, and they are deliberately not the same:
+//
+//	404  the slug in the path is not a form name at all, so no such page
+//	     could exist. Answered here rather than let through, because the
+//	     handler beneath would have to re-derive it to say the same thing.
+//	403  a real form, and this account may not have it. It says which
+//	     account, because the reader is signed in and the usual cause is
+//	     being signed in as the wrong one.
+//	500  the grant could not be read. Never a refusal: an unreachable
+//	     database must not present as "you are not allowed", or somebody
+//	     spends the afternoon wondering what they did wrong.
+func RequireFormRole(log *slog.Logger, auth Authorizer, want accessbus.Role) web.Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestID := web.RequestIDFrom(r.Context())
+
+			u, ok := UserFrom(r.Context())
+			if !ok {
+				log.Error("a route behind RequireFormRole is not behind Require",
+					"request_id", requestID, "path", r.URL.Path)
+				http.Error(w, "you need to be signed in to do that.", http.StatusForbidden)
+
+				return
+			}
+
+			raw := r.PathValue(FormSlugParam)
+			if raw == "" {
+				// A mounting mistake again, and a 500 rather than a refusal
+				// because refusing would look like a permission problem and
+				// send somebody looking in the wrong place.
+				log.Error("a route behind RequireFormRole has no {"+FormSlugParam+"} in its pattern",
+					"request_id", requestID, "path", r.URL.Path)
+				http.Error(w, "something went wrong at our end. Please try again shortly.", http.StatusInternalServerError)
+
+				return
+			}
+
+			form, err := types.ParseSlug(raw)
+			if err != nil {
+				http.Error(w, "there is no form by that name.", http.StatusNotFound)
+
+				return
+			}
+
+			allowed, err := auth.Allowed(r.Context(), u.ID, form, want)
+			if err != nil {
+				log.Error("the grant could not be checked",
+					"request_id", requestID, "user_id", u.ID, "form", form.String(), "error", err)
+				http.Error(w, "something went wrong at our end. Please try again shortly.", http.StatusInternalServerError)
+
+				return
+			}
+
+			if !allowed {
+				// Logged, because a refusal here is either somebody signed in
+				// on the wrong account or somebody trying slugs, and the two
+				// are told apart by how many lines there are.
+				log.Info("refused for want of a grant",
+					"request_id", requestID, "user_id", u.ID, "form", form.String(), "want", want)
+				http.Error(w, "you are signed in as "+u.Email.String()+", which does not have access to this form.", http.StatusForbidden)
+
+				return
+			}
+
+			next.ServeHTTP(w, r)
 		})
 	}
 }

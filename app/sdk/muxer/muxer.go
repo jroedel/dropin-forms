@@ -38,9 +38,8 @@
 //
 // # What is not here yet
 //
-// Authenticate, Require and RequireFormRole arrive with the management app,
-// and the submission grant arrives with the embedded form. When they do, note
-// two things the design document is emphatic about:
+// The submission grant arrives with the embedded form. When it does, note two
+// things the design document is emphatic about:
 //
 //   - The grant check must not be the parent project's RequireFormToken. That
 //     middleware passes through when there is no principal, which is correct
@@ -61,6 +60,7 @@ import (
 	"github.com/jroedel/dropin-forms/app/sdk/health"
 	"github.com/jroedel/dropin-forms/app/sdk/mid"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
+	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/foundation/mail"
 	"github.com/jroedel/dropin-forms/foundation/sqldb"
@@ -78,11 +78,12 @@ type Config struct {
 	// exists, main supplies one backed by the configured list.
 	FrameAncestors page.FrameAncestorsFor
 
-	// Users, Mail and Render are what the admin surface needs and the embed
-	// surface must not have. Embed ignores them entirely, which is the
+	// Users, Access, Mail and Render are what the admin surface needs and the
+	// embed surface must not have. Embed ignores them entirely, which is the
 	// clearest statement available that the public surface has no session,
 	// sends no mail and renders no admin chrome.
 	Users  *userbus.Business
+	Access *accessbus.Business
 	Mail   mail.Sender
 	Render *page.Renderer
 
@@ -132,6 +133,8 @@ func Admin(cfg Config) (http.Handler, error) {
 		return nil, errors.New("the admin surface needs a renderer")
 	case cfg.Users == nil:
 		return nil, errors.New("the admin surface needs the account domain")
+	case cfg.Access == nil:
+		return nil, errors.New("the admin surface needs the access domain, which is what decides who may read a form's submissions")
 	case cfg.Mail == nil:
 		return nil, errors.New("the admin surface needs somewhere to send mail, even if that is a recorder")
 	case cfg.AdminBaseURL == "":
@@ -167,6 +170,7 @@ func Admin(cfg Config) (http.Handler, error) {
 	authapp.Routes(mux, authapp.Config{
 		Log:       cfg.Log,
 		Users:     cfg.Users,
+		Access:    cfg.Access,
 		Mail:      cfg.Mail,
 		Render:    cfg.Render,
 		BaseURL:   cfg.AdminBaseURL,

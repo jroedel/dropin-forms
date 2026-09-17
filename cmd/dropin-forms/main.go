@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
+	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
+	"github.com/jroedel/dropin-forms/business/domain/access/stores/accessdb"
 	"github.com/jroedel/dropin-forms/business/domain/user/stores/userdb"
 	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/foundation/mail"
@@ -114,6 +116,13 @@ func run() error {
 		return err
 	}
 
+	// After userdb, because a grant row references an account row. SQLite
+	// tolerates the other order for a CREATE TABLE, and relying on that would
+	// be relying on the thing being tolerated.
+	if err := accessdb.Init(ctx, db); err != nil {
+		return err
+	}
+
 	// The schema is checked once at startup as well as on every health
 	// request. Failing here means the process never begins serving, which is
 	// what should happen when a binary and a database disagree -- the deploy
@@ -123,7 +132,7 @@ func run() error {
 	// and nothing created is caught here rather than on the first request
 	// that touches it.
 	expected := sqldb.Expected{}
-	for _, part := range []sqldb.Expected{sqldb.Infrastructure, userdb.Expected} {
+	for _, part := range []sqldb.Expected{sqldb.Infrastructure, userdb.Expected, accessdb.Expected} {
 		for table, columns := range part {
 			if _, clash := expected[table]; clash {
 				return fmt.Errorf("two stores both claim the table %s", table)
@@ -138,6 +147,7 @@ func run() error {
 	}
 
 	users := userbus.NewBusiness(log, userdb.NewStore(db))
+	access := accessbus.NewBusiness(log, accessdb.NewStore(db))
 
 	sender, howMail, err := newSender(log, cfg)
 	if err != nil {
@@ -155,6 +165,7 @@ func run() error {
 		Expected: expected,
 
 		Users:        users,
+		Access:       access,
 		Mail:         sender,
 		Render:       renderer,
 		AdminBaseURL: cfg.Server.AdminBaseURL,

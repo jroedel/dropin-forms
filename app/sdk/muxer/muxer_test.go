@@ -12,6 +12,8 @@ import (
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/sdk/muxer"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
+	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
+	"github.com/jroedel/dropin-forms/business/domain/access/stores/accessdb"
 	"github.com/jroedel/dropin-forms/business/domain/user/stores/userdb"
 	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/business/types"
@@ -40,9 +42,13 @@ func newConfig(t *testing.T, origins []types.Origin, expected sqldb.Expected) mu
 	log := logger.New(io.Discard, slog.LevelError)
 
 	// userdb's tables as well, because the admin surface mounts the sign-in
-	// routes and they need somewhere to write.
+	// routes and they need somewhere to write, and accessdb's because the
+	// bootstrap sign-in grants the account it creates.
 	if err := userdb.Init(t.Context(), db); err != nil {
 		t.Fatalf("initialising the account tables: %v", err)
+	}
+	if err := accessdb.Init(t.Context(), db); err != nil {
+		t.Fatalf("initialising the grant table: %v", err)
 	}
 
 	renderer, err := page.NewRenderer(log, authapp.Templates)
@@ -59,6 +65,7 @@ func newConfig(t *testing.T, origins []types.Origin, expected sqldb.Expected) mu
 		},
 
 		Users:        userbus.NewBusiness(log, userdb.NewStore(db)),
+		Access:       accessbus.NewBusiness(log, accessdb.NewStore(db)),
 		Mail:         &mail.Recorder{},
 		Render:       renderer,
 		AdminBaseURL: "https://forms.test",
