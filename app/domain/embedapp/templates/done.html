@@ -1,0 +1,46 @@
+{{define "title"}}{{if .Duplicate}}Already received{{else}}Thank you{{end}}{{end}}
+
+{{define "content"}}
+<div id="dropin-root" data-parent-origin="{{.ParentOrigin}}" class="outcome">
+<div class="said">
+{{if .Duplicate}}
+<h1>We already have this</h1>
+<p>It looks like this was sent twice. Only one has been recorded, so there is nothing more to do.</p>
+{{else if .Owed}}
+<h1>Almost done</h1>
+<p>Your answers are saved. The last step is the payment.</p>
+{{else}}
+<h1>Thank you</h1>
+<p>{{if .Form.Confirmation}}{{.Form.Confirmation}}{{else}}This has been received.{{end}}</p>
+{{end}}
+</div>
+
+{{if .Lines}}
+<table class="receipt">
+<tbody>
+{{range .Lines}}
+<tr>
+<th scope="row">{{.Label}}</th>
+<td class="figure">{{.Qty}}</td>
+<td class="figure">{{.Amount}}</td>
+</tr>
+{{end}}
+{{with .Total}}
+<tr class="total">
+<th scope="row" colspan="2">Total</th>
+<td class="figure">{{.}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{end}}
+
+{{if .Owed}}
+{{/* The payment step replaces this with a button that leaves the site, in a
+     _top-targeted form so that a real click is the user activation no popup
+     blocker argues with. Until then it says where things stand rather than
+     promising something that does not exist yet. */}}
+<p class="note">Nothing has been charged yet. We will be in touch about the payment.</p>
+{{end}}
+</div>
+{{end}}

@@ -11,6 +11,15 @@ import (
 	"github.com/jroedel/dropin-forms/business/types"
 )
 
+// QuantityField is the input name a quantity arrives under, and the field a
+// violation about it is keyed by.
+//
+// One function rather than a string built in two places. The app layer renders
+// the input and this package reads it, and a disagreement between them is a
+// form whose quantity is silently always zero -- not a crash, not a violation,
+// just a submission for nothing.
+func QuantityField(itemID string) string { return "qty_" + itemID }
+
 // Values is a submitted body: field names to the values sent under them.
 //
 // Its own type rather than net/url.Values, so this package does not import a
@@ -150,6 +159,37 @@ func (a Answers) Field(name string) (Answer, bool) {
 	}
 
 	return a.Fields[i], true
+}
+
+// SubmitterEmail returns the address to send a receipt to, and whether the
+// form collected one at all.
+//
+// The first answered email field, in the definition's order. A convention
+// rather than a declared role, and it is the right one as long as a form asks
+// for the submitter's address before it asks for anybody else's -- which is
+// the order every form here is written in, because that is the order a person
+// fills one in. If a form ever needs to distinguish "your address" from "the
+// address to mail the tickets to", that becomes a flag on the field and this
+// reads it; until then a second flag nobody sets is worse than a convention
+// written down.
+func (a Answers) SubmitterEmail() (types.Email, bool) {
+	for _, f := range a.Fields {
+		if f.Kind != KindEmail {
+			continue
+		}
+
+		// Already validated, so a parse failure here is impossible. Handled
+		// rather than discarded so that it cannot silently become the zero
+		// address if the validator ever changes.
+		email, err := types.ParseEmail(f.Value())
+		if err != nil {
+			continue
+		}
+
+		return email, true
+	}
+
+	return types.Email{}, false
 }
 
 // Validate decides whether a submission is acceptable and, if it is, what it
@@ -562,7 +602,7 @@ func (f Form) order(in Values) ([]Line, int, types.Money, []Violation) {
 	)
 
 	for _, it := range f.Items {
-		name := "qty_" + it.ID
+		name := QuantityField(it.ID)
 		raw := in[name]
 
 		if len(raw) > 1 {

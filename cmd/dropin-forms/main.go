@@ -12,20 +12,23 @@ import (
 	"flag"
 	"fmt"
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
+	"github.com/jroedel/dropin-forms/app/domain/embedapp"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/access/stores/accessdb"
+	"github.com/jroedel/dropin-forms/business/domain/form/stores/formtoml"
+	"github.com/jroedel/dropin-forms/business/domain/submission/stores/submissiondb"
+	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
 	"github.com/jroedel/dropin-forms/business/domain/user/stores/userdb"
 	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/foundation/mail"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/jroedel/dropin-forms/app/sdk/muxer"
-	"github.com/jroedel/dropin-forms/business/types"
+	"github.com/jroedel/dropin-forms/forms"
 	"github.com/jroedel/dropin-forms/foundation/logger"
 	"github.com/jroedel/dropin-forms/foundation/sqldb"
 	"github.com/jroedel/dropin-forms/foundation/web"
@@ -122,6 +125,9 @@ func run() error {
 	if err := accessdb.Init(ctx, db); err != nil {
 		return err
 	}
+	if err := submissiondb.Init(ctx, db); err != nil {
+		return err
+	}
 
 	// The schema is checked once at startup as well as on every health
 	// request. Failing here means the process never begins serving, which is
@@ -132,7 +138,9 @@ func run() error {
 	// and nothing created is caught here rather than on the first request
 	// that touches it.
 	expected := sqldb.Expected{}
-	for _, part := range []sqldb.Expected{sqldb.Infrastructure, userdb.Expected, accessdb.Expected} {
+	for _, part := range []sqldb.Expected{
+		sqldb.Infrastructure, userdb.Expected, accessdb.Expected, submissiondb.Expected,
+	} {
 		for table, columns := range part {
 			if _, clash := expected[table]; clash {
 				return fmt.Errorf("two stores both claim the table %s", table)
@@ -148,13 +156,28 @@ func run() error {
 
 	users := userbus.NewBusiness(log, userdb.NewStore(db))
 	access := accessbus.NewBusiness(log, accessdb.NewStore(db))
+	submissions := submissionbus.NewBusiness(log, submissiondb.NewStore(db))
+
+	// The definitions are embedded in the binary, so this cannot fail for a
+	// missing file -- only for a definition that does not pass Check, which is
+	// a build-time mistake caught here at the last possible moment rather
+	// than on the first request for that form.
+	definitions, err := formtoml.Load(forms.FS)
+	if err != nil {
+		return fmt.Errorf("the form definitions are not usable: %w", err)
+	}
 
 	sender, howMail, err := newSender(log, cfg)
 	if err != nil {
 		return err
 	}
 
-	renderer, err := page.NewRenderer(log, authapp.Templates)
+	adminPages, err := page.NewRenderer(log, page.AdminChrome(), authapp.Templates)
+	if err != nil {
+		return err
+	}
+
+	embedPages, err := page.NewRenderer(log, page.EmbedChrome(), embedapp.Templates)
 	if err != nil {
 		return err
 	}
@@ -167,16 +190,22 @@ func run() error {
 		Users:        users,
 		Access:       access,
 		Mail:         sender,
-		Render:       renderer,
+		Render:       adminPages,
 		AdminBaseURL: cfg.Server.AdminBaseURL,
 		Bootstrap:    cfg.Auth.BootstrapSecret,
 
-		// Until a form carries its own list of embedding origins, every form
-		// gets the configured one. The signature is already per request so
-		// that swapping in the real lookup is a change of one function and not
-		// a change of shape.
-		FrameAncestors: func(*http.Request) []types.Origin {
-			return cfg.Embed.allowed
+		// Each form's own list, which is what makes frame-ancestors a
+		// property of the form rather than of the installation. The
+		// configured list is the fallback for a definition that names none.
+		FrameAncestors: page.FormFrameAncestors(definitions, cfg.Embed.allowed),
+
+		Embed: embedapp.Config{
+			Log:         log,
+			Forms:       definitions,
+			Submissions: submissions,
+			Render:      embedPages,
+			GrantKey:    cfg.Embed.grantKey,
+			TrustProxy:  cfg.Embed.TrustProxy,
 		},
 	}
 
@@ -199,8 +228,13 @@ func run() error {
 		return err
 	}
 
+	embed, err := muxer.Embed(mc)
+	if err != nil {
+		return err
+	}
+
 	return web.Serve(ctx, log, cfg.Server.shutdownGraceD,
-		web.Surface{Name: "embed", Addr: cfg.Server.EmbedAddr, Handler: muxer.Embed(mc)},
+		web.Surface{Name: "embed", Addr: cfg.Server.EmbedAddr, Handler: embed},
 		web.Surface{Name: "admin", Addr: cfg.Server.AdminAddr, Handler: admin},
 	)
 }

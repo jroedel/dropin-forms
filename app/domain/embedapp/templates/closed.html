@@ -1,0 +1,14 @@
+{{define "title"}}{{.Form.Title}}{{end}}
+
+{{define "content"}}
+<div id="dropin-root" data-parent-origin="{{.ParentOrigin}}" class="closed">
+<h1>{{.Form.Title}}</h1>
+{{if .Note}}
+<p>{{.Note}}</p>
+{{else if .NotYetOpen}}
+<p>This form is not open yet{{with .OpensWhen}}. It opens on {{.}}{{end}}.</p>
+{{else}}
+<p>This form is no longer accepting submissions.</p>
+{{end}}
+</div>
+{{end}}

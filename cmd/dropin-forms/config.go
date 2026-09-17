@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/types"
 )
 
@@ -39,6 +40,28 @@ type config struct {
 		// parent, and Squarespace nests pages inside editor chrome.
 		AllowedOrigins []string `toml:"allowed_origins"`
 		allowed        []types.Origin
+
+		// GrantSigningKey signs the submission grants a form page hands out
+		// and a submission hands back. Required: without it no form can be
+		// rendered, since every page carries a grant.
+		//
+		// Changing it invalidates every grant in flight, which is a handful
+		// of re-rendered pages and no lost data -- so it is rotatable, and
+		// there is no reason to keep a compromised one.
+		GrantSigningKey string `toml:"grant_signing_key"`
+		grantKey        formbus.GrantKey
+
+		// TrustProxy says whether X-Forwarded-For carries the visitor's
+		// address.
+		//
+		// Configured rather than sniffed, and false by default. This process
+		// listens on the loopback behind Apache, so the socket's own address
+		// is always 127.0.0.1 and the visitor's is only in a header -- and a
+		// header is exactly as trustworthy as whatever put it there. Trusting
+		// one with nothing in front means letting a stranger choose the
+		// address that goes to Stripe's fraud checks, which is worse than
+		// having no address at all.
+		TrustProxy bool `toml:"trust_proxy"`
 	} `toml:"embed"`
 
 	DB struct {
@@ -141,6 +164,21 @@ func loadConfig(path string) (config, error) {
 		// Re-serialised from the parsed value rather than kept as written,
 		// for the same reason the frame-ancestors list is.
 		cfg.Server.AdminBaseURL = o.String()
+	}
+
+	// Every form page carries a grant, so a missing key is not a degraded
+	// service, it is a service with no forms. Refused at startup, where the
+	// deploy is still one rename away from the previous release.
+	switch key := cfg.Embed.GrantSigningKey; {
+	case key == "":
+		return config{}, fmt.Errorf("%s needs embed.grant_signing_key; every form page carries a submission grant signed with it. Generate one with: openssl rand -base64 48", path)
+	default:
+		k, err := formbus.ParseGrantKey(key)
+		if err != nil {
+			return config{}, fmt.Errorf("%s has an unusable embed.grant_signing_key: %w. Generate one with: openssl rand -base64 48", path, err)
+		}
+
+		cfg.Embed.grantKey = k
 	}
 
 	// A short bootstrap secret is worse than none: it is a guessable route to

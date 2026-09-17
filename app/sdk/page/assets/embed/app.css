@@ -1,0 +1,284 @@
+/* The embedded form's stylesheet.
+
+   This runs inside an iframe on somebody else's website, which changes two
+   things about how it is written.
+
+   It cannot inherit anything. Squarespace's CSS does not cross the frame
+   boundary -- that is a reason the form is in a frame at all -- so every value
+   a form needs has to be stated here rather than assumed from the host page.
+
+   And it must not assume a viewport. The frame is as wide as the column the
+   snippet was pasted into, which may be 300px in a sidebar, and its height is
+   whatever the parent sets from the message the page posts back. So nothing
+   here is sized against vh, and nothing is positioned fixed: a fixed element
+   in a frame that is exactly as tall as its contents has nowhere to go. */
+
+:root {
+  color-scheme: light dark;
+
+  --ink: #1b1b1f;
+  --paper: #fdfdfb;
+  --muted: #5c5c66;
+  --rule: #c9c9c2;
+  --accent: #29527a;
+  --accent-ink: #ffffff;
+  --wrong: #8c2f21;
+  --wrong-tint: #fbf0ee;
+  --right: #1f5c3d;
+  --right-tint: #eef6f1;
+  --tint: #f4f3ee;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e8e8ea;
+    --paper: #16161a;
+    --muted: #a0a0aa;
+    --rule: #3a3a44;
+    --accent: #8fb6dd;
+    --accent-ink: #12121a;
+    --wrong: #e8907f;
+    --wrong-tint: #2a1a18;
+    --right: #86c9a3;
+    --right-tint: #16241d;
+    --tint: #1e1e24;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body.embedded {
+  margin: 0;
+  padding: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* The frame is only as tall as this element, so no height is set here. */
+}
+
+.form-shell {
+  padding: 1.25rem;
+  max-width: 40rem;
+}
+
+/* --- headings and prose ------------------------------------------------- */
+
+.form-shell h1 {
+  margin: 0 0 .5rem;
+  font-size: 1.35rem;
+  line-height: 1.25;
+}
+
+.intro {
+  margin: 0 0 1.25rem;
+  color: var(--muted);
+}
+
+/* --- fields -------------------------------------------------------------- */
+
+.field {
+  margin: 0 0 1.1rem;
+}
+
+.field > label,
+.field > .group-label {
+  display: block;
+  margin-bottom: .3rem;
+  font-weight: 600;
+}
+
+.field .help {
+  margin: .2rem 0 .35rem;
+  font-size: .875rem;
+  color: var(--muted);
+}
+
+.required-mark {
+  color: var(--wrong);
+  margin-left: .15rem;
+}
+
+input[type="text"],
+input[type="email"],
+input[type="tel"],
+input[type="number"],
+select,
+textarea {
+  width: 100%;
+  padding: .5rem .6rem;
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+textarea {
+  min-height: 6rem;
+  resize: vertical;
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* A field the person has actually interacted with, and only then. :user-invalid
+   rather than :invalid, so an empty required field is not scolded before it
+   has been reached. */
+input:user-invalid,
+select:user-invalid,
+textarea:user-invalid {
+  border-color: var(--wrong);
+}
+
+.choice {
+  display: flex;
+  align-items: flex-start;
+  gap: .5rem;
+  margin: .25rem 0;
+  font-weight: normal;
+}
+
+.choice input {
+  margin: .3rem 0 0;
+  flex: none;
+}
+
+/* --- items --------------------------------------------------------------- */
+
+.items {
+  margin: 0 0 1.25rem;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--tint);
+  padding: .9rem 1rem;
+}
+
+.item {
+  display: flex;
+  align-items: baseline;
+  gap: .75rem;
+  padding: .35rem 0;
+}
+
+.item .item-label {
+  flex: 1 1 auto;
+}
+
+.item .item-price {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.item input[type="number"] {
+  flex: 0 0 5rem;
+  width: 5rem;
+}
+
+.amount-field .currency {
+  color: var(--muted);
+  margin-right: .25rem;
+}
+
+/* --- problems ------------------------------------------------------------ */
+
+.summary {
+  margin: 0 0 1.25rem;
+  padding: .75rem 1rem;
+  border: 1px solid var(--wrong);
+  border-left-width: 4px;
+  border-radius: 4px;
+  background: var(--wrong-tint);
+  color: var(--wrong);
+}
+
+.summary h2 {
+  margin: 0 0 .35rem;
+  font-size: 1rem;
+}
+
+.summary ul {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.problem {
+  margin: .25rem 0 0;
+  color: var(--wrong);
+  font-size: .9rem;
+}
+
+/* --- actions and outcomes ------------------------------------------------ */
+
+button.go {
+  padding: .6rem 1.1rem;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+button.go:hover { filter: brightness(1.08); }
+
+.note {
+  margin: .75rem 0 0;
+  font-size: .875rem;
+  color: var(--muted);
+}
+
+.outcome {
+  padding: 1.25rem;
+  max-width: 40rem;
+}
+
+.outcome .said {
+  padding: .9rem 1rem;
+  border: 1px solid var(--right);
+  border-left-width: 4px;
+  border-radius: 4px;
+  background: var(--right-tint);
+  color: var(--right);
+}
+
+.outcome h1 {
+  margin: 0 0 .5rem;
+  font-size: 1.2rem;
+}
+
+.receipt {
+  margin: 1rem 0 0;
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.receipt th,
+.receipt td {
+  padding: .35rem .5rem;
+  text-align: left;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+
+.receipt td.figure {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.receipt tr.total td,
+.receipt tr.total th {
+  font-weight: 700;
+  border-bottom: none;
+}
+
+.closed {
+  padding: 1.25rem;
+  max-width: 40rem;
+}
