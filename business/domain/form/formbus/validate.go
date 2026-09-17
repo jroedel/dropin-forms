@@ -419,56 +419,23 @@ func (fld Field) checkText(s string) []Violation {
 	return vs
 }
 
-// checkEmail checks the shape of an address well enough to catch a typo,
-// without pretending to know whether it can receive mail.
+// checkEmail defers the shape of the address to types.ParseEmail and keeps
+// only the sentence.
 //
-// Not net/mail.ParseAddress, which accepts `Jane Doe <jane@example.com>` and
-// a bare quoted local part with spaces in it -- correct for a mail header and
-// wrong for a field labelled "Email", where accepting a display name means
-// storing something that is not an address and mailing a receipt to a string
-// nobody can read.
+// One parser, two callers: a form field collecting a receipt address and a
+// user account being created hold the same thing to the same standard, and the
+// consequences of getting it wrong differ only in which of them is worse -- a
+// receipt nobody receives, or a sign-in link nobody can click. What this
+// function adds is the field's label, because the parser cannot know it.
 func (fld Field) checkEmail(s string) []Violation {
-	bad := []Violation{{
-		Field:   fld.Name,
-		Message: fmt.Sprintf("%s does not look like an email address. Check for a typo.", fld.Label),
-	}}
-
-	// The SMTP limit. Above it no relay will take the message anyway.
-	if len(s) > 254 {
-		return bad
-	}
-
-	local, domain, found := strings.Cut(s, "@")
-	if !found {
-		return bad
-	}
-
-	switch {
-	case local == "" || len(local) > 64:
-		return bad
-	case domain == "" || len(domain) > 255:
-		return bad
-	case strings.Contains(domain, "@"):
-		return bad
-	// An apostrophe is deliberately not in this list. It is legal in a local
-	// part and it is in real surnames -- o'neill@example.org is somebody's
-	// actual address, and refusing it turns away a person rather than an
-	// attack. It is safe here because the control-character check above has
-	// already refused anything that could break a mail header, and every
-	// render path escapes for HTML.
-	case strings.ContainsAny(s, " \t\n\"(),:;<>[]\\"):
-		return bad
-	}
-
-	// A domain with no dot is syntactically legal and is never a real
-	// recipient here; it is almost always a dropped ".com".
-	label, rest, hasDot := strings.Cut(domain, ".")
-	if !hasDot || label == "" || rest == "" {
-		return bad
-	}
-
-	if strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") || strings.Contains(domain, "..") {
-		return bad
+	if _, err := types.ParseEmail(s); err != nil {
+		// The parser's own reason is deliberately not shown. It is written for
+		// a log and names the offending character; "check for a typo" is what
+		// somebody filling in a form can act on.
+		return []Violation{{
+			Field:   fld.Name,
+			Message: fmt.Sprintf("%s does not look like an email address. Check for a typo.", fld.Label),
+		}}
 	}
 
 	return nil
