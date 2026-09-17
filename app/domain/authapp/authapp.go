@@ -26,6 +26,7 @@
 package authapp
 
 import (
+	"context"
 	"embed"
 	"errors"
 	"log/slog"
@@ -52,10 +53,19 @@ var Templates = templates
 // particular.
 const home = "/account"
 
+// SiteAdminEnsurer is the one thing this app needs from the access domain, and
+// only on the bootstrap path. Named as an interface rather than taking the
+// business type, because that is the whole extent of it: this app grants
+// nothing else and reads no grants.
+type SiteAdminEnsurer interface {
+	EnsureSiteAdmin(ctx context.Context, now time.Time, userID types.ID) (bool, error)
+}
+
 // Config is what this app needs.
 type Config struct {
 	Log    *slog.Logger
 	Users  *userbus.Business
+	Access SiteAdminEnsurer
 	Mail   mail.Sender
 	Render *page.Renderer
 
@@ -320,13 +330,54 @@ func (a app) redeemBootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	now := time.Now()
+
 	user, cookie, err := a.cfg.Users.Bootstrap(
-		r.Context(), time.Now(), a.cfg.Bootstrap, r.PostFormValue("secret"), email)
+		r.Context(), now, a.cfg.Bootstrap, r.PostFormValue("secret"), email)
+
+	// A session that can see nothing is not a bootstrap. The secret exists so
+	// that somebody can get in and start granting, so making that account a
+	// site-wide administrator is part of redeeming it rather than a separate
+	// step somebody has to know about.
+	if err == nil {
+		a.makeAdmin(r, user)
+	}
 
 	a.finish(w, r, user, cookie, err, "bootstrap", bootstrapView{
 		Email:   typed,
 		Problem: "That did not work. The secret may be wrong, or it may already have been used.",
 	})
+}
+
+// makeAdmin gives the bootstrap account site-wide admin, and never fails the
+// sign-in.
+//
+// The order is forced: userbus.Bootstrap has already spent the one-time
+// secret by the time this runs, so answering 500 here would consume the only
+// way in and give nothing back. A session with no grants is recoverable -- the
+// account exists, it has backup codes to issue, and somebody can fix the
+// database -- while a spent secret and no session is not.
+//
+// EnsureSiteAdmin declining is not an error. It means the service already has
+// an administrator, and a bootstrap secret that has somehow been reissued must
+// not be a way to award yourself authority over a service somebody else is
+// already running. The person gets their session and sees nothing.
+func (a app) makeAdmin(r *http.Request, user userbus.User) {
+	granted, err := a.cfg.Access.EnsureSiteAdmin(r.Context(), time.Now(), user.ID)
+
+	switch {
+	case err != nil:
+		a.cfg.Log.Error("the bootstrap account could not be made an administrator, and the secret is now spent",
+			"request_id", web.RequestIDFrom(r.Context()), "user_id", user.ID.String(), "error", err)
+
+	case granted:
+		a.cfg.Log.Info("the bootstrap account was made a site-wide administrator",
+			"request_id", web.RequestIDFrom(r.Context()), "user_id", user.ID.String())
+
+	default:
+		a.cfg.Log.Warn("a bootstrap sign-in was redeemed on a service that already has an administrator, so no grant was made",
+			"request_id", web.RequestIDFrom(r.Context()), "user_id", user.ID.String())
+	}
 }
 
 // finish is the shared tail of every sign-in attempt: set the cookie and go,

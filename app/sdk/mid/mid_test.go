@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jroedel/dropin-forms/app/sdk/mid"
+	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/business/types"
 	"github.com/jroedel/dropin-forms/foundation/web"
@@ -31,6 +32,10 @@ func (f *fakeAuth) Authenticate(_ context.Context, _ time.Time, presented string
 
 	return f.user, f.err
 }
+
+// signInPath is where Require sends a signed-out reader. One of the tests
+// below declares its own local copy, which predates this and is left alone.
+const signInPath = "/signin"
 
 func discard() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -480,5 +485,230 @@ func TestAPrincipalCannotBeForgedFromOutside(t *testing.T) {
 	}
 	if _, ok := mid.SessionFrom(t.Context()); ok {
 		t.Error("an empty context produced a session")
+	}
+}
+
+// fakeAuthz answers however a test needs it to, and records what it was asked.
+type fakeAuthz struct {
+	allowed bool
+	err     error
+
+	asked []string
+	want  accessbus.Role
+}
+
+func (f *fakeAuthz) Allowed(_ context.Context, userID types.ID, form types.Slug, want accessbus.Role) (bool, error) {
+	f.asked = append(f.asked, userID.String()+" "+form.String())
+	f.want = want
+
+	return f.allowed, f.err
+}
+
+// roleChain mounts a route the way a real one is mounted: a pattern with the
+// wildcard the gate reads, behind Require, behind Authenticate. Testing the
+// gate through the chain rather than alone is the point -- what sits in front
+// of a route is the thing most easily got wrong about it.
+func roleChain(pattern string, signedIn bool, authz mid.Authorizer, got *seen) http.Handler {
+	auth := &fakeAuth{err: userbus.ErrDenied}
+	if signedIn {
+		auth = &fakeAuth{user: userbus.User{
+			ID:      types.NewID(),
+			Email:   mustEmail("reader@example.org"),
+			Enabled: true,
+		}}
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle(pattern, mid.Require(signInPath)(
+		mid.RequireFormRole(discard(), authz, accessbus.RoleResults)(probe(got)),
+	))
+
+	return web.Wrap(mux, mid.Authenticate(discard(), auth))
+}
+
+func mustEmail(s string) types.Email {
+	e, err := types.ParseEmail(s)
+	if err != nil {
+		panic(err)
+	}
+
+	return e
+}
+
+func TestRequireFormRoleAdmitsAGrantHolder(t *testing.T) {
+	var got seen
+
+	authz := &fakeAuthz{allowed: true}
+	h := roleChain("GET /forms/{slug}/submissions", true, authz, &got)
+
+	r := httptest.NewRequest(http.MethodGet, "/forms/feast-lunch-2026/submissions", nil)
+	r.AddCookie(cookieFor(types.NewID().String() + ".averylongsecretvaluehere"))
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if !got.reached {
+		t.Error("the handler was not reached")
+	}
+
+	// The slug came from the path, and the role asked for is the route's own.
+	if len(authz.asked) != 1 || !strings.HasSuffix(authz.asked[0], " feast-lunch-2026") {
+		t.Errorf("asked = %v, want one question about feast-lunch-2026", authz.asked)
+	}
+	if authz.want != accessbus.RoleResults {
+		t.Errorf("asked for %q, want %q", authz.want, accessbus.RoleResults)
+	}
+}
+
+func TestRequireFormRoleRefusesAnAccountWithNoGrant(t *testing.T) {
+	var got seen
+
+	h := roleChain("GET /forms/{slug}/submissions", true, &fakeAuthz{allowed: false}, &got)
+
+	r := httptest.NewRequest(http.MethodGet, "/forms/feast-lunch-2026/submissions", nil)
+	r.AddCookie(cookieFor(types.NewID().String() + ".averylongsecretvaluehere"))
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", w.Code)
+	}
+	if got.reached {
+		t.Error("the handler was reached without a grant")
+	}
+
+	// It names the account, because the reader is signed in and the usual
+	// cause of this is being signed in as the wrong person.
+	if !strings.Contains(w.Body.String(), "reader@example.org") {
+		t.Errorf("the refusal does not say who is signed in: %q", w.Body.String())
+	}
+}
+
+// A refusal must not be how an unreachable database presents. Somebody told
+// "you are not allowed" goes looking for a permission problem, and there is
+// not one.
+func TestRequireFormRoleAnswers500WhenTheGrantCannotBeRead(t *testing.T) {
+	var got seen
+
+	authz := &fakeAuthz{err: errors.New("the disk is on fire")}
+	h := roleChain("GET /forms/{slug}/submissions", true, authz, &got)
+
+	r := httptest.NewRequest(http.MethodGet, "/forms/feast-lunch-2026/submissions", nil)
+	r.AddCookie(cookieFor(types.NewID().String() + ".averylongsecretvaluehere"))
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", w.Code)
+	}
+	if got.reached {
+		t.Error("the handler was reached after the check failed")
+	}
+	if strings.Contains(w.Body.String(), "disk") {
+		t.Errorf("the error reached the reader: %q", w.Body.String())
+	}
+}
+
+func TestRequireFormRoleRefusesASlugThatIsNotAFormName(t *testing.T) {
+	var got seen
+
+	// allowed: true, so that the only thing that can refuse this is the slug.
+	authz := &fakeAuthz{allowed: true}
+	h := roleChain("GET /forms/{slug}/submissions", true, authz, &got)
+
+	r := httptest.NewRequest(http.MethodGet, "/forms/Feast_Lunch!/submissions", nil)
+	r.AddCookie(cookieFor(types.NewID().String() + ".averylongsecretvaluehere"))
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
+	}
+	if got.reached {
+		t.Error("the handler was reached with an unparseable slug")
+	}
+	if len(authz.asked) != 0 {
+		t.Errorf("the store was consulted about a slug that cannot exist: %v", authz.asked)
+	}
+}
+
+// The trap this gate is written against: a middleware whose absent input makes
+// it a no-op, while the chain diagram still lists it as a gate.
+func TestRequireFormRoleRefusesWhenThereIsNoPrincipal(t *testing.T) {
+	var got seen
+
+	authz := &fakeAuthz{allowed: true}
+
+	// Mounted without Require, which is the mistake. Deliberately reached
+	// with no session at all.
+	mux := http.NewServeMux()
+	mux.Handle("GET /forms/{slug}/submissions",
+		mid.RequireFormRole(discard(), authz, accessbus.RoleResults)(probe(&got)))
+
+	h := web.Wrap(mux, mid.Authenticate(discard(), &fakeAuth{err: userbus.ErrDenied}))
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/forms/feast-lunch-2026/submissions", nil))
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", w.Code)
+	}
+	if got.reached {
+		t.Error("an unauthenticated request reached a handler behind RequireFormRole")
+	}
+	if len(authz.asked) != 0 {
+		t.Errorf("the store was consulted with no account: %v", authz.asked)
+	}
+}
+
+// A route mounted behind this gate with no {slug} in its pattern is a mounting
+// mistake, and a 500 rather than a refusal so that it is not mistaken for a
+// permission problem.
+func TestRequireFormRoleAnswers500WhenTheRouteNamesNoForm(t *testing.T) {
+	var got seen
+
+	authz := &fakeAuthz{allowed: true}
+	h := roleChain("GET /forms/all/submissions", true, authz, &got)
+
+	r := httptest.NewRequest(http.MethodGet, "/forms/all/submissions", nil)
+	r.AddCookie(cookieFor(types.NewID().String() + ".averylongsecretvaluehere"))
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", w.Code)
+	}
+	if got.reached {
+		t.Error("the handler was reached from a route with no form in it")
+	}
+}
+
+// Require decides first, and its answer for a readable request is the sign-in
+// page rather than a refusal -- so a signed-out reader is redirected, not told
+// they lack a grant they could not possibly hold.
+func TestRequireDecidesBeforeRequireFormRole(t *testing.T) {
+	var got seen
+
+	authz := &fakeAuthz{allowed: true}
+	h := roleChain("GET /forms/{slug}/submissions", false, authz, &got)
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/forms/feast-lunch-2026/submissions", nil))
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", w.Code)
+	}
+	if to := w.Header().Get("Location"); !strings.HasPrefix(to, signInPath) {
+		t.Errorf("Location = %q, want the sign-in page", to)
+	}
+	if len(authz.asked) != 0 {
+		t.Errorf("the grant was checked for a signed-out reader: %v", authz.asked)
 	}
 }

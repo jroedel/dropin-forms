@@ -717,13 +717,26 @@ business/domain/submission/stores/submissiondb/
 business/domain/payment/paybus/          Checkout sessions, webhook events
 business/domain/user/userbus/            accounts, magic-link tokens, backup codes
 business/domain/access/accessbus/        per-form role grants
-business/types/                          Slug, Money, FieldKind, Origin, Role
+business/domain/access/stores/accessdb/  one row per (account, form)
+business/types/                          Slug, Money, Email, ID, Origin
 foundation/web/                          SameOriginOnly, SecureHeaders, the server
 foundation/sqldb/  foundation/errs/  foundation/logger/  foundation/mail/
 ```
 
 No App package imports another: `embedapp` and `formapp` share the definition
 through `formbus`, and page chrome through `app/sdk/page`.
+
+**Two value types moved out of `business/types` while being written**, and the
+reasoning is the same both times, so it is recorded once here rather than
+argued twice. This document originally put a field's kind and a role's name in
+`types`; they are `formbus.Kind` and `accessbus.Role`. A type belongs in
+`types` when more than one domain needs it and none of them owns it — `Slug`,
+`Money`, `Email`, `ID`, `Origin` are all of that shape. A kind is meaningless
+without the validator that enforces it, and a role is meaningless without the
+grant it is recorded in; putting either in `types` separates a closed set from
+the only code that can say what its members mean, and the next person to add a
+member edits one and not the other. What stays in `types` is what has no home
+domain.
 
 **The per-form CSP is not built in `foundation/`.** Nothing there knows a domain
 word, and the seeded `SecureHeaders` sets one fixed policy at the root. The
@@ -777,12 +790,67 @@ Two gaps in the inherited `foundation/web` to fix while bootstrapping:
   *sentence* is chosen per page by `authapp`, which is as specific as this
   service is willing to be.
 - **`accessbus`** — a grant is (user, form, role) with roles `admin` and
-  `results`. Its own domain so `formbus` need not know what a user is.
+  `results`. Its own domain so `formbus` need not know what a user is, and
+  `userbus` need not know what a form is; `accessbus` imports neither, and
+  deals only in identifiers.
 - **`mid.RequireFormRole(role)`** reads the slug from the path and checks the
   grant. It sits *after* the submission-grant check, which the skill is explicit
   about: "this request did not come from you" is a prior question to "what may
   you do". `results` reads submissions and exports CSV but cannot edit; `admin`
   implies `results`.
+
+#### The site-wide grant, which the plan did not have
+
+A grant whose form is the **zero slug** applies to every form. Without one,
+`accessbus` is unusable on its first day: the bootstrap secret produces an
+account, that account holds no grants, and the only way to grant anything is to
+already hold a grant. Somebody has to be able to start.
+
+It is deliberately **not** a second concept with its own table and its own
+check. One lookup shape, one revoke, one listing, and the only difference is
+which slug is in the row — because a separate code path for "and also the
+superuser" is how a permission check acquires a branch nobody tested.
+`Allowed` reads the form-specific grant first, so the ordinary request is one
+primary-key hit, and then the site-wide one; it does not stop at the first row
+it finds, or a weak grant on one form would shadow a strong grant on
+everything.
+
+Three consequences worth writing down:
+
+- **The bootstrap sign-in grants site-wide `admin` to the account it creates.**
+  That is part of redeeming the secret rather than a step somebody has to know
+  about, and it happens *after* `userbus.Bootstrap` has already spent the
+  secret — so a failure there is logged loudly and the sign-in still succeeds.
+  A session with no grants is recoverable; a spent secret and no session is
+  not.
+- **It declines if the service already has an administrator.** A bootstrap
+  secret reissued by hand must not be a way to award yourself authority over a
+  service somebody else is running. The person gets a session and sees nothing,
+  which is the right outcome for somebody holding a secret they should not
+  have.
+- **The last site-wide administrator cannot be revoked** (`ErrLastAdmin`).
+  Removing it leaves nobody who can grant anything, and the way back is a
+  one-time secret that has been used. There is no CLI here to repair that with.
+
+#### The gate's three refusals are deliberately different
+
+`RequireFormRole` answers **404** for a slug that is not a form name at all,
+**403** for a real form this account may not have — naming the signed-in
+address, because the usual cause is being signed in as the wrong person — and
+**500** when the grant could not be read. That last one is the important
+distinction: an unreachable database must never present as "you are not
+allowed", or somebody spends the afternoon looking for a permission problem
+that does not exist. `accessbus.Allowed` returns `(false, err)` and every
+caller has to keep the two apart.
+
+The gate also refuses, loudly and in the log, when it is mounted without
+`Require` in front of it or on a route whose pattern has no `{slug}`. Both are
+mounting mistakes, and a gate whose absent input makes it a silent no-op is
+precisely the trap the parent project's `RequireFormToken` set — §5.3.
+
+**There is no UI for granting yet.** Until there is, the bootstrap account is
+the only account with access, which is enough for October — one person reads
+the lunch numbers — and it is the first thing `formapp` needs in Track B.
 
 ## 10. Dependencies
 
@@ -847,7 +915,9 @@ means mail.
    heaviest test file in the repository.
 4. **`userbus` + `authapp`** — magic link with the POST-to-sign-in step, the
    bootstrap secret, backup codes, sessions, rate limiting.
-5. **`accessbus` + `RequireFormRole`.**
+5. **`accessbus` + `RequireFormRole`** — per-form `admin`/`results` grants,
+   the site-wide grant that makes the first one possible, and the bootstrap
+   sign-in that awards it.
 6. **`embedapp`, no payment yet** — render, mint and redeem grants, POST with
    server-side validation and error re-display, the in-line confirmation,
    `embed.js`, the enhancement script, submission storage. Live on the real
