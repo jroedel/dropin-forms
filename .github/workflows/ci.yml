@@ -1,0 +1,49 @@
+# Every pull request, and main. Nothing here touches the server.
+#
+# The steps are separate rather than one `make test`, so that a red run names
+# which of the four failed on its own line instead of making somebody read the
+# log to find out.
+#
+# Actions are pinned to a commit rather than a tag. A tag is a moving pointer
+# that its owner can repoint, and a third-party action runs with access to this
+# workflow's token and secrets -- so "v5" means "whatever v5 happens to be on
+# the morning of the deploy".
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # From go.mod, so the toolchain in CI is the one the module declares
+          # and there is no second place to bump.
+          go-version-file: go.mod
+          cache: true
+
+      - name: lint
+        run: make lint
+
+      - name: unit tests, with the race detector
+        run: make test-unit
+
+      - name: vulnerability scan
+        run: make vuln-check
+
+      - name: the release build is static
+        # Not a duplicate of `go build`. The server has no Go toolchain and
+        # gets one file, so a build that quietly links this runner's glibc is a
+        # deploy that dies on the host with GLIBC_2.xx not found. `make
+        # release` asserts the result is statically linked and fails if not.
+        run: make release

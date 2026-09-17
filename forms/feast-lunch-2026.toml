@@ -1,0 +1,99 @@
+# Feast of Our Lady of Schoenstatt, Saturday 17 October 2026.
+#
+# Lunch tickets are optional: the page also takes donations toward maintaining
+# the Shrine, so somebody may give without buying a ticket and buy a ticket
+# without giving. What stops a submission that does neither is
+# payment_required below.
+#
+# TO CHANGE THE TICKET PRICE, edit `price` under [[item]] and deploy. Nothing
+# else needs touching. The form's version is a fingerprint of this file's
+# content, so the edit invalidates every grant already sitting in an open tab
+# and anyone mid-order is re-rendered at the new price rather than charged the
+# old one. There is no schedule and no cutover to get wrong.
+
+id = "feast-lunch-2026"
+title = "Feast of Our Lady of Schoenstatt"
+
+intro = """
+Join us for lunch after Mass on Saturday 17 October, and help us care for the \
+Shrine of Our Lady of Schoenstatt.
+"""
+
+# End of the day of the feast, because the page takes donations as well as
+# tickets.
+#
+# The offset is mandatory and is checked at startup. -05:00 is Central Daylight
+# Time, which is correct for this date: US daylight saving does not end until
+# 1 November 2026. Written without an offset this would be read as UTC, and the
+# form would close at seven in the evening on the day of the feast.
+closes_at = "2026-10-17T23:59:59-05:00"
+
+closed_note = """
+Thank you -- the feast has passed and this page is closed. To give toward the \
+Shrine, or to ask about a future event, please write to us.
+"""
+
+currency = "usd"
+
+# Who may embed this form. Anything not on this list gets frame-ancestors
+# 'none' and a blank box, which is the fail-closed default. The Squarespace
+# site's www. host 301s to the apex, so the apex is the only entry needed.
+origins = ["https://schoenstatt-austin.us"]
+
+# Twenty tickets in one order; beyond that, please write to us. No minimum,
+# because the tickets are optional.
+max_per_order = 20
+
+# A ceiling on the whole order, tickets and donation together. A larger gift is
+# very welcome and is better arranged directly than through a web form.
+max_total = "5000.00"
+
+# A submission must be worth something: a ticket, a donation, or both.
+payment_required = true
+payment_note = "Choose at least one lunch ticket, or enter a donation for the Shrine."
+
+confirmation = """
+Thank you. We have your order and a receipt is on its way to the address you \
+gave. We look forward to seeing you at the Shrine.
+"""
+
+[[field]]
+name = "name"
+label = "Your name"
+help = "Whose name should go on the ticket, or on your donation receipt?"
+kind = "text"
+required = true
+max_length = 100
+autocomplete = "name"
+
+[[field]]
+name = "email"
+label = "Email for your receipt"
+kind = "email"
+required = true
+max_length = 254
+autocomplete = "email"
+
+[[field]]
+name = "donation"
+label = "Donation for the Shrine"
+help = "Toward maintaining the Shrine of Our Lady of Schoenstatt."
+kind = "amount"
+# Dollars and cents, as a string. A five dollar floor, which doubles as an
+# abuse control: a form whose smallest possible charge is $5 is a poor
+# instrument for testing stolen cards.
+min = "5.00"
+max = "5000.00"
+
+[[field]]
+name = "notes"
+label = "Anything we should know"
+help = "Dietary needs, who the tickets are for, anything else."
+kind = "paragraph"
+max_length = 500
+
+[[item]]
+id = "ticket"
+label = "Lunch ticket"
+price = "12.00"
+max = 20

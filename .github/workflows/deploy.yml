@@ -1,0 +1,124 @@
+# Ship to production, on a version tag.
+#
+# A tag rather than every push to main, because a form that takes money should
+# go live when somebody decides it should. `make test` runs on every pull
+# request regardless, so this is not the only gate -- it is the moment of
+# choosing.
+#
+# Be clear-eyed about what this workflow holds. The target is a konsoleH
+# account with no root, so there is no sudoers entry that can narrow the deploy
+# key to a single installer command the way the VPS sibling does: whoever holds
+# DEPLOY_SSH_KEY_B64 has a shell on that account. That is accepted deliberately
+# and is the main argument for the tag trigger and for the `production`
+# environment below, which can require a reviewer.
+#
+# What this deliberately does NOT hold: Stripe keys, SMTP credentials, the
+# grant signing key. Those reach the server through `make secrets-install` from
+# a laptop and never pass through GitHub, so a compromise here stops at "can
+# deploy code" rather than also being "can charge cards".
+name: deploy
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# Two deploys at once would race on the binary swap. Never cancel one in
+# flight: the dangerous moment is between `supervise.sh stop` and the rename,
+# and a cancelled job there leaves the service down.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+
+    # Stays grey rather than red before the server exists. `make secrets-push`
+    # sets this variable, so an unconfigured repository simply does not deploy.
+    if: vars.EMBED_HOST != ''
+
+    steps:
+      - name: every required secret, named at once
+        # All of them in one step on purpose. Discovering these one at a time,
+        # five minutes apart, is a bad afternoon. Only emptiness is reported --
+        # never a value, not even a length.
+        env:
+          DEPLOY_SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_USER: ${{ secrets.DEPLOY_SSH_USER }}
+          DEPLOY_SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
+          DEPLOY_SSH_KEY_B64: ${{ secrets.DEPLOY_SSH_KEY_B64 }}
+          DEPLOY_KNOWN_HOSTS_B64: ${{ secrets.DEPLOY_KNOWN_HOSTS_B64 }}
+          EMBED_HOST: ${{ vars.EMBED_HOST }}
+          ADMIN_HOST: ${{ vars.ADMIN_HOST }}
+          EMBED_PORT: ${{ vars.EMBED_PORT }}
+          ADMIN_PORT: ${{ vars.ADMIN_PORT }}
+          APP_DIR: ${{ vars.APP_DIR }}
+          EMBED_DOCROOT: ${{ vars.EMBED_DOCROOT }}
+          ADMIN_DOCROOT: ${{ vars.ADMIN_DOCROOT }}
+        run: |
+          missing=
+          for key in DEPLOY_SSH_HOST DEPLOY_SSH_USER DEPLOY_SSH_PORT \
+                     DEPLOY_SSH_KEY_B64 DEPLOY_KNOWN_HOSTS_B64 \
+                     EMBED_HOST ADMIN_HOST EMBED_PORT ADMIN_PORT \
+                     APP_DIR EMBED_DOCROOT ADMIN_DOCROOT; do
+            [ -n "${!key:-}" ] || missing="$missing $key"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::not configured. Run 'make secrets-push' locally. Empty:$missing"
+            exit 1
+          fi
+          echo "all required secrets and variables are present"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # deploy.sh reports which commit it is building, and a shallow clone
+          # leaves it unable to say.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: tests, re-run here rather than trusted from CI
+        # The tag may point at a commit CI never saw, and this is the last
+        # moment before a binary reaches a machine that takes payments.
+        run: make test
+
+      - name: deploy, health-check, roll back on failure
+        # deploy.sh owns the ordering: nothing destructive until the upload is
+        # known good, the database copied only while the writer is stopped, the
+        # binary swapped by rename, and a rollback if the loopback check fails.
+        # A failed *public* check keeps the release, because that cannot tell a
+        # bad binary from a misconfigured Apache.
+        env:
+          CI: "1"
+          DEPLOY_SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_USER: ${{ secrets.DEPLOY_SSH_USER }}
+          DEPLOY_SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
+          DEPLOY_SSH_KEY_B64: ${{ secrets.DEPLOY_SSH_KEY_B64 }}
+          DEPLOY_KNOWN_HOSTS_B64: ${{ secrets.DEPLOY_KNOWN_HOSTS_B64 }}
+          EMBED_HOST: ${{ vars.EMBED_HOST }}
+          ADMIN_HOST: ${{ vars.ADMIN_HOST }}
+          EMBED_PORT: ${{ vars.EMBED_PORT }}
+          ADMIN_PORT: ${{ vars.ADMIN_PORT }}
+          APP_DIR: ${{ vars.APP_DIR }}
+          EMBED_DOCROOT: ${{ vars.EMBED_DOCROOT }}
+          ADMIN_DOCROOT: ${{ vars.ADMIN_DOCROOT }}
+        run: deploy/deploy.sh --skip-tests
+
+      - name: what is live
+        if: always()
+        env:
+          EMBED_HOST: ${{ vars.EMBED_HOST }}
+          ADMIN_HOST: ${{ vars.ADMIN_HOST }}
+        run: |
+          for host in "$EMBED_HOST" "$ADMIN_HOST"; do
+            printf '%-32s %s\n' "https://$host/healthz" \
+              "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "https://$host/healthz" || echo unreachable)"
+          done

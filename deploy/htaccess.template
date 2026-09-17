@@ -1,0 +1,52 @@
+# Apache in front of the Go app, for one konsoleH document root.
+#
+# Installed by deploy/deploy.sh with __APP_PORT__ substituted, once per
+# surface: the f.schoenstatt.link docroot gets the embed port and the
+# forms.schoenstatt.link docroot gets the admin port. The two documents are
+# otherwise identical.
+#
+# ProxyPass is not permitted in .htaccess on konsoleH, so the route is
+# mod_rewrite's [P] flag. That also means ProxyPreserveHost -- whose context is
+# server config, virtual host and directory, but not .htaccess -- cannot be
+# set, so the app receives Host: 127.0.0.1:__APP_PORT__ whatever the visitor
+# typed. That is exactly why there are two ports: the surface is decided by the
+# socket, which is not forgeable, rather than by a header, which would be. See
+# docs/design/drop-in-forms.md section 3.1.
+#
+# THE ORDER OF THE RULES BELOW IS LOAD-BEARING. The /.well-known/ exclusion
+# comes before the catch-all or konsoleH's certificate renewal challenge is
+# handed to the Go app, which knows nothing about it, and the certificate
+# quietly stops renewing months later. tmpcontrol.online on this same account
+# is in precisely that state. This is the single highest-consequence line here.
+
+DirectoryIndex disabled
+RewriteEngine On
+
+# 1. Certificate renewal. Must be first.
+RewriteCond %{REQUEST_URI} ^/\.well-known/ [NC]
+RewriteRule ^ - [L]
+
+# 2. Force HTTPS. Belt to the braces of the parent domain's HSTS, which already
+#    carries includeSubDomains and preload -- but a redirect is what serves a
+#    client that has never seen the parent domain.
+RewriteCond %{HTTPS} !=on
+RewriteCond %{HTTP:X-Forwarded-Proto} !=https
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+
+# 3. Everything else goes to the app.
+RewriteRule ^(.*)$ http://127.0.0.1:__APP_PORT__/$1 [P,QSA,L]
+
+<IfModule mod_headers.c>
+  # Only a REQUEST header is set here. Every response header -- the
+  # Content-Security-Policy, Referrer-Policy, Cache-Control, HSTS and the
+  # deliberate absence of X-Frame-Options on the embed surface -- comes from
+  # the Go app, and must keep coming from exactly one place.
+  #
+  # Do not add `Header always set Content-Security-Policy` here, however
+  # tempting a hardening snippet makes it look. Two enforced CSP headers are
+  # evaluated independently and a request need only violate one to be blocked,
+  # so a second policy would block the embed while making it look as though the
+  # app's policy were being ignored. Likewise never set X-Frame-Options here:
+  # it cannot express a list, and any value kills the embed.
+  RequestHeader set X-Forwarded-Proto "https" env=HTTPS
+</IfModule>

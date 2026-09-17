@@ -1,0 +1,48 @@
+# The configuration this binary reads. Copy to config.toml, which is
+# gitignored; this example is tracked and is the documentation.
+#
+# On the server, config.toml is written by `make secrets-install` from
+# secrets.env, so the secret-bearing sections below arrive from there rather
+# than being edited by hand over SSH.
+
+[server]
+# Two listeners, and they must differ. Which socket accepted a request is how
+# the embedded form and the management app are told apart: Apache's
+# ProxyPreserveHost cannot be set in .htaccess, so a proxied request arrives
+# with Host: 127.0.0.1:<port> whatever the visitor typed. Each konsoleH
+# document root has its own .htaccess pointing at one of these ports.
+#
+#   public_html/f.schoenstatt.link/public/     -> embed_addr
+#   public_html/forms.schoenstatt.link/public/ -> admin_addr
+embed_addr = "127.0.0.1:8410"
+admin_addr = "127.0.0.1:8411"
+
+# How long in-flight requests get after a stop signal. Long enough for a
+# submission to finish writing, short enough that a restart is not a wait.
+shutdown_grace = "15s"
+
+[embed]
+# Who may frame an embedded form, until each form carries its own list.
+#
+# This becomes the CSP frame-ancestors directive. An empty list means nothing
+# may frame anything -- the policy fails closed on purpose, because a CSP that
+# merely omits frame-ancestors is frameable by the entire web.
+#
+# A list rather than one value because frame-ancestors checks *every* ancestor,
+# not just the immediate parent, and Squarespace nests pages inside editor
+# chrome. Each entry must be https, with no path: https://example.org or
+# https://*.example.org.
+allowed_origins = ["https://schoenstatt-austin.us"]
+
+[db]
+# Above the document root, always. The deploy refuses to ship if this file can
+# be fetched over HTTPS.
+path = "dropin-forms.db"
+
+[log]
+# debug, info, warn or error.
+level = "info"
+
+# Empty means stderr, which is what a developer wants. On the server the
+# supervisor redirects stderr into a file, so this can stay empty there too.
+file = ""
