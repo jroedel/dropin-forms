@@ -152,6 +152,37 @@ func (a Answers) Field(name string) (Answer, bool) {
 	return a.Fields[i], true
 }
 
+// SubmitterEmail returns the address to send a receipt to, and whether the
+// form collected one at all.
+//
+// The first answered email field, in the definition's order. A convention
+// rather than a declared role, and it is the right one as long as a form asks
+// for the submitter's address before it asks for anybody else's -- which is
+// the order every form here is written in, because that is the order a person
+// fills one in. If a form ever needs to distinguish "your address" from "the
+// address to mail the tickets to", that becomes a flag on the field and this
+// reads it; until then a second flag nobody sets is worse than a convention
+// written down.
+func (a Answers) SubmitterEmail() (types.Email, bool) {
+	for _, f := range a.Fields {
+		if f.Kind != KindEmail {
+			continue
+		}
+
+		// Already validated, so a parse failure here is impossible. Handled
+		// rather than discarded so that it cannot silently become the zero
+		// address if the validator ever changes.
+		email, err := types.ParseEmail(f.Value())
+		if err != nil {
+			continue
+		}
+
+		return email, true
+	}
+
+	return types.Email{}, false
+}
+
 // Validate decides whether a submission is acceptable and, if it is, what it
 // comes to.
 //
