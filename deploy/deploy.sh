@@ -35,6 +35,11 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 readonly APP=dropin-forms
 
+# SELF and ARGV are how this script re-runs itself after pulling a newer copy
+# of itself. See ensure_main.
+readonly SELF="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
+readonly ARGV=("$@")
+
 case "${1:-}" in
 -h | --help | help)
 	awk '/^# Usage:/{f=1} f && !/^#/{exit} f{sub(/^# ?/, ""); print}' "${BASH_SOURCE[0]}"
@@ -328,10 +333,28 @@ EOF
 # whatever happens to be in the working tree, so that is the thing to pin down
 # rather than to mention.
 #
-# It fast-forwards when it safely can and refuses otherwise. It never discards
-# anything: a dirty tree, a different branch and a diverged history are each a
-# refusal with the command to fix it, because the alternative is a deploy
+# It fast-forwards when it safely can and cancels otherwise. It never discards
+# anything: a dirty tree, a different branch and a diverged history each cancel
+# the deploy with the command to fix it, because the alternative is a deploy
 # script that can lose somebody's work.
+#
+# # Why it re-executes itself
+#
+# The fast-forward can change this file, and then the rest of the deploy would
+# run the *previous* procedure against the new commit: old build flags, old
+# pre-flight, old rollback. That is not hypothetical. On 2026-09-17 a deploy
+# from a checkout four commits behind ran the version of this script that only
+# warned about being behind, built a month-old tree, and shipped a binary that
+# could not read the config it was given. The rollback worked, but the guard
+# that would have stopped it was sitting in the commits the deploy had not
+# pulled yet -- the one deploy a guard cannot protect is the deploy that
+# delivers it.
+#
+# So after a fast-forward that changed this file, the script hands over to the
+# new one with exec. That also sidesteps a subtler hazard: bash reads a script
+# incrementally rather than all at once, so rewriting it mid-execution can make
+# the shell run bytes from two different versions. Nothing happens between the
+# merge and the exec for that reason -- do not put anything there.
 ensure_main() {
 	require git
 
@@ -347,10 +370,15 @@ ensure_main() {
 	branch=$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')
 	dirty=$(git -C "$REPO_DIR" status --porcelain 2>/dev/null | grep -cv '^??' || true)
 
+	# A dirty tree cancels the whole thing, before the fetch and before
+	# anything is asked of the server. Two reasons rather than one: a deploy
+	# must ship something that exists in git, and a fast-forward into
+	# uncommitted changes is how a deploy script eats somebody's work.
 	if [ "${dirty:-0}" -gt 0 ]; then
 		warn "$dirty uncommitted change(s) in tracked files:"
 		git -C "$REPO_DIR" status --short 2>/dev/null | grep -v '^??' >&2 || true
-		die "commit or stash these first -- a deploy must ship something that exists in git"
+		warn "commit or stash them, then deploy again."
+		die "cancelled: the working tree has changes that are not in git"
 	fi
 
 	if [ "$branch" != main ]; then
@@ -358,7 +386,7 @@ ensure_main() {
 			warn "this checkout is on '$branch', and production runs main."
 			warn "  to deploy main:            git switch main"
 			warn "  to deploy '$branch' anyway: DEPLOY_ALLOW_BRANCH=1 deploy/deploy.sh deploy"
-			die "refusing to deploy a branch by accident"
+			die "cancelled: this is not main"
 		fi
 
 		# Deliberate, and sometimes necessary -- trying a fix on the server
@@ -371,20 +399,50 @@ ensure_main() {
 	fi
 
 	log "fetching origin"
-	git -C "$REPO_DIR" fetch -q origin main || die "could not reach origin; not deploying a checkout of unknown age"
+	git -C "$REPO_DIR" fetch -q origin main || die "cancelled: could not reach origin, and a checkout of unknown age is not deployable"
+
+	# Both counts, because behind alone does not distinguish "four commits to
+	# catch up on" from "diverged". Announcing a fast-forward and then
+	# reporting that it was impossible is a log line that says the opposite of
+	# what happened, which is exactly the sort of line somebody reads at speed
+	# during an incident.
+	local behind ahead
+	behind=$(git -C "$REPO_DIR" rev-list --count HEAD..origin/main 2>/dev/null || echo 0)
+	ahead=$(git -C "$REPO_DIR" rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
+
+	if [ "${behind:-0}" -gt 0 ] && [ "${ahead:-0}" -eq 0 ]; then
+		log "fast-forwarding main $behind commit(s) to origin/main"
+	fi
+
+	# What this file looked like before the fast-forward. Compared after, to
+	# decide whether the deploy is now running the wrong procedure.
+	local was
+	was=$(sha256sum "$SELF" | cut -d" " -f1)
 
 	# --ff-only, so this can only ever move forward to what origin already
 	# has. A diverged local main means somebody committed to it directly,
 	# which the house rule forbids, and resolving that is not a deploy
 	# script's business.
 	if ! git -C "$REPO_DIR" merge --ff-only origin/main 2>/dev/null; then
-		local ahead
-		ahead=$(git -C "$REPO_DIR" rev-list --count origin/main..HEAD 2>/dev/null || echo '?')
-
 		warn "local main has $ahead commit(s) origin/main does not, so it cannot be fast-forwarded."
 		warn "nothing here commits to main directly -- everything lands through a pull request --"
 		warn "so those commits want a branch and a PR rather than a deploy."
-		die "refusing to deploy a main that has diverged from origin"
+		die "cancelled: main has diverged from origin"
+	fi
+
+	# Nothing between the merge above and the exec below. See the comment on
+	# this function.
+	if [ "$(sha256sum "$SELF" | cut -d" " -f1)" != "$was" ]; then
+		if [ -n "${DEPLOY_SELF_UPDATED:-}" ]; then
+			# Only possible if origin moved again in the last second, or if
+			# something outside git is rewriting this file. Either way, stop
+			# rather than loop.
+			die "cancelled: deploy.sh changed again after re-running once"
+		fi
+
+		log "that update changed deploy.sh; handing over to the new one"
+
+		DEPLOY_SELF_UPDATED=1 exec bash "$SELF" "${ARGV[@]}"
 	fi
 
 	log "building from main @ $(git -C "$REPO_DIR" rev-parse --short HEAD)"
