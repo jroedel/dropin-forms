@@ -159,7 +159,7 @@ release: ## Build the static linux/amd64 binary the server runs
 # scripts/secrets says why at length.
 
 .PHONY: secrets-check
-secrets-check: ## Name every missing key in secrets.env, printing no values
+secrets-check: ## Missing keys in secrets.env, and whether CD agrees with it
 	@scripts/secrets check
 
 .PHONY: secrets-push
