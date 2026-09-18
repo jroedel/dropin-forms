@@ -218,6 +218,14 @@ type formView struct {
 	Form  formbus.Form
 	Grant string
 
+	// Action is where this form posts, which is this same page plus the
+	// parent origin. It is not simply /f/{slug}, and that omission was a
+	// visible bug: the POST dropped the parameter, so the confirmation it
+	// rendered knew no parent, never posted its height, and the frame kept
+	// whatever height the form had had. On the shrine's page that was a short
+	// receipt sitting at the top of a tall empty box.
+	Action string
+
 	// ParentOrigin is the origin to post height messages to, or empty when
 	// this page was not opened in a frame this form permits. The template puts
 	// it on the body and the script reads it from there; it is never '*'.
@@ -387,6 +395,7 @@ func (a app) submit(w http.ResponseWriter, r *http.Request) {
 
 	if view.Owed() {
 		view.Answers = hiddenAnswers(values)
+		view.BackTo = withParent("/f/"+f.ID.String()+"/edit", view.ParentOrigin)
 	}
 
 	// The payment is started here, in the POST, and never while rendering the
@@ -509,18 +518,7 @@ func (a app) returned(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !view.Paid {
-		// Built rather than concatenated, so the origin is escaped as a query
-		// value on the way back out even though it has already been checked
-		// against the form's own list.
-		q := url.Values{}
-		if origin != "" {
-			q.Set("parent", origin)
-		}
-
-		view.FormURL = "/f/" + f.ID.String()
-		if len(q) > 0 {
-			view.FormURL += "?" + q.Encode()
-		}
+		view.FormURL = withParent("/f/"+f.ID.String(), origin)
 	}
 
 	a.cfg.Log.Info("a browser came back from the payment page",
@@ -585,6 +583,10 @@ type doneView struct {
 	// back for once the money is in, and offering it would read as an offer to
 	// undo something.
 	Answers []answerView
+
+	// BackTo is where Back posts, carrying the parent origin onward for the
+	// same reason Action does.
+	BackTo string
 }
 
 // answerView is one posted name and value, on its way back into a hidden
@@ -715,10 +717,13 @@ func (a app) render(
 		return
 	}
 
+	origin := parentOrigin(f, r)
+
 	a.cfg.Render.Render(w, r, status, "form", formView{
 		Form:          f,
 		Grant:         grant,
-		ParentOrigin:  parentOrigin(f, r),
+		Action:        withParent("/f/"+f.ID.String(), origin),
+		ParentOrigin:  origin,
 		Symbol:        formbus.Symbol(f.Currency),
 		Fields:        viewFields(f, values, problems),
 		Items:         viewItems(f, values, problems),
@@ -837,6 +842,27 @@ const grantField = "_grant"
 // GrantField is that name, exported so a test can fill the field in without
 // parsing HTML for it.
 const GrantField = grantField
+
+// withParent adds the parent origin to one of this app's own addresses, so
+// that whatever the browser reaches next can still tell the frame how tall it
+// is.
+//
+// Every page here learns its parent from this parameter and from nothing else
+// -- there is no referrer to read, because the surface sets
+// Referrer-Policy: no-referrer, and no cookie to keep it in, because the
+// surface is cookie-free by construction. So a link or an action that drops it
+// is a page that goes silent, and the symptom is not an error: it is a frame
+// stuck at the wrong height with the right thing inside it.
+//
+// The origin has already been checked against the form's own list by
+// parentOrigin and is re-escaped here as a query value on the way back out.
+func withParent(path, origin string) string {
+	if origin == "" {
+		return path
+	}
+
+	return path + "?parent=" + url.QueryEscape(origin)
+}
 
 // parentOrigin decides what the page may post its height to.
 //

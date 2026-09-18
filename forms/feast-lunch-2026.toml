@@ -68,7 +68,7 @@ payment_note = "Choose at least one lunch ticket, or enter a donation for the Sh
 
 confirmation = """
 Thank you. We have your order and a receipt is on its way to the address you \
-gave. We look forward to seeing you at the Shrine.
+gave. We look forward to seeing you on October 17th.
 """
 
 [[field]]
@@ -102,7 +102,10 @@ max = "5000.00"
 [[field]]
 name = "notes"
 label = "Anything we should know"
-help = "Dietary needs, who the tickets are for, anything else."
+# No mention of dietary needs, deliberately: the lunch cannot accommodate them,
+# and asking is a promise. Somebody who tells us anyway is answering a question
+# nobody asked, which is different from being invited to and then disappointed.
+help = "Who the tickets are for, or anything else you would like us to know."
 kind = "paragraph"
 max_length = 500
 

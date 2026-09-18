@@ -13,6 +13,20 @@
    here is sized against vh, and nothing is positioned fixed: a fixed element
    in a frame that is exactly as tall as its contents has nowhere to go.
 
+   THE PAGE HAS NO BACKGROUND OF ITS OWN, ON PURPOSE.
+
+   A cross-origin iframe whose document sets no background is drawn
+   transparent, and what shows through is the host page. That is the whole of
+   the answer to "match the site's colour": there is no colour to match, no
+   value to keep in step with a Squarespace theme somebody may re-tweak, and
+   nothing to re-deploy when they do. Before this, --paper was a near-white
+   that rendered as a white card in the middle of a cream page -- the form
+   announced itself as a foreign object, which is the opposite of dropping in.
+
+   The panels inside it tint whatever is behind them rather than painting over
+   it: --tint is black at four per cent, not a grey. The fields keep a solid
+   surface, because an input should look like something you write in.
+
    THIS FILE HAS NO DARK MODE, AND THAT IS THE FIX RATHER THAN THE OMISSION.
 
    It used to honour prefers-color-scheme, and on the real page that was a
@@ -38,16 +52,27 @@
   color-scheme: light;
 
   --ink: #1b1b1f;
+
+  /* Not the page's colour any more -- the page has none. This is the surface
+     of a field: an input, a select, a textarea. Near-white rather than
+     transparent so that a box somebody types in reads as a box on a tinted
+     host page. */
   --paper: #fdfdfb;
   --muted: #5c5c66;
   --rule: #c9c9c2;
   --accent: #29527a;
   --accent-ink: #ffffff;
   --wrong: #8c2f21;
-  --wrong-tint: #fbf0ee;
+  /* Translucent for the same reason --tint is: these boxes sit directly on
+     the host page now, and a flat pale green card on a cream background is a
+     card. A wash of the callout's own colour is a callout. */
+  --wrong-tint: rgba(140, 47, 33, .07);
   --right: #1f5c3d;
-  --right-tint: #eef6f1;
-  --tint: #f4f3ee;
+  --right-tint: rgba(31, 92, 61, .08);
+  /* A tint rather than a colour, so a panel darkens whatever is behind it
+     instead of replacing it with our grey. On the shrine's cream page a flat
+     #f4f3ee read as a slightly dirty rectangle. */
+  --tint: rgba(0, 0, 0, .045);
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -55,7 +80,11 @@
 body.embedded {
   margin: 0;
   padding: 0;
-  background: var(--paper);
+
+  /* Stated rather than omitted, because "no background" is the design and an
+     absent declaration reads as an oversight. transparent is what makes the
+     frame inherit the host page; see the top of this file. */
+  background: transparent;
   color: var(--ink);
   font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 

@@ -1,9 +1,11 @@
 package muxer_test
 
 import (
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -212,7 +214,7 @@ func TestComingBackPaidSaysSoInTheFrame(t *testing.T) {
 	// The author's own confirmation, which on a form that sells nothing else
 	// ever renders: the page after submitting is the receipt and the payment
 	// button.
-	if !strings.Contains(body, "We look forward to seeing you at the Shrine") {
+	if !strings.Contains(body, "We look forward to seeing you on October 17th") {
 		t.Errorf("the form's own confirmation is not on the page after paying:\n%s", short(body))
 	}
 
@@ -266,7 +268,7 @@ func TestComingBackAfterTheFormClosedStillThanksThem(t *testing.T) {
 	if strings.Contains(body, "the feast has passed") {
 		t.Errorf("somebody who has just paid was told the form is closed:\n%s", short(body))
 	}
-	if !strings.Contains(body, "We look forward to seeing you at the Shrine") {
+	if !strings.Contains(body, "We look forward to seeing you on October 17th") {
 		t.Errorf("the confirmation is missing after the close:\n%s", short(body))
 	}
 }
@@ -437,3 +439,73 @@ func TestSomethingElseUnderAFormIsNotAFormPage(t *testing.T) {
 		})
 	}
 }
+
+// --- every page can tell the frame how tall it is ---------------------------
+
+// The bug behind the tall white box on the shrine's page, asserted end to end.
+//
+// Every page of this surface learns its parent origin from one query
+// parameter, because there is nothing else to learn it from: the surface sends
+// Referrer-Policy: no-referrer and holds no cookie. The form page had it and
+// its own POST target did not, so the confirmation that POST rendered knew no
+// parent, never posted its height, and the frame kept the height the form had
+// had -- a short receipt at the top of a tall empty box, which is what a
+// screenshot of the live page showed.
+//
+// The symptom is not an error anywhere. Nothing logs, nothing 500s, and the
+// right content is on the page. So it is asserted at every hop instead.
+func TestEveryPageCanTellTheFrameHowTallItIs(t *testing.T) {
+	const parent = "https://schoenstatt-austin.us"
+
+	k := newTill(t)
+
+	blank := getPage(t, k.embed, "/f/"+theForm+"?parent="+url.QueryEscape(parent))
+	if blank.Code != http.StatusOK {
+		t.Fatalf("the blank form = %d", blank.Code)
+	}
+
+	form := blank.Body.String()
+
+	if !strings.Contains(form, `data-parent-origin="`+parent+`"`) {
+		t.Fatalf("the form page does not know its parent:\n%s", short(form))
+	}
+
+	// The action it posts to has to carry the origin onward.
+	action := actionPattern.FindStringSubmatch(form)
+	if action == nil {
+		t.Fatalf("no form action in the page:\n%s", short(form))
+	}
+	if !strings.Contains(action[1], "parent=") {
+		t.Errorf("the form posts to %q, which drops the parent origin -- the page it renders will go silent and the frame will keep this page's height", action[1])
+	}
+
+	// And the page that POST renders must be able to speak.
+	done := postTo(t, k.embed, html.UnescapeString(action[1]), filled(grantIn(t, form)))
+	if done.Code != http.StatusOK {
+		t.Fatalf("the submission = %d:\n%s", done.Code, short(done.Body.String()))
+	}
+
+	confirmation := done.Body.String()
+
+	if !strings.Contains(confirmation, `data-parent-origin="`+parent+`"`) {
+		t.Errorf("the confirmation cannot tell the frame how tall it is, so it renders inside a box the size of the form:\n%s", short(confirmation))
+	}
+
+	// Including the way back, which is another POST and the same trap.
+	back := actionPattern.FindStringSubmatch(confirmation)
+	if back == nil {
+		t.Fatalf("no Back action on the confirmation:\n%s", short(confirmation))
+	}
+	if !strings.Contains(back[1], "parent=") {
+		t.Errorf("Back posts to %q, which drops the parent origin", back[1])
+	}
+
+	edited := postTo(t, k.embed, html.UnescapeString(back[1]), url.Values{"name": {"Maria O'Neill"}})
+	if !strings.Contains(edited.Body.String(), `data-parent-origin="`+parent+`"`) {
+		t.Errorf("the form came back unable to speak to the frame:\n%s", short(edited.Body.String()))
+	}
+}
+
+// actionPattern reads a form's target out of a rendered page. There are at
+// most two per page here, and the first is always the one in question.
+var actionPattern = regexp.MustCompile(`<form[^>]*action="([^"]+)"`)
