@@ -105,7 +105,12 @@
 
 {{range .OrderProblems}}<p class="problem">{{.Message}}</p>{{end}}
 
-<button class="go" type="submit">{{if .Form.Sells}}Continue{{else}}Send{{end}}</button>
+{{/* data-busy is the label while the submission is in flight, which the
+     script swaps in as it greys the button out. On a form that sells, the
+     answer to this click involves a call to Stripe, so the wait is real and
+     an unacknowledged click gets clicked again. */}}
+<button class="go" type="submit"
+  data-busy="{{if .Form.Sells}}One moment…{{else}}Sending…{{end}}">{{if .Form.Sells}}Continue{{else}}Send{{end}}</button>
 {{with .Form.PaymentNote}}<p class="note">{{.}}</p>{{end}}
 </form>
 </div>

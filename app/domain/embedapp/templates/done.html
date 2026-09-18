@@ -55,6 +55,21 @@ Nothing has been charged. Please get in touch and we will take the payment anoth
 {{else}}
 <p class="note">Nothing has been charged yet. We will be in touch about the payment.</p>
 {{end}}
+
+{{if .Answers}}
+{{/* Back, for the person who has just read the total and wants a different
+     number of tickets. A form rather than a link, because it carries the
+     answers back so they do not retype them, and history.back() would not:
+     this page is the response to a POST, so going back in the browser offers
+     to resend it and reloads the form blank when it does not.
+
+     Second in the document and quieter than the payment button on purpose.
+     One of these two actions is what almost everybody wants. */}}
+<form class="back" method="post" action="/f/{{.Form.ID}}/edit">
+{{range .Answers}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">
+{{end}}<button class="go quiet" type="submit">Back</button>
+</form>
+{{end}}
 {{end}}
 </div>
 {{end}}
