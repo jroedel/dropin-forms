@@ -985,12 +985,32 @@ submission identifier is required, because our metadata lives on the payment
 intent and a dispute's metadata is the dispute's own — checked in the other
 order, every chargeback would be swallowed as "an event about nothing".
 
-Two consequences for operations, neither of them code:
+**The webhook shares the embed listener, and an earlier draft of this section
+was wrong about why it could not.** That draft said a separate hostname was
+forced, because the embed surface refuses a cross-site POST and Stripe's
+delivery is exactly that. It is not: `web.sameOrigin` treats a request carrying
+neither `Sec-Fetch-Site` nor `Origin` as a pass — the hole documented at
+decision 5.3 — and a server-to-server POST carries neither. Checked rather than
+reasoned about: a header-less POST to `/f/{slug}` answers 200, not 403.
 
-- **The webhook needs a third konsoleH subdomain and a third certificate.** It
-  cannot share a listener: the embed surface refuses a cross-site POST, which
-  is exactly what Stripe sends, and nothing above the webhook may read a body.
-  `config.example.toml` names `hooks.schoenstatt.link` and port 8412.
+The only property the webhook actually needs of what sits above it is that
+nothing reads the body, and nothing on the embed chain does. So it is a route
+on that listener, `POST /stripe/webhook`, and there is no third subdomain, no
+third certificate, no third docroot and no `deploy.sh` change. (The port that
+draft proposed, 8412, was the embed listener's own — 8410 having been taken on
+the shared host — so it would not have worked as written either.)
+
+It is still mounted **outside** that surface's same-origin gate, and that is
+the part worth keeping. Passing a gate through a hole is not the same as not
+being behind it: closing that hole is a defensible change to make for a form
+POST one day, and it would silently stop every payment being confirmed. So
+`muxer.Embed` hands the gate to `embedapp.Routes` for its own write route
+instead of putting it on the chain, which also means a future reader tightening
+the gate cannot reach this route by accident. Both halves are asserted in
+`app/sdk/muxer/payment_test.go`.
+
+One consequence for operations that is not code:
+
 - **`return_url` is now a required key on any form that sells.**
   `formbus.Form.Check` refuses a selling definition without one, and requires
   it to be https, on one of the form's own embedding origins, and to carry no
@@ -1006,6 +1026,11 @@ paid is the webhook either way. Also not built: a housekeeping loop.
 `submissionbus.PruneNonces`, `userbus.Prune` and `paybus.Forget` all exist and
 none of them is called by anything, so three tables grow without bound. That
 gap predates this step and is named here so it is not rediscovered.
+
+Section 7.5 above still describes the webhook as needing "its own
+`MaxBytesReader` size", which it has at 256 KiB — generous next to the form
+surface's 64 KiB, because an event embeds the whole object it is about and too
+small a cap produces a signature that cannot verify against a truncated body.
 
 ## 10. Dependencies
 

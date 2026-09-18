@@ -155,11 +155,24 @@ func (a app) now() time.Time {
 }
 
 // Routes mounts this app.
-func Routes(mux *http.ServeMux, cfg Config) {
+//
+// writes is the same-origin gate, handed in by the muxer rather than built
+// here, and applied to the one route that accepts a write. The chain is
+// written down in one place and a route's position in it is not a decision an
+// app package gets to make -- which is also what lets the muxer mount the
+// Stripe webhook on this listener without that gate in front of it.
+//
+// A nil writes mounts the POST ungated, and that is for tests of this app
+// alone. Every surface built by the muxer passes one.
+func Routes(mux *http.ServeMux, cfg Config, writes func(http.Handler) http.Handler) {
 	a := app{cfg: cfg}
 
+	if writes == nil {
+		writes = func(h http.Handler) http.Handler { return h }
+	}
+
 	mux.HandleFunc("GET /f/{slug}", a.blank)
-	mux.HandleFunc("POST /f/{slug}", a.submit)
+	mux.Handle("POST /f/{slug}", writes(http.HandlerFunc(a.submit)))
 
 	// The snippet a site owner pastes names this path, and a pasted path
 	// cannot be changed afterwards -- so it is a fixed name rather than a

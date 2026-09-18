@@ -92,9 +92,6 @@ func run() error {
 		// possible moment, and "test" where they expected "LIVE" is the answer
 		// they need to see without having to look anywhere else.
 		fmt.Printf("  payments       %s\n", stripeMode(cfg))
-		if cfg.Stripe.Addr != "" {
-			fmt.Printf("  webhook        %s\n", cfg.Stripe.Addr)
-		}
 		fmt.Printf("  bootstrap      %s\n", either(cfg.Auth.BootstrapSecret != "", "route mounted", "route not mounted"))
 
 		return nil
@@ -275,25 +272,13 @@ func run() error {
 		return err
 	}
 
-	surfaces := []web.Surface{
-		{Name: "embed", Addr: cfg.Server.EmbedAddr, Handler: embed},
-		{Name: "admin", Addr: cfg.Server.AdminAddr, Handler: admin},
-	}
-
-	// The third listener exists only when there is something for Stripe to
-	// talk to. Mounting it with no gateway would be a public URL that verifies
-	// nothing, and a verification that always passes is worse than no endpoint
-	// at all -- it is a route that marks orders paid.
-	if payments != nil {
-		hook, err := muxer.Webhook(mc)
-		if err != nil {
-			return err
-		}
-
-		surfaces = append(surfaces, web.Surface{Name: "webhook", Addr: cfg.Stripe.Addr, Handler: hook})
-	}
-
-	return web.Serve(ctx, log, cfg.Server.shutdownGraceD, surfaces...)
+	// Two listeners, not three. The webhook lives on the embed one, mounted
+	// outside its origin gate -- see muxer.Embed for why that is the whole of
+	// what it needs, and why it is not enough for it merely to pass the gate.
+	return web.Serve(ctx, log, cfg.Server.shutdownGraceD,
+		web.Surface{Name: "embed", Addr: cfg.Server.EmbedAddr, Handler: embed},
+		web.Surface{Name: "admin", Addr: cfg.Server.AdminAddr, Handler: admin},
+	)
 }
 
 // newPayments builds the payment domain, and returns a word for the log saying

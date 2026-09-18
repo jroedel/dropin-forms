@@ -107,10 +107,10 @@ type Config struct {
 	// columns.
 	Forms submissionapp.Forms
 
-	// Payments is what the webhook surface calls, and only that surface. The
-	// embed surface reaches the same domain through Embed.Payments, which is a
-	// different and much narrower slice of it: one creates a payment and the
-	// other confirms one, and nothing should be able to do both by accident.
+	// Payments is what the webhook route calls. Embed.Payments is a different
+	// and much narrower slice of the same domain: one confirms a payment and
+	// the other can only start one, and nothing should be able to do both by
+	// accident. They share a listener and not an interface.
 	Payments paymentapp.Payments
 
 	// AdminBaseURL is the admin surface's own origin, used to build the link
@@ -148,6 +148,10 @@ func Embed(cfg Config) (http.Handler, error) {
 
 	mux.HandleFunc("GET /healthz", health.Handler(cfg.Log, cfg.DB, cfg.Expected))
 
+	// The form routes. The origin gate goes to embedapp as an argument rather
+	// than onto the chain below, so that it covers the one route that accepts
+	// a write and nothing else -- in particular not the webhook.
+	//
 	// No Authenticate and no Require, and that is the whole shape of this
 	// surface rather than an omission. It is framed cross-site, so SameSite
 	// withholds any cookie it might carry from every request the frame makes
@@ -158,7 +162,39 @@ func Embed(cfg Config) (http.Handler, error) {
 	// In particular: do not mount the parent project's RequireFormToken here.
 	// It passes through when there is no principal, which is correct there and
 	// would admit every POST unconditionally here.
-	embedapp.Routes(mux, cfg.Embed)
+	// Writes only. It refuses a cross-site POST from a browser, and by its own
+	// admission lets a header-less client through -- which is why it is one of
+	// several things in front of a submission rather than the thing in front
+	// of it.
+	embedapp.Routes(mux, cfg.Embed, web.SameOriginOnly())
+
+	// The webhook, on this listener and deliberately *outside* that gate.
+	//
+	// It shares the listener because it does not need one of its own: nothing
+	// on this chain reads a request body, which is the only property the
+	// webhook actually requires of what sits above it. An earlier version of
+	// this comment claimed the origin gate would refuse Stripe's delivery and
+	// that a separate hostname was therefore forced. That was wrong --
+	// web.sameOrigin treats a request with neither Sec-Fetch-Site nor Origin
+	// as a pass, which is the hole its own comment documents, so a
+	// server-to-server POST would go straight through it.
+	//
+	// But passing a gate through a hole is not the same as not being behind
+	// it. Somebody may one day decide that hole should be closed, which would
+	// be a defensible change to make for the form POST -- and it would
+	// silently stop every payment being confirmed. So the gate is handed to
+	// embedapp for its own write route instead of being put on the chain, and
+	// this route is genuinely not behind it. That survives somebody tightening
+	// the gate without knowing this route exists.
+	//
+	// Mounted only when there is a payment domain. Without one this would be
+	// a public URL that verifies nothing, which is worse than no endpoint.
+	if cfg.Payments != nil {
+		paymentapp.Routes(mux, paymentapp.Config{
+			Log:      cfg.Log,
+			Payments: cfg.Payments,
+		})
+	}
 
 	return web.Wrap(mux,
 		web.RequestID(),
@@ -166,11 +202,11 @@ func Embed(cfg Config) (http.Handler, error) {
 		web.Panics(cfg.Log),
 		web.SecureHeaders(page.EmbedPolicy(cfg.FrameAncestors)),
 
-		// Writes only. It refuses a cross-site POST from a browser, and by its
-		// own admission lets a header-less client through -- which is why it
-		// is one of several things in front of a submission rather than the
-		// thing in front of it.
-		web.SameOriginOnly(),
+		// And nothing else. The four above refuse nothing: an id, a log line,
+		// a recovered panic and a header set. None of them reads a body, which
+		// is what makes it safe for the webhook to sit under them -- the
+		// signature covers the exact bytes, so anything calling ParseForm here
+		// would destroy the only credential that surface has.
 	), nil
 }
 
@@ -281,47 +317,3 @@ func Admin(cfg Config) (http.Handler, error) {
 // signInPath is where Require sends a signed-out reader, and it is the one
 // route authapp and the muxer both have to agree on.
 const signInPath = "/signin"
-
-// Webhook builds the surface Stripe posts to.
-//
-// A third listener rather than a path on one of the other two, and the reason
-// is the chain rather than the routing. This surface must have nothing above
-// it that reads a body and no origin gate at all, and both of those are
-// properties of a wrapped handler rather than of a route -- so the only way to
-// state them once and have them stay true is to build the chain separately.
-//
-// It answers /healthz too, like the others, because the deploy checks each
-// listener and a release where two of the three came up is precisely the
-// failure worth catching.
-func Webhook(cfg Config) (http.Handler, error) {
-	if cfg.Payments == nil {
-		return nil, errors.New("the webhook surface needs the payment domain; confirming a payment is the only thing it does")
-	}
-
-	mux := http.NewServeMux()
-
-	mux.HandleFunc("GET /healthz", health.Handler(cfg.Log, cfg.DB, cfg.Expected))
-
-	paymentapp.Routes(mux, paymentapp.Config{
-		Log:      cfg.Log,
-		Payments: cfg.Payments,
-	})
-
-	return web.Wrap(mux,
-		web.RequestID(),
-		web.Logging(cfg.Log),
-		web.Panics(cfg.Log),
-		web.SecureHeaders(page.WebhookPolicy()),
-
-		// And nothing else. No SameOriginOnly, because Stripe is not a
-		// browser and sends neither Sec-Fetch-Site nor Origin, so that gate
-		// would refuse every real delivery while refusing nothing that
-		// matters. No Authenticate, because there is no account behind this.
-		//
-		// The four above are the ones that refuse nothing: an id, a log line,
-		// a recovered panic and a header set. If a fifth ever appears here,
-		// read app/domain/paymentapp's comment first -- a middleware that
-		// reads the body destroys the signature this surface is
-		// authenticated by.
-	), nil
-}

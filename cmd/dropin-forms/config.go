@@ -95,12 +95,6 @@ type config struct {
 		// one `stripe listen` prints. Confusing the two produces a signature
 		// that never verifies, which is why they are checked apart below.
 		WebhookSecret string `toml:"webhook_secret"`
-
-		// Addr is the listener Stripe posts to. A third socket, because the
-		// three surfaces are told apart by which one accepted the connection
-		// -- see app/sdk/muxer. Empty leaves the webhook unmounted, which is
-		// correct on a laptop and is refused below when a key is configured.
-		Addr string `toml:"addr"`
 	} `toml:"stripe"`
 
 	Mail struct {
@@ -211,28 +205,22 @@ func loadConfig(path string) (config, error) {
 		return config{}, fmt.Errorf("%s has an auth.bootstrap_secret of %d characters; use at least %d, or leave it empty to switch that route off", path, len(secret), bootstrapMinLen)
 	}
 
-	// The three Stripe settings stand or fall together, and a half-configured
+	// The two Stripe settings stand or fall together, and a half-configured
 	// payment path is the one shape worth refusing at startup: a key with no
-	// webhook means money collected and no submission ever marked paid, and
-	// nothing anywhere would say so. The office would find out by comparing a
-	// bank statement against a list of pending orders.
+	// webhook secret means money collected and no submission ever marked paid,
+	// and nothing anywhere would say so. The office would find out by
+	// comparing a bank statement against a list of pending orders.
 	switch st := cfg.Stripe; {
-	case st.SecretKey == "" && st.WebhookSecret == "" && st.Addr == "":
+	case st.SecretKey == "" && st.WebhookSecret == "":
 		// Payments off. A form that sells stores its orders as pending and
 		// shows no way to pay, which is what this service did before the
 		// payment step existed.
 
 	case st.SecretKey == "":
-		return config{}, fmt.Errorf("%s configures a Stripe webhook but no stripe.secret_key; nothing could create a payment", path)
+		return config{}, fmt.Errorf("%s configures a Stripe webhook secret but no stripe.secret_key; nothing could create a payment", path)
 
 	case st.WebhookSecret == "":
 		return config{}, fmt.Errorf("%s has stripe.secret_key but no stripe.webhook_secret; without it nothing could tell a real payment notification from a forged one, and no order would ever be marked paid. It is the whsec_... value Stripe shows when you create the endpoint", path)
-
-	case st.Addr == "":
-		return config{}, fmt.Errorf("%s has Stripe credentials but no stripe.addr; the webhook is its own listener, because it must not sit behind anything that reads a request body", path)
-
-	case st.Addr == cfg.Server.EmbedAddr || st.Addr == cfg.Server.AdminAddr:
-		return config{}, fmt.Errorf("%s gives stripe.addr the same address as another surface; the three are told apart by which socket accepted the request, so they must all differ", path)
 
 	case !strings.HasPrefix(st.SecretKey, "sk_"):
 		// Named rather than guessed at. A publishable key (pk_...) in this

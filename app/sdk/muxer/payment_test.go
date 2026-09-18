@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/jroedel/dropin-forms/app/domain/paymentapp"
-	"github.com/jroedel/dropin-forms/app/sdk/muxer"
 	"github.com/jroedel/dropin-forms/business/domain/payment/paybus"
 	"github.com/jroedel/dropin-forms/business/domain/payment/stores/paydb"
 	"github.com/jroedel/dropin-forms/business/domain/payment/stores/stripepay"
@@ -91,17 +90,20 @@ func (c *counter) Start(_ context.Context, o paybus.Order) (paybus.Handoff, erro
 	}, nil
 }
 
-// till is all three surfaces over one database, with a real payment domain
-// behind the webhook and a counting one behind the form.
+// till is both surfaces over one database, with a real payment domain behind
+// the webhook and a counting one behind the form.
+//
+// The webhook shares the embed listener, mounted outside its origin gate, so
+// `embed` below answers both the form routes and /stripe/webhook. That is the
+// arrangement under test as much as anything else here.
 //
 // The webhook side is real all the way down -- real signature verification,
 // real event ledger, real submission domain -- because that is the path that
 // decides whether money was collected, and a fake anywhere in it would be
 // testing the fake.
 type till struct {
-	embed   http.Handler
-	admin   http.Handler
-	webhook http.Handler
+	embed http.Handler
+	admin http.Handler
 
 	subs *submissionbus.Business
 	pay  *counter
@@ -133,17 +135,11 @@ func newTill(t *testing.T) till {
 	pay := &counter{}
 	cfg.Embed.Payments = pay
 
-	hook, err := muxer.Webhook(cfg)
-	if err != nil {
-		t.Fatalf("muxer.Webhook: %v", err)
-	}
-
 	return till{
-		embed:   embedOf(t, cfg),
-		admin:   adminOf(t, cfg),
-		webhook: hook,
-		subs:    subs,
-		pay:     pay,
+		embed: embedOf(t, cfg),
+		admin: adminOf(t, cfg),
+		subs:  subs,
+		pay:   pay,
 	}
 }
 
@@ -195,7 +191,7 @@ func (k till) deliverWith(t *testing.T, body, signature string) *httptest.Respon
 	}
 
 	w := httptest.NewRecorder()
-	k.webhook.ServeHTTP(w, r)
+	k.embed.ServeHTTP(w, r)
 
 	return w
 }
@@ -432,79 +428,114 @@ func TestAnEventAboutSomebodyElsesPaymentIsAcknowledged(t *testing.T) {
 	}
 }
 
-// The method and the route. A GET of the webhook is not a webhook.
+// The route and the method.
 func TestTheWebhookAnswersOnlyAPost(t *testing.T) {
 	k := newTill(t)
 
+	// A GET reaches the form surface's catch-all and gets its 404, not a 405:
+	// "/" matches the path when the method-qualified pattern does not. Nobody
+	// GETs a webhook, so this is asserted to pin the behaviour rather than
+	// because either answer is better.
 	w := httptest.NewRecorder()
-	k.webhook.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/stripe/webhook", nil))
+	k.embed.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/stripe/webhook", nil))
 
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("GET /stripe/webhook = %d, want 405", w.Code)
+	if w.Code == http.StatusOK {
+		t.Errorf("GET /stripe/webhook = 200; a webhook is not a page")
 	}
 
-	// The listener answers /healthz, because the deploy checks each one
-	// separately and a release where two of the three came up is the failure
+	// The listener still answers /healthz, because the deploy checks each one
+	// separately and a release where one of the two came up is the failure
 	// most worth catching.
 	w = httptest.NewRecorder()
-	k.webhook.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	k.embed.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 
 	if w.Code != http.StatusOK {
-		t.Errorf("GET /healthz on the webhook listener = %d", w.Code)
+		t.Errorf("GET /healthz = %d", w.Code)
 	}
 }
 
-// The separation the three listeners exist for.
+// The webhook shares the embed listener and is mounted outside its origin
+// gate. This is the test for the part of that which is easy to get wrong.
 //
-// If the webhook were reachable on the embed or admin surface it would be
-// behind that surface's origin gate, which refuses a request with no
-// Sec-Fetch-Site and no Origin -- exactly what Stripe sends. So this asserts
-// both halves: the route is not there, and the webhook's own surface does not
-// have that gate.
-func TestTheWebhookIsOnItsOwnListenerAndHasNoOriginGate(t *testing.T) {
+// Sharing is safe because nothing on the embed chain reads a request body,
+// which is the only property the webhook needs of what sits above it. It is
+// *not* safe merely because a header-less POST happens to pass
+// web.SameOriginOnly -- it does, through the hole that function's own comment
+// documents, and relying on that would mean somebody closing the hole one day
+// silently stopped every payment being confirmed.
+//
+// So both halves are asserted: a real delivery with no browser headers is
+// accepted here, and the form POST beside it is still behind the gate. The
+// second half is what tells a future reader that the exemption is the
+// webhook's alone.
+func TestTheWebhookIsOutsideTheOriginGateAndTheFormIsStillBehindIt(t *testing.T) {
 	k := newTill(t)
 	sub := k.order(t, nil)
 
-	for name, h := range map[string]http.Handler{"embed": k.embed, "admin": k.admin} {
-		t.Run(name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodPost, "/stripe/webhook", strings.NewReader("{}"))
-			r.Header.Set("Content-Type", "application/json")
-
-			w := httptest.NewRecorder()
-			h.ServeHTTP(w, r)
-
-			if w.Code == http.StatusOK {
-				t.Fatalf("the %s surface answered the webhook route", name)
-			}
-		})
-	}
-
-	// And on its own listener, a delivery with no browser headers at all is
-	// accepted. This is the assertion that fails if somebody adds
-	// SameOriginOnly to the webhook chain "for consistency".
+	// The delivery: no Origin, no Sec-Fetch-Site, which is what a server
+	// posting to us sends.
 	body := paidEvent("evt_1", sub.ID)
 
 	r := httptest.NewRequest(http.MethodPost, "/stripe/webhook", strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set(paymentapp.SignatureHeader, stripeSignature(t, body, time.Now()))
-	// Deliberately no Origin and no Sec-Fetch-Site, which is what a server
-	// posting to us sends.
 
 	w := httptest.NewRecorder()
-	k.webhook.ServeHTTP(w, r)
+	k.embed.ServeHTTP(w, r)
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("a header-less delivery = %d, want 200: an origin gate here would refuse every real payment notification\n%s",
-			w.Code, w.Body.String())
+		t.Fatalf("a header-less delivery = %d, want 200:\n%s", w.Code, w.Body.String())
+	}
+
+	// And the gate is still doing its job on the route it is there for. A
+	// cross-site POST of the form is refused, which is the half that would
+	// break if somebody moved the gate off the form mux while wiring the
+	// webhook.
+	r = httptest.NewRequest(http.MethodPost, "/f/"+theForm, strings.NewReader("x=1"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.Header.Set("Sec-Fetch-Site", "cross-site")
+
+	w = httptest.NewRecorder()
+	k.embed.ServeHTTP(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("a cross-site form POST = %d, want 403: the origin gate no longer covers the form", w.Code)
 	}
 }
 
-// The webhook surface must be refused when it has no payment domain, rather
-// than mounted as a public URL that verifies nothing.
-func TestTheWebhookSurfaceRefusesToBeBuiltWithoutAPaymentDomain(t *testing.T) {
-	cfg := newConfig(t, nil, nil)
+// And it is not on the admin listener, which is behind a session and has no
+// business confirming a payment.
+func TestTheWebhookIsNotOnTheAdminListener(t *testing.T) {
+	k := newTill(t)
 
-	if _, err := muxer.Webhook(cfg); err == nil {
-		t.Error("muxer.Webhook built a surface with no payment domain behind it")
+	r := httptest.NewRequest(http.MethodPost, "/stripe/webhook", strings.NewReader("{}"))
+	r.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	k.admin.ServeHTTP(w, r)
+
+	if w.Code == http.StatusOK {
+		t.Error("the admin surface answered the webhook route")
+	}
+}
+
+// With no payment domain the route is not mounted at all, rather than
+// mounted as a public URL that verifies nothing.
+func TestWithoutAPaymentDomainThereIsNoWebhookRoute(t *testing.T) {
+	cfg := newConfig(t, nil, nil)
+	if cfg.Payments != nil {
+		t.Fatal("the plain test config already has a payment domain")
+	}
+
+	h := embedOf(t, cfg)
+
+	r := httptest.NewRequest(http.MethodPost, "/stripe/webhook", strings.NewReader("{}"))
+	r.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code == http.StatusOK {
+		t.Errorf("the webhook answered with no payment domain behind it: %d", w.Code)
 	}
 }

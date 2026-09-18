@@ -9,13 +9,26 @@
 //
 // Anything that reads the body. The signature covers the bytes as they
 // arrived, so a middleware calling r.ParseForm above this route consumes them
-// and destroys the only credential this surface has. The parent project's form
+// and destroys the only credential this route has. The parent project's form
 // token middleware does exactly that, which is why the design document names
-// it, and why this route is on its own listener rather than a path on one of
-// the others.
+// it.
 //
-// Also not in front of it: the same-origin check. Stripe sends no
-// Sec-Fetch-Site and no Origin, so that gate would refuse every real delivery.
+// That is the *only* requirement, and it is why this route shares the embed
+// listener rather than having one of its own: nothing on that chain reads a
+// body. It is mounted outside that surface's same-origin gate all the same,
+// and the reason is worth being precise about, because an earlier version of
+// this comment got it wrong.
+//
+// The wrong version said the gate would refuse Stripe's delivery. It would
+// not: web.sameOrigin treats a request carrying neither Sec-Fetch-Site nor
+// Origin as a pass -- the hole its own comment documents -- and that is
+// exactly what a server-to-server POST carries. So this route would have
+// worked behind the gate, by falling through a hole.
+//
+// Which is not a thing to depend on. Closing that hole is a defensible change
+// to make for a form POST some day, and it would silently stop every payment
+// being confirmed. So muxer.Embed hands the gate to embedapp for its own write
+// route and leaves this one genuinely outside it.
 //
 // # What the status code means to Stripe
 //

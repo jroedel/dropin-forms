@@ -286,10 +286,17 @@ func TestFrameAncestorsFailsClosed(t *testing.T) {
 // TestSameOriginOnlyDecidesWrites walks every arrival shape and asserts what
 // the origin check does with it.
 //
-// 403 means SameOriginOnly refused it. 405 means SameOriginOnly allowed it and
-// the request reached the mux, which has no POST route yet -- so 405 is the
-// "the gate let this through" answer, and it tests the gate independently of
-// any route.
+// 403 means SameOriginOnly refused it. 200 means it allowed it and the request
+// reached the handler, which answers a grant-less POST by re-rendering the
+// form with a fresh grant -- so 200 is the "the gate let this through" answer.
+//
+// It probes the real write route rather than an arbitrary one, because the
+// gate is no longer global on this surface: it is handed to embedapp and wraps
+// the form POST alone, so that the Stripe webhook can share this listener
+// without sitting behind it. An earlier version of this test posted to
+// /healthz and read a 405 as "allowed", which stopped meaning anything the
+// moment the gate became per-route -- and worse, would have gone on passing if
+// the gate had been dropped from the form POST altogether.
 func TestSameOriginOnlyDecidesWrites(t *testing.T) {
 	cfg := newConfig(t, []types.Origin{mustOrigin(t, "https://schoenstatt-austin.us")}, sqldb.Infrastructure)
 	h := embedOf(t, cfg)
@@ -331,21 +338,21 @@ func TestSameOriginOnlyDecidesWrites(t *testing.T) {
 			name:    "same-origin POST is allowed",
 			method:  http.MethodPost,
 			headers: map[string]string{"Sec-Fetch-Site": "same-origin"},
-			want:    http.StatusMethodNotAllowed,
+			want:    http.StatusOK,
 			why:     "our own iframe posting to our own origin is the normal case",
 		},
 		{
 			name:    "directly navigated POST is allowed",
 			method:  http.MethodPost,
 			headers: map[string]string{"Sec-Fetch-Site": "none"},
-			want:    http.StatusMethodNotAllowed,
+			want:    http.StatusOK,
 			why:     "none means the address was typed or bookmarked",
 		},
 		{
 			name:    "matching Origin with no fetch metadata is allowed",
 			method:  http.MethodPost,
 			headers: map[string]string{"Origin": "https://" + host},
-			want:    http.StatusMethodNotAllowed,
+			want:    http.StatusOK,
 			why:     "the fallback for a browser too old to send Sec-Fetch-Site",
 		},
 		{
@@ -366,21 +373,21 @@ func TestSameOriginOnlyDecidesWrites(t *testing.T) {
 			name:    "null Origin is allowed",
 			method:  http.MethodPost,
 			headers: map[string]string{"Origin": "null"},
-			want:    http.StatusMethodNotAllowed,
+			want:    http.StatusOK,
 			why:     "a null Origin is uninformative, not a mismatch -- refusing it broke the parent project's own form posts",
 		},
 		{
 			name:    "no metadata at all is allowed",
 			method:  http.MethodPost,
 			headers: nil,
-			want:    http.StatusMethodNotAllowed,
+			want:    http.StatusOK,
 			why:     "the documented hole: a command-line client, not a browser being used against somebody. The submission grant is what guards this route",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			r := httptest.NewRequest(tc.method, "https://"+host+"/healthz", nil)
+			r := httptest.NewRequest(tc.method, "https://"+host+"/f/"+theForm, nil)
 			r.Host = host
 			for k, v := range tc.headers {
 				r.Header.Set(k, v)
