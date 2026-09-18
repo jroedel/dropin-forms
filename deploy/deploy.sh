@@ -358,16 +358,37 @@ hand_over_if_changed() {
 
 	[ "$(sha256sum "$SELF" | cut -d" " -f1)" = "$was" ] && return 0
 
-	if [ -n "${DEPLOY_SELF_UPDATED:-}" ]; then
-		# Only possible if origin moved again in the last second, or if
-		# something outside git is rewriting this file. Either way, stop
-		# rather than loop.
-		die "cancelled: deploy.sh changed again after re-running once"
+	# A count, not a flag, and that distinction is a bug that reached a real
+	# deploy. There are two points in ensure_main that can rewrite this file
+	# -- the switch to main and the fast-forward -- and a deploy from a branch
+	# whose local main is behind hits both: switching replaces the branch's
+	# deploy.sh with main's older one, and the fast-forward then replaces it
+	# again with the merged version. A flag cancelled that with "changed again
+	# after re-running once", which was accurate and was not a loop.
+	#
+	# Bounded all the same, and tightly. One hand-over per mutation point
+	# covers every legitimate case, so a third means origin is moving under
+	# this deploy or something outside git is rewriting the file, and neither
+	# is worth looping over.
+	local handovers="${DEPLOY_SELF_UPDATED:-0}"
+
+	# A value that is not a number can only come from the environment, and
+	# comparing it numerically would abort with a bash error rather than a
+	# sentence. Treated as one hand-over already spent, which fails safe.
+	case "$handovers" in
+	'' | *[!0-9]*) handovers=1 ;;
+	esac
+
+	if [ "$handovers" -ge 2 ]; then
+		warn "deploy.sh has now changed $handovers times during one deploy."
+		warn "either origin moved while this was running -- try again -- or"
+		warn "something outside git is rewriting deploy/deploy.sh."
+		die "cancelled: deploy.sh will not stop changing"
 	fi
 
 	log "$what changed deploy.sh; handing over to the new one"
 
-	DEPLOY_SELF_UPDATED=1 exec bash "$SELF" "${ARGV[@]}"
+	DEPLOY_SELF_UPDATED=$((handovers + 1)) exec bash "$SELF" "${ARGV[@]}"
 }
 
 # ensure_main brings the checkout to origin/main before anything is built.

@@ -121,6 +121,54 @@ git -C "$WORK/repo" switch -q -c feature/quiet
 out=$(run); rc=$?
 grep -q "Your branch is up to date" <<<"$out" && bad "git chatter in the log" "$out" || ok "quiet"
 
+printf '\n5c. a branch AND a behind main: two hand-overs in one run\n'
+# The case that reached a real deploy and cancelled it. Three different
+# deploy.sh versions: origin has v3, the local branch has v2, and local main is
+# still v1 and behind. Switching to main replaces v2 with v1 -- one hand-over
+# -- and the fast-forward then replaces v1 with v3, which is a second. A flag
+# instead of a count stopped here with "changed again after re-running once",
+# which was accurate and was not a loop.
+setup one
+git clone -q -b main "$WORK/origin.git" "$WORK/other3"
+git -C "$WORK/other3" config user.email t@example.test
+git -C "$WORK/other3" config user.name Test
+build_script "$WORK/other3/deploy/deploy.sh" three
+git -C "$WORK/other3" commit -qam "v3 on origin"
+git -C "$WORK/other3" push -q origin main
+
+git -C "$WORK/repo" switch -q -c feature/v2
+build_script "$WORK/repo/deploy/deploy.sh" two
+git -C "$WORK/repo" commit -qam "v2 on the branch"
+
+out=$(run); rc=$?
+[ $rc -eq 0 ] && ok "exit 0" || bad "exit $rc" "$out"
+[ "$(branch_now)" = main ] && ok "ended on main" || bad "on $(branch_now)" "$out"
+[ "$(grep -c 'handing over' <<<"$out")" -eq 2 ] && ok "handed over twice" \
+	|| bad "handed over $(grep -c 'handing over' <<<"$out") time(s), want 2" "$out"
+grep -q "will not stop changing" <<<"$out" && bad "hit the loop guard" "$out" || ok "did not hit the loop guard"
+[ "$(git -C "$WORK/repo" rev-parse HEAD)" = "$(git -C "$WORK/repo" rev-parse origin/main)" ] \
+	&& ok "ended at origin/main" || bad "not at origin/main" "$out"
+grep -q "building from main @" <<<"$out" && ok "got as far as the build" || bad "never reached the build" "$out"
+
+printf '\n5d. a third change does stop it\n'
+# The bound still bounds. Pretending two hand-overs have already happened,
+# a script that changes again must stop rather than loop.
+setup one
+git -C "$WORK/repo" switch -q -c feature/loop
+build_script "$WORK/repo/deploy/deploy.sh" different
+git -C "$WORK/repo" commit -qam "a different deploy.sh"
+out=$( (cd "$WORK/repo" && DEPLOY_SELF_UPDATED=2 bash deploy/deploy.sh deploy 2>&1) ); rc=$?
+[ $rc -ne 0 ] && ok "cancelled (exit $rc)" || bad "exit 0" "$out"
+grep -q "will not stop changing" <<<"$out" && ok "says why" || bad "no reason" "$out"
+
+printf '\n5e. a non-numeric counter from the environment does not crash bash\n'
+setup one
+git -C "$WORK/repo" switch -q -c feature/junk
+build_script "$WORK/repo/deploy/deploy.sh" other
+git -C "$WORK/repo" commit -qam "a different deploy.sh"
+out=$( (cd "$WORK/repo" && DEPLOY_SELF_UPDATED=yes bash deploy/deploy.sh deploy 2>&1) ); rc=$?
+grep -qi "integer expression\|unary operator" <<<"$out" && bad "bash error, not a sentence" "$out" || ok "no bash error"
+
 printf '\n6. a diverged main cancels\n'
 setup
 git clone -q -b main "$WORK/origin.git" "$WORK/other2"
