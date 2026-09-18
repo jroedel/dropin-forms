@@ -13,16 +13,24 @@
 //
 // What guards each route, then, in the order the request meets it:
 //
-//	GET /f/{slug}     nothing. It is a blank form, and it has to be readable
-//	                  by anybody, from anywhere, for the service to work at
-//	                  all. It mints a submission grant.
-//	POST /f/{slug}    web.SameOriginOnly, which refuses a cross-site write
-//	                  from a browser but by its own admission lets a
-//	                  header-less client through; then the submission grant,
-//	                  which pins the form and version and is single-use; then
-//	                  the definition's own rules.
-//	GET /embed.js     nothing. It is a static file the whole point of which
-//	                  is to be loaded by other people's pages.
+//	GET /f/{slug}          nothing. It is a blank form, and it has to be
+//	                       readable by anybody, from anywhere, for the service
+//	                       to work at all. It mints a submission grant.
+//	POST /f/{slug}         web.SameOriginOnly, which refuses a cross-site
+//	                       write from a browser but by its own admission lets
+//	                       a header-less client through; then the submission
+//	                       grant, which pins the form and version and is
+//	                       single-use; then the definition's own rules.
+//	POST /f/{slug}/edit    the same-origin gate, and nothing else, because it
+//	                       stores nothing: it renders the form again with what
+//	                       was typed still in it. That is the Back button on
+//	                       the confirmation page.
+//	GET /f/{slug}/return   nothing, and it must stay that way: this is where
+//	                       a browser lands after Stripe, and the one thing it
+//	                       carries is a word saying what happened. It decides
+//	                       wording and touches no data at all.
+//	GET /embed.js          nothing. It is a static file the whole point of
+//	                       which is to be loaded by other people's pages.
 //
 // Read docs/design/drop-in-forms.md section 5.3 before adding a gate here.
 // The one thing not to do is mount the parent project's RequireFormToken: it
@@ -46,6 +54,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -173,6 +183,18 @@ func Routes(mux *http.ServeMux, cfg Config, writes func(http.Handler) http.Handl
 
 	mux.HandleFunc("GET /f/{slug}", a.blank)
 	mux.Handle("POST /f/{slug}", writes(http.HandlerFunc(a.submit)))
+
+	// Back, from the confirmation page. A POST because it carries somebody's
+	// answers and a GET would put their name and address in a URL -- and
+	// behind the same-origin gate with the write it resembles, even though it
+	// writes nothing, because a route that reflects a posted body into a page
+	// has no business accepting that body from another site.
+	mux.Handle("POST /f/{slug}/edit", writes(http.HandlerFunc(a.edit)))
+
+	// Where Stripe sends the browser back to. Strictly speaking Stripe sends
+	// it to the *hosting* page and embed.js brings it here, which is the only
+	// reason this can be a page inside the frame rather than a redirect.
+	mux.HandleFunc("GET /f/{slug}/return", a.returned)
 
 	// The snippet a site owner pastes names this path, and a pasted path
 	// cannot be changed afterwards -- so it is a fixed name rather than a
@@ -363,6 +385,10 @@ func (a app) submit(w http.ResponseWriter, r *http.Request) {
 		Total:        totalOf(sub.Answers, f.Currency),
 	}
 
+	if view.Owed() {
+		view.Answers = hiddenAnswers(values)
+	}
+
 	// The payment is started here, in the POST, and never while rendering the
 	// blank form. A Checkout session created on a GET would mean an
 	// unauthenticated crawler minting Stripe objects at crawl rate; created
@@ -391,6 +417,133 @@ func (a app) submit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.cfg.Render.Render(w, r, http.StatusOK, "done", view)
+}
+
+// edit renders the form again with what was typed still in it.
+//
+// This is Back on the confirmation page, and it is a re-render rather than any
+// kind of undo. Two things follow from that, and both are deliberate.
+//
+// It stores nothing and changes nothing, so it needs no grant: what it echoes
+// is the body of the request it is answering, and the page it produces carries
+// a *fresh* grant like any other. The answers are trusted no further than
+// being put back in the boxes they came out of -- the next submission is
+// validated from scratch against the definition, so an edited hidden field
+// buys exactly the same as typing in the box.
+//
+// And the order that was already stored stays stored, as pending. There is no
+// "abandoned" status to move it to and this surface has no business inventing
+// one: a stranger holding a submission's id is not proof of anything, and a
+// route on the public form that could retire somebody's order is a route that
+// retires orders. So going back and ordering again leaves one pending row
+// nobody will pay -- which is the same footprint as clicking Continue and then
+// closing the Stripe tab, and that already happens. What the office reads a
+// pending row as is "not paid", which remains true.
+func (a app) edit(w http.ResponseWriter, r *http.Request) {
+	f, ok := a.form(w, r)
+	if !ok {
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+
+	if err := r.ParseForm(); err != nil {
+		// Nothing readable to put back in the boxes. A blank form is still the
+		// right answer: they are trying to get back to the form.
+		a.render(w, r, http.StatusBadRequest, f, formbus.Values{}, formbus.Invalid{},
+			"We could not read that. Here is the form again.")
+
+		return
+	}
+
+	// No problems and no note. Coming back to change an answer is not a
+	// refusal, and an alert box saying so would be an error message for
+	// something that went right.
+	a.render(w, r, http.StatusOK, f, formbus.Values(r.PostForm), formbus.Invalid{}, "")
+}
+
+// returned is what somebody sees when they come back from Stripe.
+//
+// # Why a browser telling us it paid is safe here
+//
+// The state in the query string is not evidence and is not treated as any. It
+// is a word chosen from two, it decides which paragraph this page renders, and
+// it moves no data whatsoever -- there is no submission id in the URL to move
+// it for. Anybody may type ?state=paid and read a thank-you; it tells them
+// nothing they did not already have to know to construct it, and it leaves the
+// order exactly as pending as it was.
+//
+// The authority for "this is paid" is the webhook signature, which is a
+// different listener and the only thing in this service that can settle an
+// order. That separation is the reason this handler can be this relaxed: a
+// page that only says words cannot be tricked into anything.
+//
+// What this page therefore cannot do is tell somebody their *own* order is
+// confirmed, because it cannot look one up. The wording is written for that:
+// it reports what happened at Stripe, which is what the person just did and
+// what they want acknowledged, and it never claims to have checked.
+func (a app) returned(w http.ResponseWriter, r *http.Request) {
+	f, ok := a.lookup(w, r)
+	if !ok {
+		return
+	}
+
+	state := r.URL.Query().Get("state")
+
+	if state != paybus.StatePaid && state != paybus.StateCancelled {
+		// Not a word we recognise, so nothing can be said about it. Falling
+		// through to the form is the useful failure: an old bookmark, or a
+		// marker we stop sending one day, lands somebody on a working form
+		// rather than on a page explaining a parameter to them.
+		a.blank(w, r)
+
+		return
+	}
+
+	origin := parentOrigin(f, r)
+
+	view := returnedView{
+		Form:         f,
+		ParentOrigin: origin,
+		Paid:         state == paybus.StatePaid,
+	}
+
+	if !view.Paid {
+		// Built rather than concatenated, so the origin is escaped as a query
+		// value on the way back out even though it has already been checked
+		// against the form's own list.
+		q := url.Values{}
+		if origin != "" {
+			q.Set("parent", origin)
+		}
+
+		view.FormURL = "/f/" + f.ID.String()
+		if len(q) > 0 {
+			view.FormURL += "?" + q.Encode()
+		}
+	}
+
+	a.cfg.Log.Info("a browser came back from the payment page",
+		"request_id", web.RequestIDFrom(r.Context()), "form", f.ID.String(), "state", state)
+
+	a.cfg.Render.Render(w, r, http.StatusOK, "returned", view)
+}
+
+// returnedView is the page inside the frame after Stripe, reached because
+// embed.js spotted the marker Stripe sent the hosting page back with.
+type returnedView struct {
+	Form         formbus.Form
+	ParentOrigin string
+
+	// Paid distinguishes the two words Stripe can send back. It is what the
+	// browser said happened and not what this service has confirmed, which is
+	// why the template's wording never says "we have checked".
+	Paid bool
+
+	// FormURL is where a "back to the form" link goes when nothing was paid,
+	// carrying the parent origin forward so the page it lands on can still
+	// post its height and not be a 120px box.
+	FormURL string
 }
 
 // doneView is the in-line confirmation, rendered in place of the form inside
@@ -424,6 +577,23 @@ type doneView struct {
 	// not a failure for the person: their answers are safe, the office can see
 	// the order, and telling them to try again would invite a second one.
 	PaymentUnavailable bool
+
+	// Answers is what was posted, as hidden inputs behind a Back button, so
+	// that somebody who has just read the total and wants three tickets
+	// instead of two gets the form back with their name and address still in
+	// it. Empty on a form with nothing left to pay -- there is nothing to go
+	// back for once the money is in, and offering it would read as an offer to
+	// undo something.
+	Answers []answerView
+}
+
+// answerView is one posted name and value, on its way back into a hidden
+// input. A pair rather than a map because a checkbox group posts one name
+// several times, and because a template that ranges over a map renders in a
+// different order every time.
+type answerView struct {
+	Name  string
+	Value string
 }
 
 // lineView is one priced line of the receipt.
@@ -476,8 +646,35 @@ func (a app) script(w http.ResponseWriter, r *http.Request) {
 // conditional requests have something stable to compare against.
 var startup = time.Now()
 
-// form resolves the slug in the path, answering 404 itself when it cannot.
+// form resolves the slug in the path and refuses a form not taking
+// submissions, answering 404 or the closed page itself when it cannot.
 func (a app) form(w http.ResponseWriter, r *http.Request) (formbus.Form, bool) {
+	f, ok := a.lookup(w, r)
+	if !ok {
+		return formbus.Form{}, false
+	}
+
+	now := a.now()
+	if !f.Open(now) {
+		a.closed(w, r, f, now)
+
+		return formbus.Form{}, false
+	}
+
+	return f, true
+}
+
+// lookup resolves the slug in the path and says nothing about whether the form
+// is open, answering 404 itself when there is no such form.
+//
+// Separate from form because one route must not care: somebody coming back
+// from Stripe has already paid, and a form closes on a date. A deadline that
+// passes while they are on Stripe's page would otherwise answer "this form is
+// no longer taking submissions" to the one person on the site who has just
+// been charged -- which reads as "your money went somewhere and we have no
+// idea what you are talking about". The close date governs taking new orders,
+// and nothing else.
+func (a app) lookup(w http.ResponseWriter, r *http.Request) (formbus.Form, bool) {
 	slug, err := types.ParseSlug(r.PathValue("slug"))
 	if err != nil {
 		a.notFound(w, r)
@@ -497,13 +694,6 @@ func (a app) form(w http.ResponseWriter, r *http.Request) (formbus.Form, bool) {
 		a.cfg.Log.Error("a form could not be read",
 			"request_id", web.RequestIDFrom(r.Context()), "form", slug.String(), "error", err)
 		a.oops(w, r)
-
-		return formbus.Form{}, false
-	}
-
-	now := a.now()
-	if !f.Open(now) {
-		a.closed(w, r, f, now)
 
 		return formbus.Form{}, false
 	}
@@ -565,6 +755,42 @@ func (a app) notFound(w http.ResponseWriter, r *http.Request) {
 	// height, and a mistyped slug in a snippet is a short box with an
 	// explanation in it.
 	a.cfg.Render.Render(w, r, http.StatusNotFound, "missing", struct{}{})
+}
+
+// hiddenAnswers is what was posted, ready to be put back in the form by Back.
+//
+// From the posted values rather than from the stored submission on purpose:
+// this has to fill in the same boxes the person typed into, and what is stored
+// has been through validation and derivation -- normalised, priced, with the
+// quantity fields renamed. Round-tripping *that* would hand somebody a form
+// subtly different from the one they filled in.
+//
+// The grant is dropped rather than carried: it has been spent, and the page
+// this feeds mints a new one.
+func hiddenAnswers(values formbus.Values) []answerView {
+	names := make([]string, 0, len(values))
+
+	for name := range values {
+		if name == grantField {
+			continue
+		}
+
+		names = append(names, name)
+	}
+
+	// Sorted so the page is the same page twice, which is what makes it
+	// testable and what stops a diff of two renders being noise.
+	slices.Sort(names)
+
+	out := make([]answerView, 0, len(names))
+
+	for _, name := range names {
+		for _, v := range values[name] {
+			out = append(out, answerView{Name: name, Value: v})
+		}
+	}
+
+	return out
 }
 
 // viewLines formats the receipt from what was stored.

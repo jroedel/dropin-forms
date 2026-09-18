@@ -233,6 +233,52 @@ button.go {
 
 button.go:hover { filter: brightness(1.08); }
 
+/* The button while the submission is in flight.
+ *
+ * This exists because of what happened on the real page: the round trip that
+ * prices an order and creates a Stripe session is not instant, nothing on the
+ * page changed, and the obvious conclusion is that the click missed. So the
+ * script disables the button and swaps its label, and this is what disabled
+ * has to look like -- greyed rather than merely unclickable, because a button
+ * that looks pressable and does nothing is the same problem again.
+ *
+ * not-allowed rather than wait: the cursor is over a control that is finished
+ * taking input, which is what not-allowed means. The waiting is the page's,
+ * not the pointer's.
+ */
+button.go:disabled {
+  color: var(--muted);
+  background: var(--tint);
+  border-color: var(--rule);
+  cursor: not-allowed;
+  filter: none;
+}
+
+/* The second action on a page that has two: Back, beside Continue to payment.
+ *
+ * Same size and shape as the primary one, so it is as easy to hit on a phone,
+ * and outlined rather than filled so that which of the two is the way forward
+ * is not a decision anybody has to make. A link would have been smaller and
+ * would have read as "more information"; this has to look like an action,
+ * because it is one.
+ */
+button.go.quiet {
+  color: var(--accent);
+  background: transparent;
+  border-color: var(--rule);
+  font-weight: 500;
+}
+
+button.go.quiet:hover {
+  filter: none;
+  border-color: var(--accent);
+  background: var(--tint);
+}
+
+form.back {
+  margin: 1rem 0 0;
+}
+
 /* The continue-to-payment link, styled to match the submit button.
  *
  * An <a> rather than a <button>, because it has to be a real navigation: a
@@ -280,6 +326,19 @@ a.button:hover { filter: brightness(1.08); }
   border-radius: 4px;
   background: var(--right-tint);
   color: var(--right);
+}
+
+/* The outcome box when the outcome is that nothing happened.
+ *
+ * Neutral rather than red. A cancelled payment is not an error and not the
+ * person's mistake -- they changed their mind, or the card was declined
+ * somewhere we never saw -- and a red alert box would make a dead end out of
+ * a step they can simply take again.
+ */
+.outcome .said.unfinished {
+  border-color: var(--rule);
+  background: var(--tint);
+  color: var(--ink);
 }
 
 .outcome h1 {

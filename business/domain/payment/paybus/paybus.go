@@ -470,8 +470,8 @@ func OrderFor(f formbus.Form, sub submissionbus.Submission) Order {
 	// refuses a return_url that already carries a query string, precisely so
 	// that this is a concatenation rather than a URL rewrite.
 	if f.ReturnURL != "" {
-		o.SuccessURL = f.ReturnURL + "?" + ReturnMarker + "=" + sub.Form.String() + "&" + ReturnState + "=paid"
-		o.CancelURL = f.ReturnURL + "?" + ReturnMarker + "=" + sub.Form.String() + "&" + ReturnState + "=cancelled"
+		o.SuccessURL = f.ReturnURL + "?" + ReturnMarker + "=" + sub.Form.String() + "&" + ReturnState + "=" + StatePaid
+		o.CancelURL = f.ReturnURL + "?" + ReturnMarker + "=" + sub.Form.String() + "&" + ReturnState + "=" + StateCancelled
 	}
 
 	return o
@@ -487,4 +487,21 @@ func OrderFor(f formbus.Form, sub submissionbus.Submission) Order {
 const (
 	ReturnMarker = "dropin"
 	ReturnState  = "dropin_state"
+)
+
+// The two things that can have happened by the time the browser is back.
+//
+// Named rather than written twice, because they are written in three places
+// that have to agree and only two of them are Go: this package builds the
+// URLs, the embedded form's own page decides what to say from them, and
+// embed.js on the hosting page carries them from one to the other. A typo in
+// any of them is a visitor who paid and is told nothing.
+//
+// Neither is evidence. StatePaid means Stripe sent the browser to the success
+// address, which is a browser repeating something rather than Stripe telling
+// us anything -- anybody can type it. It decides the wording on a page and
+// nothing else; the authority for "this is paid" is the webhook signature.
+const (
+	StatePaid      = "paid"
+	StateCancelled = "cancelled"
 )

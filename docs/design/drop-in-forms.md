@@ -1040,15 +1040,90 @@ One consequence for operations that is not code:
   query string of its own — the payment step appends its marker by
   concatenation, which is only safe because of that last rule.
 
-**Not built yet, and deliberately:** the return round trip. Stripe sends the
-browser back to `return_url` with `?dropin=<slug>&dropin_state=paid`, and
-nothing reads that marker yet — `embed.js` has to pass it into the frame for
-the in-line confirmation of section 7.3. Until then somebody who pays lands on
-the hosting page with the form blank again, and the authority on whether they
-paid is the webhook either way. Also not built: a housekeeping loop.
-`submissionbus.PruneNonces`, `userbus.Prune` and `paybus.Forget` all exist and
-none of them is called by anything, so three tables grow without bound. That
-gap predates this step and is named here so it is not rediscovered.
+**Still not built:** a housekeeping loop. `submissionbus.PruneNonces`,
+`userbus.Prune` and `paybus.Forget` all exist and none of them is called by
+anything, so three tables grow without bound. That gap predates this step and
+is named here so it is not rediscovered.
+
+### What the first real card payment found
+
+Three things, all of them about the parts of the journey either side of the
+money, and all three reported by the person paying rather than by a test.
+
+**The click was not acknowledged.** Submitting a selling form creates a Stripe
+Checkout session, which is a network call to Stripe inside the request, so the
+answer is not instant. Nothing on the page changed in the meantime and the
+obvious reading of a button that does nothing is that the click missed — so it
+was clicked again. The second click was harmless in the database, because the
+grant is single-use and a replay is answered with "we already have this", but
+being told your order is a duplicate is a strange reward for being unsure. So
+the embed script now greys the button, swaps in a label the template supplies,
+and refuses a second submission from that page. The button is disabled in a
+zero-delay timeout rather than synchronously: doing it inside the submit event
+is documented to be safe, and a browser that got it wrong would produce a form
+that cannot be submitted at all, which is not a risk worth taking on the page
+that sells the tickets. The double click is already stopped by an attribute set
+synchronously.
+
+**There was no way back from the total.** The page that prices an order is the
+last thing before Stripe, and until now the only ways off it were forward or
+gone: the browser's own Back offers to resend a POST and reloads the form
+blank. `POST /f/{slug}/edit` renders the form again with the posted answers
+back in their boxes, behind the same-origin gate and nothing else — it stores
+nothing, so it needs no grant, and the page it produces mints a fresh one. The
+answers are trusted no further than being put back in the boxes they came out
+of; the next submission is validated from scratch.
+
+Its one cost, named because it is a real one: **the order already stored stays
+stored, as pending.** There is no "abandoned" status to move it to, and this
+surface has no business inventing one — a stranger holding a submission's id is
+not proof of anything, and a public route that could retire somebody's order is
+a route that retires orders. So going back and ordering again leaves a pending
+row nobody will pay. That is the same footprint as clicking Continue and then
+closing the Stripe tab, which already happens, and what the office reads a
+pending row as is "not paid", which remains true.
+
+**After paying, nothing said so.** This was the round trip recorded here as
+deliberately unbuilt, and it is now built. Stripe sends the browser back to the
+hosting page with `?dropin=<slug>&dropin_state=paid`; `embed.js` reads that
+marker at load, and when it names a form on the page it points that form's
+frame at `GET /f/{slug}/return` instead of at a blank form. The confirmation
+appears exactly where the form was, which is the in-line outcome of section 2a,
+and it is the first time a paying visitor ever sees the definition's own
+`confirmation` text — on a selling form the page after submitting is the
+receipt and the payment button.
+
+Three details of that route are deliberate:
+
+- **It is not evidence and is not treated as any.** The state is one of two
+  words, it decides which paragraph renders, and it moves no data at all: there
+  is no identifier in the return URL to move any with, by the decision recorded
+  at 7.6. Anybody may type `?state=paid` and read a thank-you; it tells them
+  nothing they did not need to know to construct it and leaves the order
+  exactly as pending as it was. `TestTheReturnPageCannotMarkAnythingPaid`
+  asserts that, and the authority for "this is paid" remains the webhook
+  signature.
+- **It does not check whether the form is open.** A form closes on a date, and
+  a deadline that passes while somebody is on Stripe's page would otherwise
+  answer "this form is no longer taking submissions" to the one person on the
+  site who has just been charged. The close date governs taking new orders and
+  nothing else, so the lookup is split from the open check.
+- **An unrecognised state renders the form.** An old bookmark, or a marker we
+  stop sending one day, lands somebody on something that works rather than on a
+  page explaining a query parameter to them.
+
+The two parameter names and the two state words are now constants in `paybus`,
+because they are written in three places that must agree and only two of them
+are Go — the third is the pasted `embed.js`. `TestTheSnippetAndTheReturnAddressesAgreeOnTheMarker`
+reads the served snippet and fails if either side is renamed alone.
+
+**What is still missing after all this:** the visitor is never told, on our own
+page, that *their* order is recorded — only that the payment went through at
+Stripe. Closing that would mean an opaque single-purpose receipt id in the
+return URL and a lookup behind it, which is the shape section 2a of the plan
+originally sketched. It is a real improvement and it is not on the October
+path; the receipt Stripe emails and the confirmation mail of step 10 both
+address the same worry from a different direction.
 
 Section 7.5 above still describes the webhook as needing "its own
 `MaxBytesReader` size", which it has at 256 KiB — generous next to the form

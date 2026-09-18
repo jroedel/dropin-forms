@@ -1,0 +1,42 @@
+{{define "title"}}{{if .Paid}}Thank you{{else}}Payment not completed{{end}}{{end}}
+
+{{/* The page somebody lands on after Stripe.
+
+     They are back on the website that hosts the form, in the same frame the
+     form was in, because embed.js saw the marker Stripe sent the hosting page
+     back with and pointed the frame here instead of at a blank form. Without
+     this page the last thing that happens after paying is being dropped on the
+     feast page in front of an empty form, which reads as "did that work?"
+
+     What it says is what happened at Stripe, which is the thing the person
+     just did. It does not claim to have confirmed anything: this page cannot
+     look an order up, deliberately -- there is no identifier in the URL to
+     look one up with -- and the only thing in this service that may settle an
+     order is the webhook. See the handler for why that makes this page safe. */}}
+
+{{define "content"}}
+<div id="dropin-root" data-parent-origin="{{.ParentOrigin}}" class="outcome">
+
+{{if .Paid}}
+<div class="said">
+<h1>Thank you</h1>
+{{/* The author's own confirmation, which until now no paying visitor ever
+     saw: on a form that sells, the page after submitting is the receipt and
+     the payment button, and this is the first moment there is anything to
+     confirm. */}}
+<p>{{if .Form.Confirmation}}{{.Form.Confirmation}}{{else}}Your payment went through and your order is complete.{{end}}</p>
+</div>
+<p class="note">Your payment was handled by Stripe.</p>
+
+{{else}}
+<div class="said unfinished">
+<h1>Nothing has been charged</h1>
+<p>The payment was not completed, so this order is not confirmed. You can go back and try again whenever you like.</p>
+</div>
+{{with .FormURL}}
+<p class="pay"><a class="button" href="{{.}}">Back to the form</a></p>
+{{end}}
+{{end}}
+
+</div>
+{{end}}

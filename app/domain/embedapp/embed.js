@@ -14,7 +14,15 @@
    div may appear after this script has already run and may be re-inserted on
    navigation -- hence the MutationObserver and the idempotence mark. And
    embedded scripts are disabled while you are logged in and editing, so the
-   form will look broken in the editor and fine in a private window. */
+   form will look broken in the editor and fine in a private window.
+
+   This file also closes the payment round trip. Stripe sends the browser back
+   to *this* page rather than to ours, with two parameters saying which form
+   and what happened, and this script hands them to the frame so the thank-you
+   appears where the form was. Without that the last thing that happens after
+   paying is landing on the host page in front of a blank form, which reads as
+   "did that work?" -- which is exactly how it read to the first person who
+   paid. */
 
 (function () {
   "use strict";
@@ -36,6 +44,46 @@
     }
 
     return "";
+  })();
+
+  /* What Stripe sent this page back with, read once at load.
+
+     The names match paybus.ReturnMarker and paybus.ReturnState, which build
+     the addresses Stripe is given; this is the third place those two words
+     appear and the only one that is not Go. Keep them in step.
+
+     Read once and kept, rather than read when a holder is mounted, because on
+     Squarespace a holder can appear long after this script ran and the search
+     string may have changed by then.
+
+     The URL is deliberately left alone afterwards. Stripping the parameters
+     with replaceState would mean a holder inserted later got a blank form,
+     and a refresh showing the same acknowledgement again is better than a
+     refresh replacing it with an empty form. Nothing in them is worth hiding:
+     a form's name is public and the state is a word. */
+  var RETURN_FORM = "dropin";
+  var RETURN_STATE = "dropin_state";
+
+  var returned = (function () {
+    /* URLSearchParams is everywhere that matters, and where it is not, the
+       return trip simply does not happen: the form still works, and somebody
+       on a browser that old lands on the host page as before. */
+    if (typeof URLSearchParams !== "function") {
+      return null;
+    }
+
+    var q = new URLSearchParams(window.location.search);
+    var slug = q.get(RETURN_FORM);
+    var state = q.get(RETURN_STATE);
+
+    /* Only the two words our own addresses carry. Anything else is not from
+       us, and the frame is pointed at the ordinary form -- which is also what
+       the server does with a state it does not recognise. */
+    if (!slug || (state !== "paid" && state !== "cancelled")) {
+      return null;
+    }
+
+    return { slug: slug, state: state };
   })();
 
   /* An iframe cannot be taller than this however tall the page inside claims
@@ -63,6 +111,18 @@
 
     var frame = document.createElement("iframe");
 
+    /* Either the form, or the acknowledgement of a payment when Stripe has
+       just sent this page back here and the marker names this form. Matched
+       on the slug, so a page carrying two forms shows the thank-you in the
+       one that was paid for and a blank form in the other. */
+    var path = "/f/" + encodeURIComponent(slug);
+
+    if (returned && returned.slug === slug) {
+      path += "/return?state=" + encodeURIComponent(returned.state) + "&";
+    } else {
+      path += "?";
+    }
+
     /* The parent origin goes in as a parameter, and the service checks it
        against the form's own allowed-embedder list before the page inside
        will post anything to it. So this is a request rather than an
@@ -70,9 +130,8 @@
        that stays silent. */
     frame.src =
       origin +
-      "/f/" +
-      encodeURIComponent(slug) +
-      "?parent=" +
+      path +
+      "parent=" +
       encodeURIComponent(window.location.origin);
 
     frame.title = holder.getAttribute("data-dropin-title") || "Form";

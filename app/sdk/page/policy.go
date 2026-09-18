@@ -10,6 +10,7 @@ package page
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
@@ -162,18 +163,42 @@ type FormOrigins interface {
 	ByID(slug types.Slug) (formbus.Form, error)
 }
 
-// formSlugOf extracts the slug from /f/{slug}, and nothing else.
+// formPages are the paths under /f/{slug} that are also pages of that form and
+// therefore need its embedding permissions.
 //
-// Deliberately exact rather than a prefix match. /f/x/y is not a form page,
-// and treating it as one would hand a form's embedding permissions to a URL
-// the mux will answer 404 for.
+// Named one by one rather than matched as a prefix, which is the same decision
+// formSlugOf below has always made and for the same reason: /f/x/anything is
+// not a form page, and treating it as one would hand a form's embedding
+// permissions to a URL the mux answers 404 for.
+//
+// The cost of naming them is that this list and embedapp's route list have to
+// agree, and they cannot be one list -- app/sdk/page cannot import an app
+// package, since embedapp imports this one. So the check is a test instead:
+// the CSP of every route on the embed surface is asserted through the mounted
+// mux, and a route added here without a policy is a frame the browser refuses
+// to draw. That failure is a blank box and a console message nobody reads,
+// which is precisely why it is asserted rather than trusted.
+var formPages = []string{"edit", "return"}
+
+// formSlugOf extracts the slug from a form's own pages, and nothing else.
 func formSlugOf(path string) (string, bool) {
 	rest, ok := strings.CutPrefix(path, "/f/")
-	if !ok || rest == "" || strings.Contains(rest, "/") {
+	if !ok || rest == "" {
 		return "", false
 	}
 
-	return rest, true
+	slug, sub, nested := strings.Cut(rest, "/")
+	if slug == "" {
+		return "", false
+	}
+
+	// Anything deeper than one segment fails this too, because Cut leaves the
+	// whole remainder in sub and "edit/x" is not in the list.
+	if nested && !slices.Contains(formPages, sub) {
+		return "", false
+	}
+
+	return slug, true
 }
 
 // frameAncestorList renders the directive's value, failing closed.

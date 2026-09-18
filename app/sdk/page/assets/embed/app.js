@@ -1,13 +1,15 @@
 /* The embedded form's own script. It runs inside the iframe.
 
-   Two jobs, and the form works without either: the page is server-rendered
-   and server-validated, so with JavaScript off it still submits, still
-   validates, and still shows its errors. Everything here is an improvement on
-   a working page rather than a requirement for one.
+   Three jobs, and the form works without any of them: the page is
+   server-rendered and server-validated, so with JavaScript off it still
+   submits, still validates, and still shows its errors. Everything here is an
+   improvement on a working page rather than a requirement for one.
 
      1. Tell the parent how tall we are, so the frame is not a box with its own
         scrollbar inside somebody else's page.
-     2. Hide the fields a condition says are not applicable, and say what is
+     2. Acknowledge the click, so that a submission which has to talk to Stripe
+        before it can answer does not look like a button that missed.
+     3. Hide the fields a condition says are not applicable, and say what is
         wrong with a field before the round trip.
 
    The parent half of the resize channel is embed.js, which the site owner
@@ -78,6 +80,111 @@
        for the fallback path above. */
     window.addEventListener("load", tellParent);
   }
+
+  // --- one click, and only one -------------------------------------------
+
+  /* Found on the real page, by the person paying: the submission that prices
+     an order also creates a Stripe Checkout session, which means a network
+     call to Stripe happens inside the request. That is not instant, nothing
+     on the page acknowledged the click, and the natural reading of a button
+     that does nothing is that the click missed. So it got clicked again.
+
+     The second click was harmless in the database -- the grant is single-use,
+     so a replay is answered with "we already have this" rather than a second
+     order -- but harmless is not the same as answered, and being told your
+     order is a duplicate is a strange reward for being unsure.
+
+     With JavaScript off none of this happens and the single-use grant is the
+     whole defence, which is where it was before. This is about what somebody
+     sees while they wait, not about what the server allows. */
+
+  var forms = document.querySelectorAll("form");
+
+  function markBusy(e) {
+    var f = e.currentTarget;
+
+    if (f.getAttribute("data-submitting") === "1") {
+      /* Already on its way. Not redundant with the greying below: Enter in a
+         text field submits a form whose button is disabled, and a second
+         Enter would otherwise send a second request. */
+      e.preventDefault();
+
+      return;
+    }
+
+    /* Asked here rather than assumed from the other submit listener. If the
+       browser is about to refuse this form over an empty required field then
+       nothing is on its way, and greying the button would leave somebody
+       looking at a page that cannot be submitted and no longer offers to. */
+    if (typeof f.checkValidity === "function" && !f.checkValidity()) {
+      return;
+    }
+
+    f.setAttribute("data-submitting", "1");
+
+    var buttons = f.querySelectorAll("button[type=\"submit\"], button:not([type])");
+
+    for (var i = 0; i < buttons.length; i++) {
+      var b = buttons[i];
+      var busy = b.getAttribute("data-busy");
+
+      if (busy) {
+        /* The idle label is kept so that coming back to this page restores
+           the button rather than leaving it saying "one moment" forever. */
+        b.setAttribute("data-idle", b.textContent);
+        b.textContent = busy;
+      }
+
+      b.setAttribute("aria-busy", "true");
+
+      /* In a timeout rather than now, and this is the one piece of
+         superstition in this file worth keeping. Disabling a submit button
+         inside its own submit event is documented to be safe -- the form data
+         was gathered before this handler ran -- but a browser that got it
+         wrong would produce a form that cannot be submitted at all, which is
+         a catastrophic failure on the one page that sells the tickets. A tick
+         of delay costs nothing and takes that possibility off the table. The
+         double-click it guards against is already handled above, by the
+         attribute, which is set synchronously. */
+      setTimeout(disable(b), 0);
+    }
+  }
+
+  function disable(b) {
+    return function () {
+      b.disabled = true;
+    };
+  }
+
+  /* Restored to idle when this page comes back from the browser's cache --
+     Back out of Stripe, or the back button after the confirmation. Without
+     this, a restored page shows a greyed button labelled "one moment" and no
+     way to proceed. */
+  function clearBusy() {
+    for (var i = 0; i < forms.length; i++) {
+      forms[i].removeAttribute("data-submitting");
+
+      var buttons = forms[i].querySelectorAll("button");
+
+      for (var j = 0; j < buttons.length; j++) {
+        var b = buttons[j];
+
+        b.disabled = false;
+        b.removeAttribute("aria-busy");
+
+        if (b.hasAttribute("data-idle")) {
+          b.textContent = b.getAttribute("data-idle");
+          b.removeAttribute("data-idle");
+        }
+      }
+    }
+  }
+
+  for (var n = 0; n < forms.length; n++) {
+    forms[n].addEventListener("submit", markBusy);
+  }
+
+  window.addEventListener("pageshow", clearBusy);
 
   // --- conditional fields -----------------------------------------------
 
