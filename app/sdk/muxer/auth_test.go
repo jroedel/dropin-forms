@@ -15,12 +15,15 @@ import (
 	"time"
 
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
+	"github.com/jroedel/dropin-forms/app/domain/notifyapp"
 	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
 	"github.com/jroedel/dropin-forms/app/sdk/mid"
 	"github.com/jroedel/dropin-forms/app/sdk/muxer"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/access/stores/accessdb"
+	"github.com/jroedel/dropin-forms/business/domain/notify/notifybus"
+	"github.com/jroedel/dropin-forms/business/domain/notify/stores/notifydb"
 	"github.com/jroedel/dropin-forms/business/domain/submission/stores/submissiondb"
 	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
 	"github.com/jroedel/dropin-forms/business/domain/user/stores/userdb"
@@ -41,6 +44,12 @@ type harness struct {
 	users  *userbus.Business
 	access *accessbus.Business
 	sent   *mail.Recorder
+
+	// notify is the real notification domain over the same database, so that a
+	// test can read back what the unsubscribe page wrote. muteKey is what
+	// signs the links that page accepts.
+	notify  *notifybus.Business
+	muteKey notifybus.MuteKey
 }
 
 func newAdmin(t *testing.T, bootstrap string) harness {
@@ -65,6 +74,9 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 	if err := submissiondb.Init(t.Context(), db); err != nil {
 		t.Fatalf("submissiondb.Init: %v", err)
 	}
+	if err := notifydb.Init(t.Context(), db); err != nil {
+		t.Fatalf("notifydb.Init: %v", err)
+	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	users := userbus.NewBusiness(log, userdb.NewStore(db))
@@ -72,9 +84,30 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 	submissions := submissionbus.NewBusiness(log, submissiondb.NewStore(db))
 	sent := &mail.Recorder{}
 
-	renderer, err := page.NewRenderer(log, page.AdminChrome(), authapp.Templates, submissionapp.Templates)
+	renderer, err := page.NewRenderer(log, page.AdminChrome(),
+		authapp.Templates, submissionapp.Templates, notifyapp.Templates)
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
+	}
+
+	muteKey, err := notifybus.ParseMuteKey("a-test-secret-long-enough-to-be-a-key")
+	if err != nil {
+		t.Fatalf("ParseMuteKey: %v", err)
+	}
+
+	notifier, err := notifybus.NewBusiness(notifybus.Config{
+		Log:          log,
+		Mail:         brokenMail{},
+		Forms:        definitions,
+		Submissions:  submissions,
+		Grants:       access,
+		Accounts:     users,
+		Mutes:        notifydb.NewStore(db),
+		MuteKey:      muteKey,
+		AdminBaseURL: "https://forms.test",
+	})
+	if err != nil {
+		t.Fatalf("notifybus.NewBusiness: %v", err)
 	}
 
 	expected := sqldb.Expected{}
@@ -90,6 +123,9 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 	for table, columns := range submissiondb.Expected {
 		expected[table] = columns
 	}
+	for table, columns := range notifydb.Expected {
+		expected[table] = columns
+	}
 
 	h, err := muxer.Admin(muxer.Config{
 		Log:          log,
@@ -101,6 +137,7 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 		Forms:        definitions,
 		Mail:         sent,
 		Render:       renderer,
+		Notify:       notifier,
 		AdminBaseURL: "https://forms.test",
 		Bootstrap:    bootstrap,
 	})
@@ -108,7 +145,7 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 		t.Fatalf("muxer.Admin: %v", err)
 	}
 
-	return harness{h: h, users: users, access: access, sent: sent}
+	return harness{h: h, users: users, access: access, sent: sent, notify: notifier, muteKey: muteKey}
 }
 
 func (a harness) get(t *testing.T, target string, cookie string) *httptest.ResponseRecorder {
@@ -370,15 +407,39 @@ func newAdminWithBrokenMail(t *testing.T) harness {
 	if err := submissiondb.Init(t.Context(), db); err != nil {
 		t.Fatalf("submissiondb.Init: %v", err)
 	}
+	if err := notifydb.Init(t.Context(), db); err != nil {
+		t.Fatalf("notifydb.Init: %v", err)
+	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	users := userbus.NewBusiness(log, userdb.NewStore(db))
 	access := accessbus.NewBusiness(log, accessdb.NewStore(db))
 	submissions := submissionbus.NewBusiness(log, submissiondb.NewStore(db))
 
-	renderer, err := page.NewRenderer(log, page.AdminChrome(), authapp.Templates, submissionapp.Templates)
+	renderer, err := page.NewRenderer(log, page.AdminChrome(),
+		authapp.Templates, submissionapp.Templates, notifyapp.Templates)
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
+	}
+
+	muteKey, err := notifybus.ParseMuteKey("a-test-secret-long-enough-to-be-a-key")
+	if err != nil {
+		t.Fatalf("ParseMuteKey: %v", err)
+	}
+
+	notifier, err := notifybus.NewBusiness(notifybus.Config{
+		Log:          log,
+		Mail:         brokenMail{},
+		Forms:        definitions,
+		Submissions:  submissions,
+		Grants:       access,
+		Accounts:     users,
+		Mutes:        notifydb.NewStore(db),
+		MuteKey:      muteKey,
+		AdminBaseURL: "https://forms.test",
+	})
+	if err != nil {
+		t.Fatalf("notifybus.NewBusiness: %v", err)
 	}
 
 	expected := sqldb.Expected{}
@@ -394,6 +455,9 @@ func newAdminWithBrokenMail(t *testing.T) harness {
 	for table, columns := range submissiondb.Expected {
 		expected[table] = columns
 	}
+	for table, columns := range notifydb.Expected {
+		expected[table] = columns
+	}
 
 	h, err := muxer.Admin(muxer.Config{
 		Log:          log,
@@ -405,6 +469,7 @@ func newAdminWithBrokenMail(t *testing.T) harness {
 		Forms:        definitions,
 		Mail:         brokenMail{},
 		Render:       renderer,
+		Notify:       notifier,
 		AdminBaseURL: "https://forms.test",
 	})
 	if err != nil {
@@ -414,6 +479,8 @@ func newAdminWithBrokenMail(t *testing.T) harness {
 	a.h = h
 	a.users = users
 	a.access = access
+	a.notify = notifier
+	a.muteKey = muteKey
 
 	return a
 }

@@ -517,3 +517,412 @@ func TestAnUnusableConfigIsRefusedAtStartup(t *testing.T) {
 		})
 	}
 }
+
+// --- turning it off ------------------------------------------------------------
+
+// mutes is a notifybus.Mutes in a map.
+type mutes struct {
+	off map[string]bool
+	err error
+}
+
+func newMutes() *mutes { return &mutes{off: map[string]bool{}} }
+
+func key(userID types.ID, form types.Slug) string { return userID.String() + "|" + form.String() }
+
+func (m *mutes) Muted(_ context.Context, userID types.ID, form types.Slug) (bool, error) {
+	if m.err != nil {
+		return false, m.err
+	}
+
+	return m.off[key(userID, form)], nil
+}
+
+func (m *mutes) MutedForForm(_ context.Context, form types.Slug) ([]types.ID, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+
+	var out []types.ID
+
+	for k, on := range m.off {
+		if !on {
+			continue
+		}
+
+		id, slug, _ := strings.Cut(k, "|")
+		if slug != form.String() {
+			continue
+		}
+
+		parsed, err := types.ParseID(id)
+		if err != nil {
+			continue
+		}
+
+		out = append(out, parsed)
+	}
+
+	return out, nil
+}
+
+func (m *mutes) MutedForUser(_ context.Context, userID types.ID) ([]types.Slug, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+
+	var out []types.Slug
+
+	for k, on := range m.off {
+		id, slug, _ := strings.Cut(k, "|")
+		if !on || id != userID.String() {
+			continue
+		}
+
+		parsed, err := types.ParseSlug(slug)
+		if err != nil {
+			continue
+		}
+
+		out = append(out, parsed)
+	}
+
+	return out, nil
+}
+
+func (m *mutes) Mute(_ context.Context, userID types.ID, form types.Slug, _ time.Time) error {
+	if m.err != nil {
+		return m.err
+	}
+
+	m.off[key(userID, form)] = true
+
+	return nil
+}
+
+func (m *mutes) Unmute(_ context.Context, userID types.ID, form types.Slug) error {
+	if m.err != nil {
+		return m.err
+	}
+
+	delete(m.off, key(userID, form))
+
+	return nil
+}
+
+// The whole feature, from the domain's side: somebody who has said no is not
+// told, and everybody else still is.
+func TestSomebodyWhoHasTurnedItOffIsNotTold(t *testing.T) {
+	f := lunch(t)
+	sub := order(t, f, 0, submissionbus.StatusReceived)
+
+	quiet := types.NewID()
+	loud := types.NewID()
+
+	off := newMutes()
+	off.off[key(quiet, f.ID)] = true
+
+	h := newHarness(t, notifybus.Config{
+		Forms:       forms{form: f},
+		Submissions: submissions{sub: sub},
+		Mutes:       off,
+		Grants: grants{list: []accessbus.Grant{
+			{UserID: quiet, Form: f.ID, Role: accessbus.RoleResults},
+			{UserID: loud, Form: f.ID, Role: accessbus.RoleResults},
+		}},
+		Accounts: accounts{users: map[types.ID]userbus.User{
+			quiet: {ID: quiet, Email: mustEmail(t, "quiet@schoenstatt.test"), Enabled: true},
+			loud:  {ID: loud, Email: mustEmail(t, "loud@schoenstatt.test"), Enabled: true},
+		}},
+	})
+
+	h.b.Received(t.Context(), sub.ID)
+
+	for _, to := range h.to() {
+		if to == "quiet@schoenstatt.test" {
+			t.Errorf("somebody who turned this form off was emailed anyway: %v", h.to())
+		}
+	}
+
+	h.messageTo(t, "loud@schoenstatt.test")
+}
+
+// A preference is per person and per form. Turning one form off does not turn
+// another off, and does not turn anybody else's off.
+func TestAPreferenceIsOnePersonAndOneForm(t *testing.T) {
+	f := lunch(t)
+	sub := order(t, f, 0, submissionbus.StatusReceived)
+
+	reader := types.NewID()
+	other := mustSlug(t, "another-form")
+
+	off := newMutes()
+	off.off[key(reader, other)] = true
+
+	h := newHarness(t, notifybus.Config{
+		Forms:       forms{form: f},
+		Submissions: submissions{sub: sub},
+		Mutes:       off,
+		Grants:      grants{list: []accessbus.Grant{{UserID: reader, Form: f.ID, Role: accessbus.RoleResults}}},
+		Accounts: accounts{users: map[types.ID]userbus.User{
+			reader: {ID: reader, Email: mustEmail(t, "reader@schoenstatt.test"), Enabled: true},
+		}},
+	})
+
+	h.b.Received(t.Context(), sub.ID)
+
+	h.messageTo(t, "reader@schoenstatt.test")
+}
+
+// The direction a failure falls matters more here than most places: somebody
+// getting an email they switched off is an annoyance, and an order nobody
+// hears about is the failure this package exists to prevent.
+func TestAPreferenceStoreThatIsDownTellsEverybody(t *testing.T) {
+	f := lunch(t)
+	sub := order(t, f, 0, submissionbus.StatusReceived)
+
+	reader := types.NewID()
+
+	broken := newMutes()
+	broken.err = errors.New("the database is gone")
+
+	h := newHarness(t, notifybus.Config{
+		Forms:       forms{form: f},
+		Submissions: submissions{sub: sub},
+		Mutes:       broken,
+		Grants:      grants{list: []accessbus.Grant{{UserID: reader, Form: f.ID, Role: accessbus.RoleResults}}},
+		Accounts: accounts{users: map[types.ID]userbus.User{
+			reader: {ID: reader, Email: mustEmail(t, "reader@schoenstatt.test"), Enabled: true},
+		}},
+	})
+
+	h.b.Received(t.Context(), sub.ID)
+
+	h.messageTo(t, "reader@schoenstatt.test")
+
+	if !strings.Contains(h.lines.String(), "everybody who holds this form was told") {
+		t.Errorf("the failure was not logged:\n%s", h.lines.String())
+	}
+}
+
+// --- what the last line of the message says -------------------------------------
+
+func TestOnlyAnAccountIsOfferedAWayOut(t *testing.T) {
+	f := lunch(t)
+	f.Notify = []string{"kitchen@schoenstatt.test"}
+
+	sub := order(t, f, 0, submissionbus.StatusReceived)
+
+	reader := types.NewID()
+
+	muteKey, err := notifybus.ParseMuteKey("a-test-secret-long-enough-to-be-a-key")
+	if err != nil {
+		t.Fatalf("ParseMuteKey: %v", err)
+	}
+
+	h := newHarness(t, notifybus.Config{
+		Forms:        forms{form: f},
+		Submissions:  submissions{sub: sub},
+		Mutes:        newMutes(),
+		MuteKey:      muteKey,
+		Office:       "office@schoenstatt.test",
+		AdminBaseURL: "https://forms.test",
+		Grants:       grants{list: []accessbus.Grant{{UserID: reader, Form: f.ID, Role: accessbus.RoleResults}}},
+		Accounts: accounts{users: map[types.ID]userbus.User{
+			reader: {ID: reader, Email: mustEmail(t, "reader@schoenstatt.test"), Enabled: true},
+		}},
+	})
+
+	h.b.Received(t.Context(), sub.ID)
+
+	// The account gets a link, and the link is theirs: it decodes to them and
+	// to this form.
+	mine := h.messageTo(t, "reader@schoenstatt.test")
+
+	_, token, found := strings.Cut(mine.Text, "https://forms.test/notifications/"+f.ID.String()+"?t=")
+	if !found {
+		t.Fatalf("no unsubscribe link for an account that holds the form:\n%s", mine.Text)
+	}
+
+	token = strings.TrimSpace(token)
+
+	user, form, err := notifybus.ReadMuteToken(muteKey, token)
+	if err != nil {
+		t.Fatalf("the link in the message does not verify: %v", err)
+	}
+	if user != reader || form != f.ID {
+		t.Errorf("the link names %s on %s, want %s on %s", user, form, reader, f.ID)
+	}
+
+	// A configured address has nobody to unsubscribe, so it is told where the
+	// decision lives instead of being offered a button that would silence a
+	// shared mailbox for everybody.
+	for _, address := range []string{"office@schoenstatt.test", "kitchen@schoenstatt.test"} {
+		m := h.messageTo(t, address)
+
+		if strings.Contains(m.Text, "/notifications/") {
+			t.Errorf("%s was offered an unsubscribe link:\n%s", address, m.Text)
+		}
+		if !strings.Contains(m.Text, "on the notification list") {
+			t.Errorf("%s was not told why it is getting this:\n%s", address, m.Text)
+		}
+	}
+}
+
+// With no key there is no link, and the message still says how to stop.
+func TestWithNoKeyTheMessageStillSaysHowToStop(t *testing.T) {
+	f := lunch(t)
+	sub := order(t, f, 0, submissionbus.StatusReceived)
+
+	reader := types.NewID()
+
+	h := newHarness(t, notifybus.Config{
+		Forms:        forms{form: f},
+		Submissions:  submissions{sub: sub},
+		Mutes:        newMutes(),
+		AdminBaseURL: "https://forms.test",
+		Grants:       grants{list: []accessbus.Grant{{UserID: reader, Form: f.ID, Role: accessbus.RoleResults}}},
+		Accounts: accounts{users: map[types.ID]userbus.User{
+			reader: {ID: reader, Email: mustEmail(t, "reader@schoenstatt.test"), Enabled: true},
+		}},
+	})
+
+	h.b.Received(t.Context(), sub.ID)
+
+	m := h.messageTo(t, "reader@schoenstatt.test")
+
+	if strings.Contains(m.Text, "/notifications/") {
+		t.Errorf("a link was offered with no key to sign it:\n%s", m.Text)
+	}
+	if !strings.Contains(m.Text, "sign in") {
+		t.Errorf("the message does not say how to stop:\n%s", m.Text)
+	}
+}
+
+// --- the token ---------------------------------------------------------------------
+
+func TestAMuteTokenNamesItsOwnPairAndNothingElse(t *testing.T) {
+	key, err := notifybus.ParseMuteKey("a-test-secret-long-enough-to-be-a-key")
+	if err != nil {
+		t.Fatalf("ParseMuteKey: %v", err)
+	}
+
+	user := types.NewID()
+	form := mustSlug(t, "feast-lunch-2026")
+
+	token, err := notifybus.MintMuteToken(key, user, form)
+	if err != nil {
+		t.Fatalf("MintMuteToken: %v", err)
+	}
+
+	gotUser, gotForm, err := notifybus.ReadMuteToken(key, token)
+	if err != nil {
+		t.Fatalf("ReadMuteToken: %v", err)
+	}
+	if gotUser != user || gotForm != form {
+		t.Errorf("read back %s on %s, want %s on %s", gotUser, gotForm, user, form)
+	}
+
+	// Another key is another service. This is the property that stops somebody
+	// who can construct a plausible link from silencing the person who reads
+	// the orders.
+	other, err := notifybus.ParseMuteKey("a-different-secret-also-long-enough!!")
+	if err != nil {
+		t.Fatalf("ParseMuteKey: %v", err)
+	}
+
+	if _, _, err := notifybus.ReadMuteToken(other, token); !errors.Is(err, notifybus.ErrBadMuteToken) {
+		t.Errorf("a token signed with another key was accepted: %v", err)
+	}
+
+	// And the same secret used for something else is not this key. The label
+	// is what makes sharing the configured grant secret safe.
+	tampered := []string{
+		token[:len(token)-1],
+		token + "x",
+		strings.Replace(token, ".", "", 1),
+		"",
+		"....",
+	}
+
+	for _, bad := range tampered {
+		if _, _, err := notifybus.ReadMuteToken(key, bad); err == nil {
+			t.Errorf("%q was accepted as a token", bad)
+		}
+	}
+}
+
+// The encoding is length-prefixed for the reason formbus's grant is: two
+// variable-length strings concatenated let one pair produce another's bytes.
+func TestTwoPairsCannotShareAToken(t *testing.T) {
+	key, err := notifybus.ParseMuteKey("a-test-secret-long-enough-to-be-a-key")
+	if err != nil {
+		t.Fatalf("ParseMuteKey: %v", err)
+	}
+
+	user := types.NewID()
+
+	first, err := notifybus.MintMuteToken(key, user, mustSlug(t, "feast-lunch"))
+	if err != nil {
+		t.Fatalf("MintMuteToken: %v", err)
+	}
+
+	second, err := notifybus.MintMuteToken(key, user, mustSlug(t, "feast"))
+	if err != nil {
+		t.Fatalf("MintMuteToken: %v", err)
+	}
+
+	if first == second {
+		t.Error("two forms produced one token")
+	}
+}
+
+// --- reading and writing the preference --------------------------------------------
+
+func TestSetMutedGoesBothWays(t *testing.T) {
+	f := lunch(t)
+	off := newMutes()
+
+	h := newHarness(t, notifybus.Config{
+		Forms:       forms{form: f},
+		Submissions: submissions{},
+		Mutes:       off,
+	})
+
+	user := types.NewID()
+
+	muted, err := h.b.Muted(t.Context(), user, f.ID)
+	if err != nil {
+		t.Fatalf("Muted: %v", err)
+	}
+	if muted {
+		t.Fatal("a fresh account starts muted, so nobody is told about anything until they ask")
+	}
+
+	for _, want := range []bool{true, true, false, false} {
+		if err := h.b.SetMuted(t.Context(), when, user, f.ID, want); err != nil {
+			t.Fatalf("SetMuted(%v): %v", want, err)
+		}
+
+		got, err := h.b.Muted(t.Context(), user, f.ID)
+		if err != nil {
+			t.Fatalf("Muted: %v", err)
+		}
+		if got != want {
+			t.Errorf("after SetMuted(%v), Muted is %v", want, got)
+		}
+	}
+
+	// Which forms, for the page that lists them.
+	if err := h.b.SetMuted(t.Context(), when, user, f.ID, true); err != nil {
+		t.Fatalf("SetMuted: %v", err)
+	}
+
+	forms, err := h.b.MutedForms(t.Context(), user)
+	if err != nil {
+		t.Fatalf("MutedForms: %v", err)
+	}
+	if len(forms) != 1 || forms[0] != f.ID {
+		t.Errorf("MutedForms = %v, want just %s", forms, f.ID)
+	}
+}

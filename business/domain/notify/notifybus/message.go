@@ -76,7 +76,7 @@ func (b *Business) forSubmitter(f formbus.Form, sub submissionbus.Submission, pa
 // Everything needed to act is in the body, and the link is for the rest. A
 // notification that says only "there is a new submission, go and look" is one
 // that gets read on a phone in a car park and then forgotten.
-func (b *Business) forOffice(f formbus.Form, sub submissionbus.Submission, paid bool) mail.Message {
+func (b *Business) forOffice(f formbus.Form, sub submissionbus.Submission, paid bool, to recipient) mail.Message {
 	var body strings.Builder
 
 	who := sub.Email.String()
@@ -115,12 +115,54 @@ func (b *Business) forOffice(f formbus.Form, sub submissionbus.Submission, paid 
 		body.WriteString("\n")
 	}
 
+	body.WriteString("\n")
+	body.WriteString(b.why(f, to))
+
 	subject := "New submission: " + f.Title
 	if paid {
 		subject = fmt.Sprintf("Payment received, %s: %s", formbus.Show(sub.Answers.Total, f.Currency), f.Title)
 	}
 
 	return mail.Message{Subject: subject, Text: body.String()}
+}
+
+// why is the last line of an office notification: what put this address on the
+// list, and what to do about it.
+//
+// It is written for every recipient rather than only for the ones who can act,
+// because "why am I getting this" is the question every notification email
+// eventually provokes, and an address that cannot unsubscribe itself still
+// needs to know who can.
+func (b *Business) why(f formbus.Form, to recipient) string {
+	const holds = "You are getting this because you can read submissions for this form."
+
+	if to.userID.Zero() {
+		// A configured address: mail.notify, or the form's own notify list.
+		// There is nobody to unsubscribe -- it is a decision somebody made in
+		// a file about an address rather than about themselves, and a link
+		// here would let one person switch off a shared mailbox for everybody.
+		return "This address is on the notification list for " + f.Title +
+			". Whoever administers this service can change that.\n"
+	}
+
+	if !b.CanUnsubscribe() || b.cfg.AdminBaseURL == "" {
+		return holds + " To stop, sign in and turn it off on the forms page.\n"
+	}
+
+	token, err := MintMuteToken(b.cfg.MuteKey, to.userID, f.ID)
+	if err != nil {
+		// Unreachable with a key and an account, both of which were checked
+		// above. Logged rather than dropped silently, because the visible
+		// symptom would be a notification that quietly stopped offering a way
+		// out.
+		b.cfg.Log.Error("an unsubscribe link could not be built",
+			"form", f.ID.String(), "user_id", to.userID.String(), "error", err)
+
+		return holds + " To stop, sign in and turn it off on the forms page.\n"
+	}
+
+	return holds + " To stop:\n" +
+		b.cfg.AdminBaseURL + "/notifications/" + f.ID.String() + "?t=" + token + "\n"
 }
 
 // link is where the submission can be read in the management app, or empty.

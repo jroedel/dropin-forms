@@ -83,6 +83,16 @@ type Grants interface {
 	ForUser(ctx context.Context, userID types.ID) ([]accessbus.Grant, error)
 }
 
+// Notifications answers which forms an account has turned email off for, so
+// that the list can say which is which.
+//
+// One call for the whole page rather than one per row: this is a listing, and
+// a query per form is how a page that is fast with two forms is slow with
+// forty.
+type Notifications interface {
+	MutedForms(ctx context.Context, userID types.ID) ([]types.Slug, error)
+}
+
 // Config is what this app needs.
 type Config struct {
 	Log         *slog.Logger
@@ -90,6 +100,12 @@ type Config struct {
 	Submissions Submissions
 	Grants      Grants
 	Render      *page.Renderer
+
+	// Notifications is optional. Without it the list simply does not mention
+	// email, which is right for an installation that cannot record the
+	// preference: a column offering a choice that will not stick is worse than
+	// no column.
+	Notifications Notifications
 }
 
 type app struct {
@@ -122,6 +138,10 @@ func Routes(mux *http.ServeMux, cfg Config, guard, results func(http.Handler) ht
 // indexView is the landing page: which forms this account may read.
 type indexView struct {
 	Forms []indexRow
+
+	// Email says whether this installation can record a notification
+	// preference at all, and therefore whether the column means anything.
+	Email bool
 }
 
 type indexRow struct {
@@ -134,6 +154,12 @@ type indexRow struct {
 	// clicking anything.
 	Count int
 	Open  bool
+
+	// Emailed says whether this account hears about submissions to this form.
+	// Shown because "am I getting these" is a question somebody asks while
+	// looking at the list, and because the answer is the one thing on the page
+	// that is about them rather than about the form.
+	Emailed bool
 }
 
 func (v indexView) Any() bool { return len(v.Forms) > 0 }
@@ -191,6 +217,26 @@ func (a app) index(w http.ResponseWriter, r *http.Request) {
 
 	var view indexView
 
+	// Which forms this account has turned email off for, in one call before
+	// the loop. A failure is not fatal to the page: the list's job is the
+	// submissions, and losing the email column is a worse page rather than a
+	// broken one.
+	quiet := map[types.Slug]bool{}
+
+	if a.cfg.Notifications != nil {
+		view.Email = true
+
+		muted, err := a.cfg.Notifications.MutedForms(r.Context(), u.ID)
+		if err != nil {
+			a.cfg.Log.Error("the notification preferences could not be read",
+				"request_id", web.RequestIDFrom(r.Context()), "user_id", u.ID.String(), "error", err)
+		}
+
+		for _, slug := range muted {
+			quiet[slug] = true
+		}
+	}
+
 	for _, f := range a.cfg.Forms.All() {
 		role := named[f.ID]
 		if site.Includes(accessbus.RoleResults) && !role.Includes(site) {
@@ -209,11 +255,12 @@ func (a app) index(w http.ResponseWriter, r *http.Request) {
 		}
 
 		view.Forms = append(view.Forms, indexRow{
-			ID:    f.ID.String(),
-			Title: f.Title,
-			Role:  role.String(),
-			Count: len(subs),
-			Open:  f.Open(now),
+			ID:      f.ID.String(),
+			Title:   f.Title,
+			Role:    role.String(),
+			Emailed: !quiet[f.ID],
+			Count:   len(subs),
+			Open:    f.Open(now),
 		})
 	}
 

@@ -72,6 +72,7 @@ import (
 
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
+	"github.com/jroedel/dropin-forms/app/domain/notifyapp"
 	"github.com/jroedel/dropin-forms/app/domain/paymentapp"
 	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
 	"github.com/jroedel/dropin-forms/app/sdk/health"
@@ -353,13 +354,41 @@ func Admin(cfg Config) (http.Handler, error) {
 	// change what a ticket costs.
 	results := mid.RequireFormRole(cfg.Log, cfg.Access, accessbus.RoleResults)
 
-	submissionapp.Routes(mux, submissionapp.Config{
+	sc := submissionapp.Config{
 		Log:         cfg.Log,
 		Forms:       cfg.Forms,
 		Submissions: cfg.Submissions,
 		Grants:      cfg.Access,
 		Render:      cfg.Render,
-	}, guard, results)
+	}
+
+	if cfg.Notify != nil {
+		sc.Notifications = cfg.Notify
+	}
+
+	submissionapp.Routes(mux, sc, guard, results)
+
+	// The page that turns email about a form off and on, and the one route on
+	// this surface that is deliberately *outside* guard.
+	//
+	// It has to be, because the link that leads to it is at the bottom of a
+	// notification and is opened from a mailbox: behind the session gate it
+	// would be a sign-in round trip to stop an email. What stands in for the
+	// session is a signed token naming the account and the form, checked in
+	// the handler -- see app/domain/notifyapp, which is emphatic about why
+	// that check cannot be a middleware and about why its GET changes nothing.
+	//
+	// Mounted only when there is somewhere to record the preference. Without
+	// one this would be a page whose button does nothing.
+	if cfg.Notify != nil && cfg.Notify.CanUnsubscribe() {
+		notifyapp.Routes(mux, notifyapp.Config{
+			Log:         cfg.Log,
+			Forms:       cfg.Forms,
+			Preferences: cfg.Notify,
+			Render:      cfg.Render,
+			SignInPath:  signInPath,
+		})
+	}
 
 	return web.Wrap(mux,
 		web.RequestID(),
