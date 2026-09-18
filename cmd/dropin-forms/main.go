@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
+	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/access/stores/accessdb"
@@ -172,7 +173,7 @@ func run() error {
 		return err
 	}
 
-	adminPages, err := page.NewRenderer(log, page.AdminChrome(), authapp.Templates)
+	adminPages, err := page.NewRenderer(log, page.AdminChrome(), authapp.Templates, submissionapp.Templates)
 	if err != nil {
 		return err
 	}
@@ -189,6 +190,8 @@ func run() error {
 
 		Users:        users,
 		Access:       access,
+		Submissions:  submissions,
+		Forms:        definitions,
 		Mail:         sender,
 		Render:       adminPages,
 		AdminBaseURL: cfg.Server.AdminBaseURL,

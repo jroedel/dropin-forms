@@ -109,11 +109,27 @@ type shell struct {
 	Data any
 }
 
-// NewRenderer parses one surface's shared layout together with each of one
-// app's templates.
-func NewRenderer(log *slog.Logger, ch Chrome, own fs.FS) (*Renderer, error) {
+// NewRenderer parses one surface's shared layout together with the templates
+// of every app mounted on that surface.
+//
+// Several apps rather than one, because a surface has one stylesheet and
+// net/http panics on a duplicate route pattern -- so two renderers built from
+// the same Chrome would both want to mount the same content-hashed asset path,
+// and the second registration would bring the process down at startup. One
+// renderer per surface, holding every page on it, is the shape that cannot do
+// that.
+//
+// A page name defined by two apps is a startup error rather than a silent win
+// for whichever was parsed last. That check was already here for one app's
+// templates colliding with each other; it now spans apps, which is where a
+// collision is actually likely -- two apps are far more apt to both want a
+// page called "index" than one app is to define it twice.
+func NewRenderer(log *slog.Logger, ch Chrome, own ...fs.FS) (*Renderer, error) {
 	if ch.fs == nil {
 		return nil, errors.New("a renderer needs a chrome; use AdminChrome or EmbedChrome")
+	}
+	if len(own) == 0 {
+		return nil, errors.New("a renderer needs at least one app's templates")
 	}
 
 	base, err := template.New("base").ParseFS(ch.fs, "*.html")
@@ -121,36 +137,38 @@ func NewRenderer(log *slog.Logger, ch Chrome, own fs.FS) (*Renderer, error) {
 		return nil, fmt.Errorf("the %s layout could not be read: %w", ch.name, err)
 	}
 
-	names, err := fs.Glob(own, "templates/*.html")
-	if err != nil {
-		return nil, fmt.Errorf("the page templates could not be listed: %w", err)
-	}
+	pages := map[string]*template.Template{}
 
-	if len(names) == 0 {
-		return nil, errors.New("there are no page templates to read")
-	}
-
-	pages := make(map[string]*template.Template, len(names))
-
-	for _, name := range names {
-		// Cloned per page, so each page's "content" replaces the layout's
-		// empty block without touching any other page's.
-		set, err := base.Clone()
+	for _, fsys := range own {
+		names, err := fs.Glob(fsys, "templates/*.html")
 		if err != nil {
-			return nil, fmt.Errorf("the shared layout could not be copied: %w", err)
+			return nil, fmt.Errorf("the page templates could not be listed: %w", err)
 		}
 
-		if set, err = set.ParseFS(own, name); err != nil {
-			return nil, fmt.Errorf("%s could not be read: %w", name, err)
+		for _, name := range names {
+			// Cloned per page, so each page's "content" replaces the layout's
+			// empty block without touching any other page's.
+			set, err := base.Clone()
+			if err != nil {
+				return nil, fmt.Errorf("the shared layout could not be copied: %w", err)
+			}
+
+			if set, err = set.ParseFS(fsys, name); err != nil {
+				return nil, fmt.Errorf("%s could not be read: %w", name, err)
+			}
+
+			page := strings.TrimSuffix(path.Base(name), ".html")
+
+			if _, taken := pages[page]; taken {
+				return nil, fmt.Errorf("two apps on this surface both define a %s page", page)
+			}
+
+			pages[page] = set
 		}
+	}
 
-		page := strings.TrimSuffix(path.Base(name), ".html")
-
-		if _, taken := pages[page]; taken {
-			return nil, fmt.Errorf("there is more than one %s template", page)
-		}
-
-		pages[page] = set
+	if len(pages) == 0 {
+		return nil, errors.New("there are no page templates to read")
 	}
 
 	css, err := fs.ReadFile(ch.fs, "app.css")

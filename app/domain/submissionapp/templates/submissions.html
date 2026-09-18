@@ -1,0 +1,61 @@
+{{define "title"}}{{.Form.Title}}{{end}}
+
+{{define "masthead"}}<a href="/forms">Forms</a>{{end}}
+
+{{define "content"}}
+<h1>{{.Form.Title}}</h1>
+
+<div class="summary-cards">
+<p><strong>{{.Summary.Count}}</strong> submission{{if ne .Summary.Count 1}}s{{end}}</p>
+{{if .Summary.Paid}}<p><strong>{{.Summary.Paid}}</strong> paid</p>{{end}}
+{{if .Summary.Pending}}<p><strong>{{.Summary.Pending}}</strong> awaiting payment</p>{{end}}
+{{if .Summary.Received}}<p><strong>{{.Summary.Received}}</strong> received</p>{{end}}
+{{if .Summary.Failed}}<p><strong>{{.Summary.Failed}}</strong> failed</p>{{end}}
+</div>
+
+{{if .Summary.Items}}
+<table class="listing tallies">
+<caption>Confirmed is what to cater for. Awaiting payment is what somebody
+started and has not paid for.</caption>
+<thead>
+<tr><th scope="col">Item</th><th scope="col">Confirmed</th><th scope="col">Awaiting payment</th></tr>
+</thead>
+<tbody>
+{{range .Summary.Items}}
+<tr><th scope="row">{{.Label}}</th><td class="figure">{{.Confirmed}}</td><td class="figure">{{.Pending}}</td></tr>
+{{end}}
+</tbody>
+</table>
+{{end}}
+
+<p class="money">Collected <strong>{{.Summary.PaidTotal}}</strong>{{if ne .Summary.OwedTotal "0.00"}}, with {{.Summary.OwedTotal}} started but not paid{{end}}.</p>
+
+<p><a class="go" href="/forms/{{.FormID}}/submissions.csv">Download as CSV</a></p>
+
+{{if .Rows}}
+<div class="scroller">
+<table class="listing">
+<thead>
+<tr>
+<th scope="col">When</th>
+{{range .Columns}}<th scope="col">{{.}}</th>{{end}}
+<th scope="col">Total</th>
+<th scope="col">Status</th>
+</tr>
+</thead>
+<tbody>
+{{range .Rows}}
+<tr>
+<th scope="row"><a href="/forms/{{$.FormID}}/submissions/{{.ID}}">{{.When}}</a></th>
+{{range .Cells}}<td>{{.}}</td>{{end}}
+<td class="figure">{{.Total}}</td>
+<td>{{.Status}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+</div>
+{{else}}
+<p>Nothing has been submitted yet.</p>
+{{end}}
+{{end}}

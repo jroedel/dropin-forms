@@ -1,0 +1,29 @@
+{{define "title"}}Forms{{end}}
+
+{{define "content"}}
+<h1>Forms</h1>
+
+{{if .Any}}
+<table class="listing">
+<thead>
+<tr><th scope="col">Form</th><th scope="col">Submissions</th><th scope="col">State</th><th scope="col">You</th></tr>
+</thead>
+<tbody>
+{{range .Forms}}
+<tr>
+<th scope="row"><a href="/forms/{{.ID}}/submissions">{{.Title}}</a></th>
+<td class="figure">{{.Count}}</td>
+<td>{{if .Open}}open{{else}}closed{{end}}</td>
+<td>{{.Role}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+{{/* Not an error. An account with no grants is what a second person looks
+     like before somebody gives them access, and the page should say so
+     rather than look broken. */}}
+<p>You do not have access to any forms yet. Whoever administers this service
+can give you access to one.</p>
+{{end}}
+{{end}}

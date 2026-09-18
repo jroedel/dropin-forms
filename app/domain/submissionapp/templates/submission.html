@@ -1,0 +1,50 @@
+{{define "title"}}Submission{{end}}
+
+{{define "masthead"}}<a href="/forms">Forms</a>{{end}}
+
+{{define "content"}}
+<h1>Submission</h1>
+
+<p class="crumb"><a href="/forms/{{.FormID}}/submissions">{{.Form.Title}}</a></p>
+
+<table class="detail">
+<tbody>
+<tr><th scope="row">Received</th><td>{{.When}}</td></tr>
+<tr><th scope="row">Status</th><td>{{.Status}}</td></tr>
+{{with .Email}}<tr><th scope="row">Email</th><td>{{.}}</td></tr>{{end}}
+<tr><th scope="row">Total</th><td>{{.Total}}</td></tr>
+{{with .Ref}}<tr><th scope="row">Payment reference</th><td>{{.}}</td></tr>{{end}}
+<tr><th scope="row">Reference</th><td class="ref">{{.ID}}</td></tr>
+</tbody>
+</table>
+
+<h2>Answers</h2>
+<table class="detail">
+<tbody>
+{{range .Answers}}
+<tr>
+<th scope="row">{{.Label}}</th>
+{{/* A field somebody was never shown reads differently from one they left
+     blank, and conflating the two loses the only record of what they were
+     actually asked. */}}
+<td>{{if .Answered}}{{if .Value}}{{.Value}}{{else}}<span class="absent">left blank</span>{{end}}{{else}}<span class="absent">not asked</span>{{end}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+
+{{if .Lines}}
+<h2>Order</h2>
+<table class="detail">
+<thead>
+<tr><th scope="col">Item</th><th scope="col">Each</th><th scope="col">Quantity</th><th scope="col">Amount</th></tr>
+</thead>
+<tbody>
+{{range .Lines}}
+<tr><th scope="row">{{.Label}}</th><td class="figure">{{.Price}}</td><td class="figure">{{.Qty}}</td><td class="figure">{{.Amount}}</td></tr>
+{{end}}
+<tr class="total"><th scope="row" colspan="3">Total</th><td class="figure">{{$.Total}}</td></tr>
+</tbody>
+</table>
+{{end}}
+{{end}}
