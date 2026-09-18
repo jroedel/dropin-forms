@@ -13,6 +13,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"log/slog"
+	"mime"
 	"net/http"
 	"slices"
 	"strings"
@@ -335,4 +336,59 @@ func MaxBody(n int64) Middleware {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// --- what a write may be ------------------------------------------------------
+
+// FormEncoded is the one content type a form submission arrives as.
+const FormEncoded = "application/x-www-form-urlencoded"
+
+// FormEncodedOnly refuses a write that is not a form submission.
+//
+// Every write on the public surface is a browser posting a form we rendered,
+// and there is no file upload anywhere in this service -- so the set of
+// acceptable content types is exactly one, and an allowlist of one is cheap to
+// state and cheap to check.
+//
+// What it buys, on a route that can reach Stripe: r.ParseForm accepts
+// multipart/form-data as well, and multipart is the expensive parse. A body
+// declared multipart is read into memory in parts, with a boundary scan, by a
+// handler that has not yet decided it wants the request. Refusing it before
+// the handler runs means the only bodies this service parses are the ones the
+// form can produce.
+//
+// Safe methods are not checked, for the same reason SameOriginOnly does not
+// check them: a GET has no body to allow or refuse, and a Content-Type on one
+// means nothing.
+//
+// Not mounted on the Stripe webhook, which posts JSON. That route is outside
+// this and every other body-touching gate by construction -- see
+// app/domain/paymentapp.
+func FormEncodedOnly() Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !safeMethod(r.Method) && !formEncoded(r.Header.Get("Content-Type")) {
+				http.Error(w,
+					"That is not a form submission. Open the form again and send it from the page.",
+					http.StatusUnsupportedMediaType)
+
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// formEncoded reads a Content-Type header the way the specification says to:
+// the type, then optional parameters, and a comparison that is not
+// case-sensitive.
+//
+// mime.ParseMediaType rather than a prefix test, because "application/x-www-
+// form-urlencoded-and-something" has the prefix and is not the type. A header
+// that will not parse is not the type either.
+func formEncoded(header string) bool {
+	kind, _, err := mime.ParseMediaType(header)
+
+	return err == nil && kind == FormEncoded
 }

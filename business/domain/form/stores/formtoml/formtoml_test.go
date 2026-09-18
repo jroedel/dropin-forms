@@ -193,6 +193,15 @@ func TestLoadRefuses(t *testing.T) {
 			files: fstest.MapFS{"a.toml": {Data: []byte(minimal("Alpha"))}},
 			want:  "capital letter",
 		},
+		{
+			// A negative cap is a form that takes nothing, with nothing on the
+			// page to say so. Refused at load rather than discovered by the
+			// first person to submit.
+			name: "a negative daily cap",
+			files: fstest.MapFS{"alpha.toml": {Data: []byte(
+				minimal("alpha", "daily_cap = -1"))}},
+			want: "daily cap is negative",
+		},
 
 		// Times. This is the strictness the loader is built around.
 		{
@@ -380,4 +389,44 @@ label = "Your name"
 kind = "text"
 required = true
 `
+}
+
+// The daily cap reaches the domain type, which is the whole job of the wire
+// type: a setting that parses and then goes nowhere is a rule switched off
+// with nothing to say so.
+func TestTheDailyCapIsRead(t *testing.T) {
+	store, err := formtoml.Load(fstest.MapFS{"alpha.toml": {Data: []byte(
+		minimal("alpha", "daily_cap = 400"))}})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	alpha, _ := types.ParseSlug("alpha")
+
+	f, err := store.ByID(alpha)
+	if err != nil {
+		t.Fatalf("ByID: %v", err)
+	}
+
+	if f.DailyCap != 400 {
+		t.Errorf("DailyCap = %d, want 400", f.DailyCap)
+	}
+
+	// And the ordinary case: a form that says nothing has no cap at all,
+	// rather than a cap of zero that would refuse everything.
+	plain, err := formtoml.Load(fstest.MapFS{"beta.toml": {Data: []byte(minimal("beta"))}})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	beta, _ := types.ParseSlug("beta")
+
+	b, err := plain.ByID(beta)
+	if err != nil {
+		t.Fatalf("ByID: %v", err)
+	}
+
+	if b.DailyCap != 0 {
+		t.Errorf("a form with no daily_cap came back with %d", b.DailyCap)
+	}
 }

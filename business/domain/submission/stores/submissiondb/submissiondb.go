@@ -164,6 +164,23 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	return true, nil
 }
 
+// CountSince is how many submissions a form has taken since an instant.
+//
+// Answered by the (form_slug, created_at) index above, which exists for the
+// listing screen and covers this exactly: it is a count of a contiguous range
+// of one form's rows, so it is read from the index and never touches the
+// table.
+func (s *Store) CountSince(ctx context.Context, form types.Slug, since time.Time) (int, error) {
+	const q = `SELECT COUNT(*) FROM submissions WHERE form_slug = ? AND created_at >= ?`
+
+	var n int
+	if err := s.db.QueryRowContext(ctx, q, form.String(), msOf(since)).Scan(&n); err != nil {
+		return 0, fmt.Errorf("counting the submissions: %w", err)
+	}
+
+	return n, nil
+}
+
 // ByID reads one submission.
 func (s *Store) ByID(ctx context.Context, id types.ID) (submissionbus.Submission, error) {
 	const q = selectColumns + ` WHERE id = ?`

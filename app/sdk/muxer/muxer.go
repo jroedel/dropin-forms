@@ -27,6 +27,7 @@
 //	Panics                 recovers, logs it, answers 500
 //	SecureHeaders          the per-surface header policy
 //	  SameOriginOnly       writes only: refuses a cross-site write
+//	  FormEncodedOnly      writes only: refuses a body that is not a form
 //	    the app
 //
 // The three above SecureHeaders are not gates and refuse nothing. They are
@@ -50,6 +51,17 @@
 // signature is computed over -- so the webhook has a listener of its own, with
 // no origin gate and nothing above it that touches a body. See
 // app/domain/paymentapp.
+//
+// # Where the throttles are, and why they are not here
+//
+// The rate limits of docs/design/drop-in-forms.md section 7.6 are mounted by
+// the apps, beside the routes they hold back: embedapp.Limits and
+// authapp.DefaultSignInRate. That is not an exception to the rule above but
+// the other half of it. What belongs here is which gate a route sits behind,
+// because that is a decision about the chain and about what must be withheld
+// from the webhook. A throttle's key is route knowledge -- which wildcard
+// names the form, which of two POSTs stores something -- and a copy of it here
+// would be a second place that has to be edited when a route is renamed.
 package muxer
 
 import (
@@ -113,6 +125,16 @@ type Config struct {
 	// accident. They share a listener and not an interface.
 	Payments paymentapp.Payments
 
+	// TrustProxy says whether X-Forwarded-For carries the visitor's address,
+	// for both surfaces.
+	//
+	// One field rather than one per surface, because it is a fact about the
+	// deployment -- Apache is in front of both listeners or it is in front of
+	// neither -- and two copies of one fact is how the two come to disagree.
+	// Embed builds it into the embed app's own config, which keeps that app
+	// testable on its own.
+	TrustProxy bool
+
 	// AdminBaseURL is the admin surface's own origin, used to build the link
 	// that goes in a sign-in email. Configured rather than taken from the
 	// request: a link built from a Host header is one an attacker can aim at
@@ -162,11 +184,22 @@ func Embed(cfg Config) (http.Handler, error) {
 	// In particular: do not mount the parent project's RequireFormToken here.
 	// It passes through when there is no principal, which is correct there and
 	// would admit every POST unconditionally here.
-	// Writes only. It refuses a cross-site POST from a browser, and by its own
-	// admission lets a header-less client through -- which is why it is one of
-	// several things in front of a submission rather than the thing in front
-	// of it.
-	embedapp.Routes(mux, cfg.Embed, web.SameOriginOnly())
+	// Writes only. The origin check refuses a cross-site POST from a browser
+	// and by its own admission lets a header-less client through, which is why
+	// it is one of several things in front of a submission rather than the
+	// thing in front of it; the content-type check narrows what those bodies
+	// may be to the one shape a form produces, so that nothing on this surface
+	// is ever asked to parse a multipart upload.
+	//
+	// Both are handed to embedapp rather than put on the chain below, and the
+	// reason is the same in both cases and is the whole of why this is written
+	// here: the Stripe webhook is on this listener, it posts JSON, and it must
+	// not be behind either of them.
+	cfg.Embed.TrustProxy = cfg.TrustProxy
+
+	embedapp.Routes(mux, cfg.Embed, func(next http.Handler) http.Handler {
+		return web.Wrap(next, web.SameOriginOnly(), web.FormEncodedOnly())
+	})
 
 	// The webhook, on this listener and deliberately *outside* that gate.
 	//
@@ -279,6 +312,11 @@ func Admin(cfg Config) (http.Handler, error) {
 		Render:    cfg.Render,
 		BaseURL:   cfg.AdminBaseURL,
 		Bootstrap: cfg.Bootstrap,
+
+		// Which is what the sign-in throttle counts. The default rate applies
+		// unless a test says otherwise; authapp.DefaultSignInRate says what it
+		// is and why.
+		TrustProxy: cfg.TrustProxy,
 	}, guard)
 
 	// results is the second gate, and it is mounted here rather than inside
@@ -306,6 +344,13 @@ func Admin(cfg Config) (http.Handler, error) {
 		web.Panics(cfg.Log),
 		web.SecureHeaders(page.AdminPolicy()),
 		web.SameOriginOnly(),
+
+		// Every write on this surface is a form this service rendered, and
+		// there is no upload anywhere in the management app -- so the set of
+		// content types it will parse is exactly one. On the chain here rather
+		// than per route, unlike the embed surface, because there is no
+		// webhook on this listener and therefore nothing to withhold it from.
+		web.FormEncodedOnly(),
 
 		// Below the header and origin gates, above every handler. It refuses
 		// nobody, which is what lets the sign-in pages live in the same chain

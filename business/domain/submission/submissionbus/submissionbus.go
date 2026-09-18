@@ -76,6 +76,13 @@ var (
 
 	// ErrNotAStatus is a status value this binary does not recognise.
 	ErrNotAStatus = errors.New("not a submission status")
+
+	// ErrDailyCap is a form that has taken as many submissions today as its
+	// author said it should. Not a fault in the submission: the person who
+	// meets it filled everything in correctly and is being turned away by a
+	// number somebody else set, which is why the app layer answers it with the
+	// form and a sentence rather than with an error page.
+	ErrDailyCap = errors.New("that form has taken as many submissions as it can today")
 )
 
 // ParseStatus reads a status, and is the only way to get one from a database.
@@ -136,6 +143,15 @@ func (s Submission) Paid() bool { return s.Answers.Total > 0 }
 type New struct {
 	Answers  formbus.Answers
 	RemoteIP string
+
+	// DailyCap is the form's own ceiling, copied from the definition by
+	// whoever read it. Zero or less means no cap.
+	//
+	// Passed in rather than read here, because this package has no
+	// definitions: it is handed validated answers and the rules that produced
+	// them. The cap is the one rule the validator cannot enforce, since
+	// counting what has already been stored is a question for storage.
+	DailyCap int
 }
 
 // Storer is what this package needs from storage.
@@ -150,6 +166,10 @@ type Storer interface {
 
 	ByID(ctx context.Context, id types.ID) (Submission, error)
 	ByForm(ctx context.Context, form types.Slug) ([]Submission, error)
+
+	// CountSince is how many submissions a form has taken since an instant,
+	// which is what a daily cap is measured against.
+	CountSince(ctx context.Context, form types.Slug, since time.Time) (int, error)
 
 	// SetStatus moves a submission forward, recording Stripe's reference.
 	SetStatus(ctx context.Context, id types.ID, to Status, ref string, at time.Time) error
@@ -199,6 +219,34 @@ func (b *Business) Accept(ctx context.Context, now time.Time, g formbus.Grant, n
 		return Submission{}, fmt.Errorf("the grant is for %q and the answers are for %q", g.Form, ns.Answers.FormID)
 	case ns.Answers.Version != g.Version:
 		return Submission{}, fmt.Errorf("the grant pins version %q and the answers were checked against %q", g.Version, ns.Answers.Version)
+	}
+
+	// The cap, before anything is written.
+	//
+	// A trailing day rather than a calendar one. "Since midnight" would have
+	// to answer midnight where, and an intake control has no business holding
+	// an opinion about the reader's timezone -- whereas "in the last
+	// twenty-four hours" means the same thing everywhere and needs no
+	// configuration.
+	//
+	// Counted before the insert rather than inside its transaction, so two
+	// submissions arriving in the same instant can both see the same count and
+	// both be accepted. That is deliberate: this is a bound on a day's damage,
+	// not an inventory, and one over the line costs a row while a count inside
+	// the write transaction would put a second statement in the path of every
+	// submission on a database with one writer.
+	if ns.DailyCap > 0 {
+		taken, err := b.store.CountSince(ctx, ns.Answers.FormID, now.Add(-24*time.Hour))
+		if err != nil {
+			return Submission{}, fmt.Errorf("counting today's submissions: %w", err)
+		}
+
+		if taken >= ns.DailyCap {
+			b.log.Warn("a form has reached its daily cap and is turning submissions away",
+				"form", ns.Answers.FormID.String(), "cap", ns.DailyCap, "taken", taken)
+
+			return Submission{}, ErrDailyCap
+		}
 	}
 
 	status := StatusReceived

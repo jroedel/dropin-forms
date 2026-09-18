@@ -204,6 +204,37 @@ type object struct {
 	// are money; "unpaid" is a session that completed and has not been paid
 	// for, which must not become a paid submission.
 	PaymentStatus string `json:"payment_status"`
+
+	// LastPaymentError is why an intent failed, and it is read for one
+	// purpose: telling an ordinary decline apart from a wave of them. A run of
+	// generic_decline on a public form is what card testing looks like from
+	// this side, and it is the thing section 7.6 asks to be alerted on.
+	//
+	// A pointer because it is absent on every event that is not a failure, and
+	// absent is a fact rather than an empty string. Nothing decides anything
+	// from it: it is logged, and the payment failed whatever the code says.
+	LastPaymentError *struct {
+		Code        string `json:"code"`
+		DeclineCode string `json:"decline_code"`
+	} `json:"last_payment_error"`
+}
+
+// decline is the most specific reason Stripe gave, or the empty string.
+//
+// decline_code is the issuer's answer -- generic_decline, insufficient_funds,
+// lost_card -- and code is Stripe's own category, usually card_declined. The
+// narrower one first, because "card_declined" on every line tells nobody
+// whether they are watching a wave of stolen cards or a bad afternoon.
+func (o object) decline() string {
+	if o.LastPaymentError == nil {
+		return ""
+	}
+
+	if o.LastPaymentError.DeclineCode != "" {
+		return o.LastPaymentError.DeclineCode
+	}
+
+	return o.LastPaymentError.Code
 }
 
 // ref is Stripe's identifier for the payment, preferring the payment intent
@@ -300,6 +331,7 @@ func (g *Gateway) Verify(payload []byte, signature string) (paybus.Event, error)
 
 	case kindFailed, kindAsyncFailed:
 		out.Result = paybus.ResultFailed
+		out.Decline = obj.decline()
 
 	case kindDisputed:
 		out.Result = paybus.ResultDisputed

@@ -26,6 +26,10 @@ type memStore struct {
 	subs   map[types.ID]submissionbus.Submission
 	nonces map[string]time.Time
 
+	// counted is how many times the day's submissions have been counted, so
+	// that a test can assert an uncapped form does not pay for the query.
+	counted int
+
 	fail error
 }
 
@@ -77,6 +81,23 @@ func (m *memStore) ByForm(_ context.Context, form types.Slug) ([]submissionbus.S
 	}
 
 	return out, nil
+}
+
+func (m *memStore) CountSince(_ context.Context, form types.Slug, since time.Time) (int, error) {
+	m.counted++
+
+	if m.fail != nil {
+		return 0, m.fail
+	}
+
+	var n int
+	for _, s := range m.subs {
+		if s.Form == form && !s.CreatedAt.Before(since) {
+			n++
+		}
+	}
+
+	return n, nil
 }
 
 func (m *memStore) SetStatus(_ context.Context, id types.ID, to submissionbus.Status, ref string, at time.Time) error {
@@ -417,5 +438,71 @@ func TestAnUnreadableStoreIsAnError(t *testing.T) {
 	// re-rendering as though the person had done something ordinary.
 	if errors.Is(err, submissionbus.ErrReplayed) {
 		t.Error("a store failure was reported as a replayed grant")
+	}
+}
+
+// --- the daily cap ------------------------------------------------------------
+
+// The cap is an abuse control, so what matters is that it holds and that it
+// says so in a way the app layer can answer with a sentence rather than an
+// error page.
+func TestAFormStopsTakingSubmissionsAtItsDailyCap(t *testing.T) {
+	b, _ := newBusiness()
+	form := mustSlug(t, "feast-lunch-2026")
+
+	for i := range 2 {
+		a := answers(t, form, 0)
+
+		if _, err := b.Accept(t.Context(), now, grantFor(a, "nonce-"+string(rune('a'+i))), submissionbus.New{
+			Answers:  a,
+			DailyCap: 2,
+		}); err != nil {
+			t.Fatalf("submission %d under the cap: %v", i+1, err)
+		}
+	}
+
+	a := answers(t, form, 0)
+
+	_, err := b.Accept(t.Context(), now, grantFor(a, "nonce-c"), submissionbus.New{Answers: a, DailyCap: 2})
+
+	if !errors.Is(err, submissionbus.ErrDailyCap) {
+		t.Fatalf("the third submission against a cap of 2: %v, want ErrDailyCap", err)
+	}
+}
+
+// Yesterday's submissions are not today's. The window is a trailing day rather
+// than a calendar one, so that the rule needs no opinion about which midnight.
+func TestTheCapOnlyCountsTheLastDay(t *testing.T) {
+	b, store := newBusiness()
+	form := mustSlug(t, "feast-lunch-2026")
+
+	old := answers(t, form, 0)
+	if _, err := b.Accept(t.Context(), now.Add(-48*time.Hour), grantFor(old, "old"), submissionbus.New{Answers: old}); err != nil {
+		t.Fatalf("the submission from two days ago: %v", err)
+	}
+
+	fresh := answers(t, form, 0)
+	if _, err := b.Accept(t.Context(), now, grantFor(fresh, "fresh"), submissionbus.New{Answers: fresh, DailyCap: 1}); err != nil {
+		t.Fatalf("a submission today, with two days between it and the last one: %v", err)
+	}
+
+	if got := len(store.subs); got != 2 {
+		t.Errorf("%d submissions stored, want both", got)
+	}
+}
+
+// A form that sets no cap is the ordinary case, and it must not pay for a
+// count it will not read. Every submission on the shrine's form goes through
+// this path.
+func TestNoCapMeansNoCounting(t *testing.T) {
+	b, store := newBusiness()
+	a := answers(t, mustSlug(t, "feast-lunch-2026"), 0)
+
+	if _, err := b.Accept(t.Context(), now, grantFor(a, "nonce"), submissionbus.New{Answers: a}); err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+
+	if store.counted != 0 {
+		t.Errorf("the day's submissions were counted %d times for a form with no cap", store.counted)
 	}
 }

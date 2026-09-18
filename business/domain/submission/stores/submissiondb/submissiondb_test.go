@@ -483,3 +483,52 @@ VALUES (?, 'feast-lunch-2026', 'v', 'refunded', ?, '', 0, 'usd', '', '', ?, ?)`,
 		t.Error("an unreadable row reported itself as no row at all")
 	}
 }
+
+// CountSince is what a form's daily cap is measured against, so it has to
+// count one form's recent rows and nothing else's.
+func TestCountSinceCountsOneFormsRecentRows(t *testing.T) {
+	_, store := open(t)
+
+	write := func(form types.Slug, at time.Time) {
+		t.Helper()
+
+		s := sample(t)
+		s.ID = types.NewID()
+		s.Form = form
+		s.Answers.FormID = form
+		s.CreatedAt = at
+		s.UpdatedAt = at
+
+		ok, err := store.Accept(t.Context(), s, s.ID.String())
+		if err != nil || !ok {
+			t.Fatalf("Accept: ok=%v err=%v", ok, err)
+		}
+	}
+
+	feast := mustSlug(t, "feast-lunch-2026")
+	other := mustSlug(t, "another-form")
+
+	write(feast, now)
+	write(feast, now.Add(-time.Hour))
+	write(feast, now.Add(-48*time.Hour)) // too old
+	write(other, now)                    // another form
+
+	got, err := store.CountSince(t.Context(), feast, now.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatalf("CountSince: %v", err)
+	}
+
+	if got != 2 {
+		t.Errorf("CountSince = %d, want 2: the two from the last day on this form", got)
+	}
+
+	// A form nobody has submitted is zero rather than an error, because that
+	// is the answer on the morning a form goes live.
+	none, err := store.CountSince(t.Context(), mustSlug(t, "no-such-form"), now.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatalf("CountSince on an unused form: %v", err)
+	}
+	if none != 0 {
+		t.Errorf("CountSince on an unused form = %d, want 0", none)
+	}
+}

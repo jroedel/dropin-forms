@@ -52,7 +52,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"slices"
@@ -65,6 +64,7 @@ import (
 	"github.com/jroedel/dropin-forms/business/domain/payment/paybus"
 	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
 	"github.com/jroedel/dropin-forms/business/types"
+	"github.com/jroedel/dropin-forms/foundation/alarm"
 	"github.com/jroedel/dropin-forms/foundation/web"
 )
 
@@ -147,11 +147,99 @@ type Config struct {
 	// with nothing in front means letting a stranger choose the address that
 	// goes to Stripe's fraud checks, which is worse than having no address at
 	// all.
+	//
+	// It decides the rate-limit key as well as the address sent to Stripe, and
+	// the two failures are the same shape: trust a forgeable header and every
+	// bucket is one the sender chose.
 	TrustProxy bool
+
+	// Limits are the throttles in front of these routes. The zero value is
+	// [DefaultLimits], because a public form with no limit at all is not a
+	// configuration anybody should be able to reach by forgetting a field.
+	Limits Limits
+}
+
+// Limits is how often one visitor may do each of the things on this surface.
+//
+// Every number here is a judgement about a parish website, and they are
+// written down in one place so that the judgement can be re-made by somebody
+// who has watched the real traffic rather than guessed at it. See
+// docs/design/drop-in-forms.md section 7.6 for what they are defending
+// against, which is card testing rather than load.
+type Limits struct {
+	// Submit is the POST that stores a submission and can create a Stripe
+	// object. Keyed by address *and* form, so that somebody filling in two
+	// different forms is not held to one allowance, and so that one address
+	// cannot spend another's.
+	//
+	// Deliberately not keyed by form alone. A bucket shared by every visitor
+	// to one form is a bucket a stranger can empty, and the person it refuses
+	// is the next real buyer -- which is why the per-form control here is an
+	// hourly ceiling that alerts and does not refuse.
+	Submit web.Rate
+
+	// Read is the pages: a blank form, the page somebody lands on after
+	// Stripe, and the Back button that re-renders what was typed. Looser,
+	// because none of them stores anything or spends anything, and because a
+	// frame in a page being edited is reloaded a lot.
+	Read web.Rate
+
+	// PerFormHourly is how many submissions one form may take in an hour
+	// before somebody is told. It refuses nothing: a form selling out in an
+	// afternoon is the outcome this service exists for, and a limiter that
+	// stopped it would be the most expensive bug available here. Zero takes
+	// the default; a negative number is how the alarm is switched off.
+	PerFormHourly int
+}
+
+// DefaultLimits is what this surface uses when a Config says nothing.
+//
+// The submit allowance is ten at once and then one every six seconds. Ten is
+// far more than a person filling in a form needs -- three or four corrections
+// is a bad day -- and one every six seconds is ten an hour short of nothing
+// for a machine trying cards. The read allowance is a page a second with a
+// minute's worth in hand, which is a frame being reloaded rather than a
+// visitor.
+//
+// The hourly ceiling is two hundred submissions on one form. The lunch it was
+// written for seats a fraction of that, so anything reaching it is either
+// extraordinary news or an attack, and both are worth a line in the log.
+func DefaultLimits() Limits {
+	return Limits{
+		Submit:        web.Rate{Burst: 10, Every: 6 * time.Second},
+		Read:          web.Rate{Burst: 60, Every: time.Second},
+		PerFormHourly: 200,
+	}
+}
+
+// withDefaults fills in whatever a caller left unset, one field at a time.
+//
+// Field by field rather than all-or-nothing, so that a test tightening the
+// submit rate does not silently switch off the read rate beside it.
+func (l Limits) withDefaults() Limits {
+	d := DefaultLimits()
+
+	if l.Submit.Zero() {
+		l.Submit = d.Submit
+	}
+	if l.Read.Zero() {
+		l.Read = d.Read
+	}
+	if l.PerFormHourly == 0 {
+		l.PerFormHourly = d.PerFormHourly
+	}
+
+	return l
 }
 
 type app struct {
 	cfg Config
+
+	// busy is the per-form hourly ceiling. It lives on the app rather than in
+	// a package variable because two surfaces in one test process must not
+	// share a count, and because a counter that outlives its configuration is
+	// a counter nobody can reason about.
+	busy *alarm.Ceiling
 }
 
 // now is the request's own time, read once per handler so that a submission
@@ -175,26 +263,54 @@ func (a app) now() time.Time {
 // A nil writes mounts the POST ungated, and that is for tests of this app
 // alone. Every surface built by the muxer passes one.
 func Routes(mux *http.ServeMux, cfg Config, writes func(http.Handler) http.Handler) {
-	a := app{cfg: cfg}
+	cfg.Limits = cfg.Limits.withDefaults()
+
+	a := app{
+		cfg:  cfg,
+		busy: alarm.NewCeiling(cfg.Limits.PerFormHourly, time.Hour),
+	}
 
 	if writes == nil {
 		writes = func(h http.Handler) http.Handler { return h }
 	}
 
-	mux.HandleFunc("GET /f/{slug}", a.blank)
-	mux.Handle("POST /f/{slug}", writes(http.HandlerFunc(a.submit)))
+	// The throttles are built here rather than handed in by the muxer,
+	// unlike the origin gate above, and the difference is what each one
+	// knows. The origin gate is a chain decision that has to be withheld from
+	// the webhook on the same listener, so it belongs where the chains are
+	// written down. A throttle key is route knowledge -- which wildcard names
+	// the form, which routes store something -- and that is here.
+	submits := web.Throttle(web.Throttling{
+		Rate: cfg.Limits.Submit,
+		Key:  a.submitKey,
+		Log:  cfg.Log,
+	})
+
+	reads := web.Throttle(web.Throttling{
+		Rate: cfg.Limits.Read,
+		Key:  a.readKey,
+		Log:  cfg.Log,
+	})
+
+	mux.Handle("GET /f/{slug}", reads(http.HandlerFunc(a.blank)))
+	mux.Handle("POST /f/{slug}", submits(writes(http.HandlerFunc(a.submit))))
 
 	// Back, from the confirmation page. A POST because it carries somebody's
 	// answers and a GET would put their name and address in a URL -- and
 	// behind the same-origin gate with the write it resembles, even though it
 	// writes nothing, because a route that reflects a posted body into a page
 	// has no business accepting that body from another site.
-	mux.Handle("POST /f/{slug}/edit", writes(http.HandlerFunc(a.edit)))
+	//
+	// On the read throttle rather than the submit one: it stores nothing,
+	// spends nothing and reaches nobody's API, so holding it to the allowance
+	// that exists to make card testing expensive would only punish somebody
+	// changing their mind twice.
+	mux.Handle("POST /f/{slug}/edit", reads(writes(http.HandlerFunc(a.edit))))
 
 	// Where Stripe sends the browser back to. Strictly speaking Stripe sends
 	// it to the *hosting* page and embed.js brings it here, which is the only
 	// reason this can be a page inside the frame rather than a redirect.
-	mux.HandleFunc("GET /f/{slug}/return", a.returned)
+	mux.Handle("GET /f/{slug}/return", reads(http.HandlerFunc(a.returned)))
 
 	// The snippet a site owner pastes names this path, and a pasted path
 	// cannot be changed afterwards -- so it is a fixed name rather than a
@@ -348,6 +464,12 @@ func (a app) submit(w http.ResponseWriter, r *http.Request) {
 	sub, err := a.cfg.Submissions.Accept(r.Context(), now, g, submissionbus.New{
 		Answers:  answers,
 		RemoteIP: a.remoteIP(r),
+
+		// The definition's own ceiling, which is counted in storage because
+		// that is where the day's submissions are. Zero on every form that
+		// does not set one, including this one's, and the reasoning for
+		// leaving it unset is in the form file.
+		DailyCap: f.DailyCap,
 	})
 
 	switch {
@@ -366,6 +488,20 @@ func (a app) submit(w http.ResponseWriter, r *http.Request) {
 
 		return
 
+	case errors.Is(err, submissionbus.ErrDailyCap):
+		// The form's own cap, reached. Their answers go back in the boxes with
+		// a sentence saying to come back rather than to try again, because
+		// trying again is precisely what will not work -- and the 429 is the
+		// honest status for "not you, and not now".
+		//
+		// Nothing is logged here: submissionbus wrote the line, with the count
+		// and the cap in it, which is what somebody deciding whether to raise
+		// the number actually needs.
+		a.render(w, r, http.StatusTooManyRequests, f, values, formbus.Invalid{},
+			"We have taken as many of these as we can today. Please try again tomorrow, or write to us and we will sort it out.")
+
+		return
+
 	case err != nil:
 		a.cfg.Log.Error("a submission could not be stored",
 			"request_id", web.RequestIDFrom(r.Context()), "form", f.ID.String(), "error", err)
@@ -378,6 +514,20 @@ func (a app) submit(w http.ResponseWriter, r *http.Request) {
 		"request_id", web.RequestIDFrom(r.Context()),
 		"form", f.ID.String(), "submission_id", sub.ID.String(),
 		"status", sub.Status, "total", sub.Answers.Total.String())
+
+	// The hourly ceiling, counted after the submission is safely stored and
+	// refusing nothing. A form selling out in an afternoon is the outcome this
+	// service exists for; what this says is that somebody should look, and it
+	// says it once per hour however far past the line the count goes.
+	//
+	// Error rather than Warn, for the same reason a dispute is: the levels
+	// here are read as "something is watching this one", and a form taking
+	// submissions at a rate nobody planned for is either extraordinary news or
+	// an attack in progress.
+	if crossed, count := a.busy.Count(f.ID.String(), now); crossed {
+		a.cfg.Log.Error("a form is taking submissions far faster than expected; check whether they are real",
+			"form", f.ID.String(), "in_the_last_hour", count, "expected_at_most", a.cfg.Limits.PerFormHourly)
+	}
 
 	// One derivation of the lines, used for both the receipt on this page and
 	// the itemisation sent to Stripe. Built here rather than separately for
@@ -894,25 +1044,37 @@ func parentOrigin(f formbus.Form, r *http.Request) string {
 }
 
 // remoteIP is the visitor's address, for Stripe's fraud checks.
+//
+// One line, and it is worth keeping as a method: the address is read on two
+// paths that must not disagree -- the one that goes to Stripe and the one that
+// becomes a rate-limit key -- and a second call to web.ClientIP with the flag
+// spelled differently is exactly the kind of drift that would leave the limit
+// keyed on our own proxy.
 func (a app) remoteIP(r *http.Request) string {
-	if a.cfg.TrustProxy {
-		// The leftmost entry is the original client, and every entry after it
-		// was added by a proxy. Only meaningful because TrustProxy says
-		// something is in front of us that overwrites rather than appends --
-		// which is why this is configuration and not detection.
-		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-			first, _, _ := strings.Cut(fwd, ",")
+	return web.ClientIP(r, a.cfg.TrustProxy)
+}
 
-			return strings.TrimSpace(first)
-		}
-	}
+// submitKey is the bucket a submission is counted in: this visitor, on this
+// form.
+//
+// The form is part of the key rather than a bucket of its own, for the reason
+// [Limits.Submit] gives. The slug is read from the path value rather than
+// parsed as a types.Slug, because this runs before the handler has decided
+// whether the form exists and an unknown slug still has to be counted --
+// otherwise the cheapest way past the limit would be to ask for forms that are
+// not there.
+func (a app) submitKey(r *http.Request) string {
+	return "submit|" + web.IPBucket(a.remoteIP(r)) + "|" + r.PathValue("slug")
+}
 
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-
-	return host
+// readKey is the bucket a page view is counted in: this visitor, across every
+// form.
+//
+// Not per form, unlike the submit key. Reading is cheap and the limit exists
+// to bound a crawler rather than to protect one form, so one allowance per
+// visitor is both simpler and the tighter of the two.
+func (a app) readKey(r *http.Request) string {
+	return "read|" + web.IPBucket(a.remoteIP(r))
 }
 
 // orderNote states the order's own bounds, which are otherwise rules a person
