@@ -78,6 +78,7 @@ import (
 	"github.com/jroedel/dropin-forms/app/sdk/mid"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
+	"github.com/jroedel/dropin-forms/business/domain/notify/notifybus"
 	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/foundation/mail"
 	"github.com/jroedel/dropin-forms/foundation/sqldb"
@@ -124,6 +125,18 @@ type Config struct {
 	// the other can only start one, and nothing should be able to do both by
 	// accident. They share a listener and not an interface.
 	Payments paymentapp.Payments
+
+	// Notify tells people about a submission. One value reaching two surfaces,
+	// and each sees only what it is allowed to say: the embed surface can
+	// report a submission that needed no payment, and the webhook can report
+	// one that Stripe has confirmed. Neither can do the other's.
+	//
+	// The concrete type rather than an interface, so that a missing
+	// notifier is a nil pointer here and not an interface holding one --
+	// which is the Go trap main already works around for the payment domain,
+	// and which would turn "mail is not configured" into a panic on the first
+	// submission.
+	Notify *notifybus.Business
 
 	// TrustProxy says whether X-Forwarded-For carries the visitor's address,
 	// for both surfaces.
@@ -197,6 +210,10 @@ func Embed(cfg Config) (http.Handler, error) {
 	// not be behind either of them.
 	cfg.Embed.TrustProxy = cfg.TrustProxy
 
+	if cfg.Notify != nil {
+		cfg.Embed.Notify = cfg.Notify
+	}
+
 	embedapp.Routes(mux, cfg.Embed, func(next http.Handler) http.Handler {
 		return web.Wrap(next, web.SameOriginOnly(), web.FormEncodedOnly())
 	})
@@ -223,10 +240,16 @@ func Embed(cfg Config) (http.Handler, error) {
 	// Mounted only when there is a payment domain. Without one this would be
 	// a public URL that verifies nothing, which is worse than no endpoint.
 	if cfg.Payments != nil {
-		paymentapp.Routes(mux, paymentapp.Config{
+		pc := paymentapp.Config{
 			Log:      cfg.Log,
 			Payments: cfg.Payments,
-		})
+		}
+
+		if cfg.Notify != nil {
+			pc.Notify = cfg.Notify
+		}
+
+		paymentapp.Routes(mux, pc)
 	}
 
 	return web.Wrap(mux,

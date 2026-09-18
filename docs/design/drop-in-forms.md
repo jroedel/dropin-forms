@@ -1300,6 +1300,90 @@ stopped, so a `DELETE` in flight finishes before the database is closed —
 otherwise the last line of a clean shutdown is an alarming one, at exactly the
 moment somebody is reading the log to find out whether the deploy went well.
 
+### Notification and confirmation mail, as built
+
+Two requests produce the same message, and they have nothing else in common. A
+form that sells nothing is finished the moment it is stored, in a POST from a
+stranger's browser; a form that sells is finished when Stripe says the money
+arrived, in a request nobody is waiting on. So the composing and the sending
+are one business package, `notifybus`, and both apps call it — an App package
+may not import another App package, and it should not, because "what do we say
+and who do we say it to" is the same question in both cases and answering it
+twice is how the office comes to be told one thing about a free form and
+another about a paid one.
+
+**Nothing sent for a pending submission.** This is the decision in the step,
+and it is about timing rather than wording. Somebody who has just been handed a
+payment page has not finished; an email saying "we have your order" arriving
+while they are still typing their card number either reads as a receipt for
+something they have not paid for, or as a reason to stop. The office sees
+pending rows in the management app, which is where a half-finished order
+belongs. A declined card sends nothing either: the person is on Stripe's page
+and has already been told, by the only party that knows what was wrong with
+their card.
+
+**Three sources of recipients, because they answer three questions.**
+`mail.notify` in the configuration is "where does this installation's post go";
+a definition's own `notify` list is "who else cares about this particular
+form", which is the kitchen for a lunch; and the accounts holding `results` on
+the form are "who has been given the job of reading these", which is the list
+that stays right when somebody leaves. They are merged, compared without case,
+and each address gets exactly one message however many of the three name it.
+A disabled account is skipped — a grant outlives somebody's last day, because
+revoking one is a separate action, and mail to them is mail nobody reads.
+
+A submission that reaches nobody by any of the three is a `Warn` line naming
+all three places to look. That failure is quiet by nature: an empty notify list
+looks exactly like a working one, and "we stored an order and told nobody" is
+the thing this step exists to prevent.
+
+**One message per recipient, never one envelope with a list on it.**
+`foundation/mail` takes a single recipient by design and this does not work
+around it: a list of addresses on one envelope is how everybody learns who else
+is on it.
+
+**The submitter's message repeats their own answers**, which is padding
+nowhere else and is the point here: a form in an iframe on somebody else's
+website leaves no trace in the browser afterwards, so this is the only copy of
+what they sent that they will ever have. The words around it are the
+definition's own `confirmation`, so the message says what the page said. The
+receipt walks the priced lines *and* the amount fields, the same correction
+`paybus.OrderFor` makes and for the same reason: a list built from the items
+alone charges for the lunch and drops the gift.
+
+**The office's message carries everything needed to act, and a link for the
+rest.** A notification that says only "there is a new submission, go and look"
+is one that gets read on a phone in a car park and forgotten.
+
+Three smaller decisions worth writing down:
+
+- **Nothing here returns an error.** By the time any of it runs the submission
+  is stored and, on the paid path, the money is collected. There is no caller
+  that should answer differently because a message did not go out, and one that
+  could would eventually turn a broken relay into a refused submission or a
+  Stripe retry storm. A failure is a loud log line.
+- **The send is detached from the request and given fifteen seconds.** A
+  visitor closing the tab must not cancel the message telling the office what
+  they ordered, and a relay that has stopped answering must not hold a request
+  open. On the webhook path the budget is what keeps Stripe's acknowledgement
+  prompt; exceeding it costs the messages that had not gone yet and nothing
+  else, because the payment is already settled and the retry is answered with
+  "already handled".
+- **Exactly one delivery of an event sends a receipt**, and the guarantee comes
+  from the event ledger rather than from anything in `notifybus`: a retry
+  returns `ErrSeen` before reaching the send. The one gap is named in
+  `paymentapp` rather than hidden — `paybus` deliberately reports success when
+  it settles a submission and then fails to *record* the event, so a retry of
+  that event is fresh and sends a second receipt for a payment that did go
+  through. That is the right end of the trade; the other ordering loses
+  payments.
+
+`ADMIN_NOTIFY_EMAIL` in `secrets.env` has existed since the first step and
+reached nothing until now. It becomes `mail.notify` in the rendered config,
+which means the config has to be installed after the binary that understands
+it: `loadConfig` refuses a key it does not recognise, and the deploy's
+`-check` is what catches the pair being out of step.
+
 ## 10. Dependencies
 
 A dependency needs a comment naming the standard-library answer that was

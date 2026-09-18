@@ -104,6 +104,16 @@ type config struct {
 		Password string `toml:"password"`
 		From     string `toml:"from"`
 		FromName string `toml:"from_name"`
+
+		// Notify is the address every submission notification goes to, over
+		// and above a form's own notify list and whoever holds results on it.
+		//
+		// Optional, and empty is a working service rather than a broken one:
+		// the other two routes to a person still apply, and a form with none
+		// of the three logs a warning per submission saying so. It is the
+		// installation's own address -- the office -- rather than anything
+		// per form.
+		Notify string `toml:"notify"`
 	} `toml:"mail"`
 }
 
@@ -238,6 +248,16 @@ func loadConfig(path string) (config, error) {
 			return config{}, fmt.Errorf("%s has mail.host but mail.port is %d; 587 is the usual one", path, cfg.Mail.Port)
 		case cfg.Mail.From == "":
 			return config{}, fmt.Errorf("%s has mail.host but no mail.from; that address has to be one the relay will send as", path)
+		}
+	}
+
+	// Checked here rather than at the first submission, because the first
+	// submission is the worst time to find out: the order is already stored,
+	// the person has already gone, and the address that was supposed to tell
+	// the office is a typo.
+	if to := cfg.Mail.Notify; to != "" {
+		if _, err := types.ParseEmail(to); err != nil {
+			return config{}, fmt.Errorf("%s has an unusable mail.notify: %w. It is the address told about every submission", path, err)
 		}
 	}
 

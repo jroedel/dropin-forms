@@ -110,6 +110,22 @@ type Payments interface {
 	Start(ctx context.Context, o paybus.Order) (paybus.Handoff, error)
 }
 
+// Notify tells the submitter and the office about a submission that is
+// finished.
+//
+// Finished, and that word is doing the work: this is called for a submission
+// with nothing to pay and never for one on its way to Stripe. Somebody who has
+// just been handed a payment page has not finished, and the message about
+// their order belongs to the webhook that confirms it.
+//
+// No error, because there is nothing this app could do with one. The
+// submission is stored and the page has been rendered; a relay that is down is
+// a line in the log, not a different answer to the person who filled the form
+// in.
+type Notify interface {
+	Received(ctx context.Context, id types.ID)
+}
+
 // Config is what this app needs.
 type Config struct {
 	Log         *slog.Logger
@@ -125,6 +141,11 @@ type Config struct {
 	// because the alternative is that a missing Stripe key turns every form
 	// into an error page.
 	Payments Payments
+
+	// Notify is optional, and a nil one is a working service: submissions are
+	// stored and the office reads them in the management app, which is what
+	// this service did before there was any mail at all.
+	Notify Notify
 
 	// GrantKey signs the submission grants this app mints and redeems.
 	GrantKey formbus.GrantKey
@@ -527,6 +548,18 @@ func (a app) submit(w http.ResponseWriter, r *http.Request) {
 	if crossed, count := a.busy.Count(f.ID.String(), now); crossed {
 		a.cfg.Log.Error("a form is taking submissions far faster than expected; check whether they are real",
 			"form", f.ID.String(), "in_the_last_hour", count, "expected_at_most", a.cfg.Limits.PerFormHourly)
+	}
+
+	// Told about now, before the page is rendered, and only for a submission
+	// with nothing left to pay.
+	//
+	// Before rather than after, because the response is the end of this
+	// handler: work started after the last Render is work racing the request's
+	// own end. It costs this person the wait -- bounded in notifybus, which
+	// detaches from this request's context so that closing the tab cannot
+	// cancel the message telling the office what they ordered.
+	if sub.Status == submissionbus.StatusReceived && a.cfg.Notify != nil {
+		a.cfg.Notify.Received(r.Context(), sub.ID)
 	}
 
 	// One derivation of the lines, used for both the receipt on this page and

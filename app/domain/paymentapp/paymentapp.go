@@ -55,6 +55,7 @@ import (
 	"time"
 
 	"github.com/jroedel/dropin-forms/business/domain/payment/paybus"
+	"github.com/jroedel/dropin-forms/business/types"
 	"github.com/jroedel/dropin-forms/foundation/web"
 )
 
@@ -75,10 +76,27 @@ type Payments interface {
 	Fulfil(ctx context.Context, now time.Time, payload []byte, signature string) (paybus.Event, error)
 }
 
+// Notify tells the submitter and the office that a payment is confirmed.
+//
+// It is called from here rather than from paybus, and that is deliberate: what
+// paybus decides is whether money arrived, which is a rule about payments, and
+// who hears about it afterwards is not. Keeping the send in the handler also
+// keeps it out of the path between settling a submission and recording the
+// event, which is the one ordering in this service that must not acquire extra
+// steps.
+type Notify interface {
+	Paid(ctx context.Context, id types.ID)
+}
+
 // Config is what this app needs.
 type Config struct {
 	Log      *slog.Logger
 	Payments Payments
+
+	// Notify is optional. Without it a payment is still confirmed, still
+	// recorded and still visible in the management app; nobody is told by
+	// mail.
+	Notify Notify
 
 	// Now is injected so a test can put the clock anywhere. Nil means
 	// time.Now.
@@ -161,6 +179,22 @@ func (a app) webhook(w http.ResponseWriter, r *http.Request) {
 	// join somebody needs when a payment is in question.
 	a.cfg.Log.Info("payment notification accepted",
 		"request_id", requestID, "event", e.ID, "kind", e.Kind, "result", e.Result)
+
+	// Exactly one delivery of one event reaches this line: a retry of
+	// something already handled comes back as ErrSeen above and is
+	// acknowledged without getting here. That is what keeps a receipt from
+	// being sent twice, and it is worth knowing that the guarantee comes from
+	// the event ledger rather than from anything in notifybus.
+	//
+	// The gap in it, named rather than hidden: paybus deliberately returns
+	// success when it settles a submission and then fails to *record* the
+	// event, because the effect has already happened. A retry of that event is
+	// therefore fresh, and this line runs a second time. The cost is a
+	// duplicate receipt for a payment that did go through, which is the right
+	// end of that trade -- the alternative ordering loses payments.
+	if e.Result == paybus.ResultPaid && !e.SubmissionID.Zero() && a.cfg.Notify != nil {
+		a.cfg.Notify.Paid(r.Context(), e.SubmissionID)
+	}
 
 	a.ok(w)
 }

@@ -71,6 +71,22 @@ Thank you. We have your order and a receipt is on its way to the address you \
 gave. We look forward to seeing you on October 17th.
 """
 
+# Anybody else who should hear about an order, beyond the address in
+# config.toml and the accounts holding `results` on this form. The kitchen, for
+# instance, once there is an address to use:
+#
+#   notify = ["kitchen@schoenstatt.link"]
+#
+# Left out rather than guessed at: an address written here that nobody reads is
+# worse than one place fewer to look.
+
+# No daily cap. The mechanism exists -- `daily_cap = 400` would refuse
+# everything past four hundred orders in twenty-four hours -- and it is an
+# abuse control rather than a stock level, so the number to write would be far
+# above any real day. With the per-address limits and the hourly alarm already
+# in front of this form, a cap here would only add a way for a good afternoon
+# to become a closed form with nothing on the page to say why.
+
 [[field]]
 name = "name"
 label = "Your name"
