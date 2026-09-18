@@ -6,7 +6,7 @@
 {{if .Any}}
 <table class="listing">
 <thead>
-<tr><th scope="col">Form</th><th scope="col">Submissions</th><th scope="col">State</th><th scope="col">You</th></tr>
+<tr><th scope="col">Form</th><th scope="col">Submissions</th><th scope="col">State</th><th scope="col">You</th>{{if .Email}}<th scope="col">Email</th>{{end}}</tr>
 </thead>
 <tbody>
 {{range .Forms}}
@@ -15,6 +15,11 @@
 <td class="figure">{{.Count}}</td>
 <td>{{if .Open}}open{{else}}closed{{end}}</td>
 <td>{{.Role}}</td>
+{{if $.Email}}
+{{/* The one column on this page that is about the reader rather than about
+     the form, which is why it says "you" either way round. */}}
+<td><a href="/notifications/{{.ID}}">{{if .Emailed}}on{{else}}off{{end}}</a></td>
+{{end}}
 </tr>
 {{end}}
 </tbody>

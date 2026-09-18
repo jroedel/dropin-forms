@@ -1,0 +1,48 @@
+{{define "title"}}Email about {{.Title}}{{end}}
+
+{{define "content"}}
+<h1>Email about {{.Title}}</h1>
+
+{{if .Problem}}
+<p class="problem">{{.Problem}}</p>
+
+<p><a href="/signin">Sign in</a>.</p>
+{{else}}
+
+{{if .Done}}
+{{/* What just happened, said plainly. Somebody who pressed a button in a page
+     they reached from an email has no other confirmation that anything
+     changed. */}}
+<p class="done">{{if .Muted}}Saved. We will stop emailing you about this
+form.{{else}}Saved. We will email you about this form again.{{end}}</p>
+{{end}}
+
+{{if .Muted}}
+<p>You are <strong>not</strong> being emailed about submissions to
+{{.Title}}. Anyone else who can read this form still is, and the submissions
+themselves are unaffected -- they are all in the management app.</p>
+
+<form method="post" action="/notifications/{{.FormID}}">
+  <input type="hidden" name="t" value="{{.Token}}">
+  <input type="hidden" name="muted" value="no">
+  <button type="submit">Email me about this form again</button>
+</form>
+{{else}}
+<p>You are being emailed about every submission to {{.Title}}, because you can
+read this form's submissions.</p>
+
+<form method="post" action="/notifications/{{.FormID}}">
+  <input type="hidden" name="t" value="{{.Token}}">
+  <input type="hidden" name="muted" value="yes">
+  <button type="submit">Stop emailing me about this form</button>
+</form>
+
+<div class="alternatives">
+  <p>This only stops the email. You keep your access to the form, and the
+  submissions are all in the management app whenever you want them.</p>
+</div>
+{{end}}
+
+<p><a href="/forms">Back to the forms</a></p>
+{{end}}
+{{end}}

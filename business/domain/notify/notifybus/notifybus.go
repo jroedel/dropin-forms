@@ -37,6 +37,7 @@ package notifybus
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -91,6 +92,21 @@ type Accounts interface {
 	ByID(ctx context.Context, id types.ID) (userbus.User, error)
 }
 
+// Mutes is who has asked not to be emailed about which form.
+//
+// Mutes rather than subscriptions, and the inversion is the point: a row means
+// silence, so somebody newly given the job of reading a form's submissions
+// hears about them without doing anything. A table of subscriptions would mean
+// a new grant arrives silent, and nobody would find out until an order went
+// unnoticed.
+type Mutes interface {
+	Muted(ctx context.Context, userID types.ID, form types.Slug) (bool, error)
+	MutedForForm(ctx context.Context, form types.Slug) ([]types.ID, error)
+	MutedForUser(ctx context.Context, userID types.ID) ([]types.Slug, error)
+	Mute(ctx context.Context, userID types.ID, form types.Slug, at time.Time) error
+	Unmute(ctx context.Context, userID types.ID, form types.Slug) error
+}
+
 // Config is what this package needs.
 type Config struct {
 	Log         *slog.Logger
@@ -99,6 +115,18 @@ type Config struct {
 	Submissions Submissions
 	Grants      Grants
 	Accounts    Accounts
+
+	// Mutes is who has turned email about a form off. Optional: without it
+	// everybody who holds the form is told, which is what this service did
+	// before there was anything to turn off, and the page that offers the
+	// choice is simply not mounted.
+	Mutes Mutes
+
+	// MuteKey signs the unsubscribe link in each notification. A zero key
+	// leaves the link out and the message otherwise unchanged -- the
+	// management app is then the only way to change the preference, which is
+	// a degradation rather than a failure.
+	MuteKey MuteKey
 
 	// Office is the address every notification goes to regardless of who holds
 	// a grant, from mail.notify in the configuration. Optional: a form's own
@@ -194,7 +222,11 @@ func (b *Business) tell(ctx context.Context, id types.ID, paid bool) {
 	office := b.office(ctx, f)
 
 	for _, to := range office {
-		b.send(ctx, to, b.forOffice(f, sub, paid), "office", sub)
+		// Built per recipient rather than once, because the last line differs:
+		// somebody who holds the form is told how to stop, and an address that
+		// comes from a configuration file is told where the decision lives. An
+		// unsubscribe link that does nothing is worse than none.
+		b.send(ctx, to.address, b.forOffice(f, sub, paid, to), "office", sub)
 	}
 
 	if len(office) == 0 {
@@ -223,6 +255,21 @@ func (b *Business) send(ctx context.Context, to string, m mail.Message, who stri
 		"recipient", who, "submission_id", sub.ID.String(), "form", sub.Form.String())
 }
 
+// recipient is one address in the office list, and why it is there.
+//
+// The why is not bookkeeping: it decides the last line of the message. An
+// account that holds the form gets a link that turns these off, and an address
+// that comes from a file gets a sentence saying where that decision is made
+// instead -- because offering somebody a button that cannot work is worse than
+// offering nothing.
+type recipient struct {
+	address string
+
+	// userID is zero for an address that came from configuration rather than
+	// from an account, which is exactly the case with nobody to unsubscribe.
+	userID types.ID
+}
+
 // office is everybody who should hear about a submission to this form, in one
 // deduplicated list.
 //
@@ -232,11 +279,16 @@ func (b *Business) send(ctx context.Context, to string, m mail.Message, who stri
 // the kitchen, for a lunch -- and the results holders are "who has been given
 // the job of reading these", which is the list that stays right when somebody
 // leaves.
-func (b *Business) office(ctx context.Context, f formbus.Form) []string {
+//
+// Only the third can be turned off. The other two are decisions somebody made
+// in a file about an address rather than about themselves, and an unsubscribe
+// link on a shared office mailbox is a way for one person to switch off
+// everybody else's copy.
+func (b *Business) office(ctx context.Context, f formbus.Form) []recipient {
 	seen := make(map[string]bool)
-	var out []string
+	var out []recipient
 
-	add := func(raw string) {
+	add := func(raw string, userID types.ID) {
 		address := strings.TrimSpace(raw)
 		if address == "" {
 			return
@@ -250,13 +302,13 @@ func (b *Business) office(ctx context.Context, f formbus.Form) []string {
 		}
 
 		seen[key] = true
-		out = append(out, address)
+		out = append(out, recipient{address: address, userID: userID})
 	}
 
-	add(b.cfg.Office)
+	add(b.cfg.Office, types.ID{})
 
 	for _, address := range f.Notify {
-		add(address)
+		add(address, types.ID{})
 	}
 
 	if b.cfg.Grants == nil || b.cfg.Accounts == nil {
@@ -274,11 +326,21 @@ func (b *Business) office(ctx context.Context, f formbus.Form) []string {
 		return out
 	}
 
+	quiet := b.mutedFor(ctx, f.ID)
+
 	for _, g := range grants {
 		// Anything that can read the submissions, which is what the role
 		// means. Asking through Includes rather than comparing to results is
 		// what keeps "admin implies results" in one place.
 		if !g.Role.Includes(accessbus.RoleResults) {
+			continue
+		}
+
+		if quiet[g.UserID] {
+			// They asked not to be told about this form. Nothing is logged:
+			// this is the ordinary case for anybody who has used the link, and
+			// a line per silenced recipient per submission is how a log stops
+			// being read.
 			continue
 		}
 
@@ -297,8 +359,117 @@ func (b *Business) office(ctx context.Context, f formbus.Form) []string {
 			continue
 		}
 
-		add(u.Email.String())
+		add(u.Email.String(), u.ID)
 	}
 
 	return out
+}
+
+// mutedFor is the set of accounts that have turned this form off.
+//
+// One query for the whole form rather than one per grant holder: this runs
+// inside the request that announces a submission, which on the paid path is
+// the one Stripe is waiting on.
+//
+// A failure here returns an empty set, which means everybody is told. That is
+// the safe direction by a wide margin: the cost of getting it wrong this way
+// is somebody receiving an email they had switched off, and the cost of the
+// other way is an order nobody hears about.
+func (b *Business) mutedFor(ctx context.Context, form types.Slug) map[types.ID]bool {
+	if b.cfg.Mutes == nil {
+		return nil
+	}
+
+	ids, err := b.cfg.Mutes.MutedForForm(ctx, form)
+	if err != nil {
+		b.cfg.Log.Error("the notification preferences could not be read, so everybody who holds this form was told",
+			"form", form.String(), "error", err)
+
+		return nil
+	}
+
+	quiet := make(map[types.ID]bool, len(ids))
+	for _, id := range ids {
+		quiet[id] = true
+	}
+
+	return quiet
+}
+
+// Muted reports whether this account has turned email about this form off.
+func (b *Business) Muted(ctx context.Context, userID types.ID, form types.Slug) (bool, error) {
+	if b.cfg.Mutes == nil {
+		return false, nil
+	}
+
+	muted, err := b.cfg.Mutes.Muted(ctx, userID, form)
+	if err != nil {
+		return false, fmt.Errorf("reading the notification preference: %w", err)
+	}
+
+	return muted, nil
+}
+
+// MutedForms lists the forms this account has turned email off for, so that a
+// page listing forms can say which is which.
+func (b *Business) MutedForms(ctx context.Context, userID types.ID) ([]types.Slug, error) {
+	if b.cfg.Mutes == nil {
+		return nil, nil
+	}
+
+	forms, err := b.cfg.Mutes.MutedForUser(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("reading the notification preferences: %w", err)
+	}
+
+	return forms, nil
+}
+
+// SetMuted turns email about one form off or on for one account.
+//
+// Both directions through one method, because the page that offers it is one
+// page with one button whose label changes. Idempotent in both directions:
+// asking to be told about something you are already told about is not a
+// mistake worth reporting.
+func (b *Business) SetMuted(ctx context.Context, now time.Time, userID types.ID, form types.Slug, muted bool) error {
+	switch {
+	case b.cfg.Mutes == nil:
+		return errors.New("this installation has nowhere to record a notification preference")
+	case userID.Zero():
+		return errors.New("a notification preference needs an account")
+	case form.Zero():
+		return errors.New("a notification preference needs a form")
+	}
+
+	var err error
+
+	if muted {
+		err = b.cfg.Mutes.Mute(ctx, userID, form, now)
+	} else {
+		err = b.cfg.Mutes.Unmute(ctx, userID, form)
+	}
+
+	if err != nil {
+		return fmt.Errorf("storing the notification preference: %w", err)
+	}
+
+	b.cfg.Log.Info("a notification preference changed",
+		"user_id", userID.String(), "form", form.String(), "muted", muted)
+
+	return nil
+}
+
+// ReadLink says whose preference an unsubscribe link names.
+//
+// The key stays in here rather than being handed to the app layer, so that
+// there is one place that knows how these are signed and no handler holds a
+// signing key it could mint with.
+func (b *Business) ReadLink(token string) (types.ID, types.Slug, error) {
+	return ReadMuteToken(b.cfg.MuteKey, token)
+}
+
+// CanUnsubscribe reports whether this installation can offer the choice at
+// all, which needs both somewhere to record it and a key to sign the links.
+func (b *Business) CanUnsubscribe() bool {
+	return b.cfg.Mutes != nil && !b.cfg.MuteKey.Zero()
 }

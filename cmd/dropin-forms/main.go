@@ -14,12 +14,14 @@ import (
 	"fmt"
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
+	"github.com/jroedel/dropin-forms/app/domain/notifyapp"
 	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/access/stores/accessdb"
 	"github.com/jroedel/dropin-forms/business/domain/form/stores/formtoml"
 	"github.com/jroedel/dropin-forms/business/domain/notify/notifybus"
+	"github.com/jroedel/dropin-forms/business/domain/notify/stores/notifydb"
 	"github.com/jroedel/dropin-forms/business/domain/payment/paybus"
 	"github.com/jroedel/dropin-forms/business/domain/payment/stores/paydb"
 	"github.com/jroedel/dropin-forms/business/domain/payment/stores/stripepay"
@@ -146,6 +148,12 @@ func run() error {
 		return err
 	}
 
+	// After userdb, because a notification preference belongs to an account
+	// and its row references one.
+	if err := notifydb.Init(ctx, db); err != nil {
+		return err
+	}
+
 	// The schema is checked once at startup as well as on every health
 	// request. Failing here means the process never begins serving, which is
 	// what should happen when a binary and a database disagree -- the deploy
@@ -157,7 +165,7 @@ func run() error {
 	expected := sqldb.Expected{}
 	for _, part := range []sqldb.Expected{
 		sqldb.Infrastructure, userdb.Expected, accessdb.Expected, submissiondb.Expected,
-		paydb.Expected,
+		paydb.Expected, notifydb.Expected,
 	} {
 		for table, columns := range part {
 			if _, clash := expected[table]; clash {
@@ -199,6 +207,16 @@ func run() error {
 	// sender: with no relay the notifications are written to the log with
 	// everything else, which is what a developer wants and what tells an
 	// operator that mail is not going out.
+	// The unsubscribe links are signed with the same configured secret as the
+	// submission grants, hashed with a label of its own. A second secret would
+	// be another line in secrets.env and another thing to be missing on the
+	// morning somebody wants to stop an email; notifybus.ParseMuteKey says why
+	// sharing the input is safe.
+	muteKey, err := notifybus.ParseMuteKey(cfg.Embed.GrantSigningKey)
+	if err != nil {
+		return err
+	}
+
 	notifier, err := notifybus.NewBusiness(notifybus.Config{
 		Log:          log,
 		Mail:         sender,
@@ -206,6 +224,8 @@ func run() error {
 		Submissions:  submissions,
 		Grants:       access,
 		Accounts:     users,
+		Mutes:        notifydb.NewStore(db),
+		MuteKey:      muteKey,
 		Office:       cfg.Mail.Notify,
 		AdminBaseURL: cfg.Server.AdminBaseURL,
 	})
@@ -213,7 +233,8 @@ func run() error {
 		return err
 	}
 
-	adminPages, err := page.NewRenderer(log, page.AdminChrome(), authapp.Templates, submissionapp.Templates)
+	adminPages, err := page.NewRenderer(log, page.AdminChrome(),
+		authapp.Templates, submissionapp.Templates, notifyapp.Templates)
 	if err != nil {
 		return err
 	}

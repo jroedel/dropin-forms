@@ -1384,6 +1384,71 @@ which means the config has to be installed after the binary that understands
 it: `loadConfig` refuses a key it does not recognise, and the deploy's
 `-check` is what catches the pair being out of step.
 
+### Turning the notifications off
+
+The default is on and stays on: somebody given the job of reading a form's
+submissions hears about them without doing anything. What this adds is the
+other half, which is that they can stop -- per person, per form, and reversibly.
+
+**A row means silence.** The table is `notification_mutes` and it records who
+has opted *out*, which is the inversion that matters: a table of subscriptions
+would mean a new grant arrives silent, and nobody would find out until an order
+went unnoticed. Absence is the working state, which is also why losing the
+table's contents would be an annoyance rather than an outage.
+
+**Only an account can unsubscribe itself.** The other two sources of
+recipients -- `mail.notify` and a definition's own `notify` list -- are
+decisions somebody made in a file about an address, very possibly a shared
+one, and an unsubscribe link on a shared office mailbox is a way for one person
+to switch off everybody else's copy. Those messages end with a sentence saying
+where the decision lives instead of a button that would do the wrong thing.
+
+**The link is signed, and it does not expire.** What it can do is turn one
+person's email about one form off or on, which sounds small until it is written
+down: silencing the person who reads the orders is how a paid lunch goes
+unnoticed, and that is the failure the whole notification step exists to
+prevent. So it carries a MAC over the pair it names. It does not expire because
+it grants nothing -- an unsubscribe link that has quietly stopped working is a
+person writing to ask somebody else to turn it off for them, which is worse
+than the risk of an old message being able to do what its recipient could
+already do.
+
+**The GET changes nothing.** Mail scanners, corporate security gateways and the
+link previewers built into chat clients fetch URLs found in messages before
+anybody clicks, so a link that unsubscribed on GET would be spent by software
+on its way to the person -- and the symptom is the worst kind: notifications
+that simply stop, for no reason anybody can see, with nothing in a log that
+looks wrong. The GET renders a page with a button and the POST does the work,
+which is the same split the emailed sign-in link uses and for the same reason.
+`TestOpeningTheUnsubscribeLinkChangesNothing` opens the link twice and asserts
+the preference is untouched.
+
+**No new secret.** The token is signed with the key that already signs
+submission grants, hashed with a label of its own so that a MAC from one is not
+a MAC for the other. A second secret would be another line in `secrets.env` and
+another thing to be missing on the morning somebody wants to stop an email.
+Rotating the grant key invalidates unsubscribe links along with everything
+else, and the page those links lead to says the thing that always works, which
+is signing in.
+
+**Two ways in, and the token wins.** The page accepts either the token or an
+ordinary session, because the link is opened from a mailbox and the forms list
+is opened from a desk. When both are present the token decides, and the case is
+worth naming: somebody signed in as one account may be holding a link a
+colleague forwarded. Honouring the token is what the link says it does;
+silently changing the reader's own preference instead would be the one outcome
+nobody could explain afterwards.
+
+**A preference store that is down tells everybody.** The lookup that decides
+who is quiet returns an empty set on failure, which means every holder is
+emailed. That is the safe direction by a wide margin: the cost of being wrong
+this way is mail somebody had switched off, and the cost of the other way is an
+order nobody hears about.
+
+The forms list carries the state as a column, because "am I getting these" is a
+question asked while looking at that page, and it is the one thing on it that
+is about the reader rather than about the form.
+
 ## 10. Dependencies
 
 A dependency needs a comment naming the standard-library answer that was

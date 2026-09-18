@@ -2,17 +2,22 @@ package muxer_test
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
+	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/domain/notify/notifybus"
 	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
+	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/business/types"
 	"github.com/jroedel/dropin-forms/foundation/mail"
+	"github.com/jroedel/dropin-forms/foundation/web"
 )
 
 // Who is told about a submission, and when, through the surfaces as they are
@@ -222,4 +227,136 @@ func subjects(sent []mail.Message) []string {
 	}
 
 	return out
+}
+
+// --- turning it off, end to end ---------------------------------------------------
+
+var unsubscribePattern = regexp.MustCompile(`https://forms\.test(/notifications/[a-z0-9-]+)\?t=([A-Za-z0-9_.-]+)`)
+
+// The whole feature in one test: somebody who can read the form is emailed by
+// default, presses the link in that email, and is not emailed again.
+//
+// It goes through both surfaces over one database -- an order and a payment on
+// the public one, the link on the management one -- because the halves are
+// written in different packages and the thing worth asserting is that the
+// address in an email that went out is a route that exists.
+func TestTheLinkInANotificationStopsTheNextOne(t *testing.T) {
+	k := newTill(t)
+
+	u, err := k.users.Create(t.Context(), time.Now(), userbus.NewUser{
+		Email: mustEmail(t, "kitchen@schoenstatt.test"),
+		Name:  "The Kitchen",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if _, err := k.access.Grant(t.Context(), time.Now(), types.ID{}, u.ID, mustSlug(t, theForm), accessbus.RoleResults); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+
+	// One order, paid, which is what puts a message in front of them.
+	first := k.order(t, nil)
+	if w := k.deliver(t, paidEvent("evt_1", first.ID), time.Now()); w.Code != http.StatusOK {
+		t.Fatalf("the webhook = %d:\n%s", w.Code, w.Body.String())
+	}
+
+	var link, token string
+
+	for _, m := range k.sent.Sent {
+		if m.To != "kitchen@schoenstatt.test" {
+			continue
+		}
+
+		found := unsubscribePattern.FindStringSubmatch(m.Text)
+		if found == nil {
+			t.Fatalf("no unsubscribe link in the notification:\n%s", m.Text)
+		}
+
+		link, token = found[1], found[2]
+	}
+
+	if link == "" {
+		t.Fatalf("the account holding this form was not emailed at all: %v", subjects(k.sent.Sent))
+	}
+
+	// The link is a route on the management surface, opened with no session
+	// because it arrived in a mailbox.
+	r := httptest.NewRequest(http.MethodGet, link+"?t="+url.QueryEscape(token), nil)
+
+	w := httptest.NewRecorder()
+	k.admin.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("opening the link = %d:\n%s", w.Code, w.Body)
+	}
+
+	// Then the button.
+	body := url.Values{"t": {token}, "muted": {"yes"}}.Encode()
+
+	r = httptest.NewRequest(http.MethodPost, link, strings.NewReader(body))
+	r.Header.Set("Content-Type", web.FormEncoded)
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
+
+	w = httptest.NewRecorder()
+	k.admin.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("pressing the button = %d:\n%s", w.Code, w.Body)
+	}
+
+	// A second order, paid the same way. The office address still hears about
+	// it; the person who asked not to does not.
+	before := len(k.sent.Sent)
+
+	// Placed by hand rather than through k.order, which asserts there is
+	// exactly one submission on the form -- true of the first order and not of
+	// this one.
+	page := getPage(t, k.embed, "/f/"+theForm)
+	if page.Code != http.StatusOK {
+		t.Fatalf("the blank form = %d", page.Code)
+	}
+
+	if w := postForm(t, k.embed, filled(grantIn(t, page.Body.String()))); w.Code != http.StatusOK {
+		t.Fatalf("the second submission = %d:\n%s", w.Code, short(w.Body.String()))
+	}
+
+	stored, err := k.subs.ByForm(t.Context(), mustSlug(t, theForm))
+	if err != nil {
+		t.Fatalf("ByForm: %v", err)
+	}
+
+	var second types.ID
+
+	for _, s := range stored {
+		if s.ID != first.ID {
+			second = s.ID
+		}
+	}
+
+	if second.Zero() {
+		t.Fatal("the second order was not stored")
+	}
+
+	if w := k.deliver(t, paidEvent("evt_2", second), time.Now()); w.Code != http.StatusOK {
+		t.Fatalf("the second webhook = %d:\n%s", w.Code, w.Body.String())
+	}
+
+	for _, m := range k.sent.Sent[before:] {
+		if m.To == "kitchen@schoenstatt.test" {
+			t.Errorf("they were emailed again after unsubscribing:\n%s", m.Subject)
+		}
+	}
+
+	var office bool
+
+	for _, m := range k.sent.Sent[before:] {
+		if m.To == "office@schoenstatt.test" {
+			office = true
+		}
+	}
+
+	if !office {
+		t.Errorf("one person unsubscribing silenced the office too: %v", subjects(k.sent.Sent[before:]))
+	}
 }

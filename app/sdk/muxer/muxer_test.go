@@ -11,6 +11,7 @@ import (
 
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
+	"github.com/jroedel/dropin-forms/app/domain/notifyapp"
 	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
 	"github.com/jroedel/dropin-forms/app/sdk/muxer"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
@@ -18,6 +19,7 @@ import (
 	"github.com/jroedel/dropin-forms/business/domain/access/stores/accessdb"
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/domain/form/stores/formtoml"
+	"github.com/jroedel/dropin-forms/business/domain/notify/stores/notifydb"
 	"github.com/jroedel/dropin-forms/business/domain/submission/stores/submissiondb"
 	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
 	"github.com/jroedel/dropin-forms/business/domain/user/stores/userdb"
@@ -59,7 +61,8 @@ func newConfig(t *testing.T, origins []types.Origin, expected sqldb.Expected) mu
 		t.Fatalf("initialising the grant table: %v", err)
 	}
 
-	renderer, err := page.NewRenderer(log, page.AdminChrome(), authapp.Templates, submissionapp.Templates)
+	renderer, err := page.NewRenderer(log, page.AdminChrome(),
+		authapp.Templates, submissionapp.Templates, notifyapp.Templates)
 	if err != nil {
 		t.Fatalf("building the renderer: %v", err)
 	}
@@ -72,6 +75,12 @@ func newConfig(t *testing.T, origins []types.Origin, expected sqldb.Expected) mu
 	// submissiondb's tables too, because the embed surface accepts writes.
 	if err := submissiondb.Init(t.Context(), db); err != nil {
 		t.Fatalf("initialising the submission tables: %v", err)
+	}
+
+	// And the notification preferences, because the admin surface mounts the
+	// page that writes them.
+	if err := notifydb.Init(t.Context(), db); err != nil {
+		t.Fatalf("initialising the notification preference table: %v", err)
 	}
 
 	return muxer.Config{

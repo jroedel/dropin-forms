@@ -16,11 +16,14 @@ import (
 	"time"
 
 	"github.com/jroedel/dropin-forms/app/domain/paymentapp"
+	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/notify/notifybus"
+	"github.com/jroedel/dropin-forms/business/domain/notify/stores/notifydb"
 	"github.com/jroedel/dropin-forms/business/domain/payment/paybus"
 	"github.com/jroedel/dropin-forms/business/domain/payment/stores/paydb"
 	"github.com/jroedel/dropin-forms/business/domain/payment/stores/stripepay"
 	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
+	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/business/types"
 	"github.com/jroedel/dropin-forms/foundation/logger"
 	"github.com/jroedel/dropin-forms/foundation/mail"
@@ -114,6 +117,11 @@ type till struct {
 	// was told what and -- more usefully -- that nobody was told anything
 	// while an order was still only half made.
 	sent *mail.Recorder
+
+	// users and access are here so a test can make somebody who holds the
+	// form, which is what makes them somebody the notifications go to.
+	users  *userbus.Business
+	access *accessbus.Business
 }
 
 func newTill(t *testing.T) till {
@@ -148,6 +156,11 @@ func newTill(t *testing.T) till {
 	sent := &mail.Recorder{}
 	cfg.Mail = sent
 
+	muteKey, err := notifybus.ParseMuteKey("a-test-secret-long-enough-to-be-a-key")
+	if err != nil {
+		t.Fatalf("notifybus.ParseMuteKey: %v", err)
+	}
+
 	notifier, err := notifybus.NewBusiness(notifybus.Config{
 		Log:          cfg.Log,
 		Mail:         sent,
@@ -155,6 +168,8 @@ func newTill(t *testing.T) till {
 		Submissions:  subs,
 		Grants:       cfg.Access,
 		Accounts:     cfg.Users,
+		Mutes:        notifydb.NewStore(cfg.DB),
+		MuteKey:      muteKey,
 		Office:       "office@schoenstatt.test",
 		AdminBaseURL: "https://forms.test",
 	})
@@ -165,11 +180,13 @@ func newTill(t *testing.T) till {
 	cfg.Notify = notifier
 
 	return till{
-		embed: embedOf(t, cfg),
-		admin: adminOf(t, cfg),
-		subs:  subs,
-		pay:   pay,
-		sent:  sent,
+		embed:  embedOf(t, cfg),
+		admin:  adminOf(t, cfg),
+		subs:   subs,
+		pay:    pay,
+		sent:   sent,
+		users:  cfg.Users,
+		access: cfg.Access,
 	}
 }
 
