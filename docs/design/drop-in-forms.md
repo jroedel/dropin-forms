@@ -918,9 +918,94 @@ Two smaller things worth writing down because they are easy to undo:
   still one rename away from the previous release, and `deploy.sh` asks the new
   binary `-check` before stopping anything.
 
-**Not built yet, and deliberately:** the payment. A submission with a total is
-stored `pending` and the confirmation says nothing has been charged. Section
-7.2's Checkout hand-off replaces that sentence with a `_top`-targeted button.
+### Payment, as built
+
+Five decisions were made while writing `paybus`, `stripepay` and `paymentapp`
+that the plan did not settle, and one of them **reverses a line in section
+7.5**.
+
+**The reversal first: an event we cannot attribute gets a 200, not a retry.**
+Section 7.5 says "an event for an unknown intent means retry and then alert,
+never a silent 200". That is wrong, and the reason is how Stripe's retries
+work: a non-2xx is retried with backoff for about three days and then dropped.
+An event naming no submission of ours is not a transient failure — it is a
+payment made by hand in the dashboard, or another integration on the same
+account, and it will never become attributable however many times it arrives.
+Refusing it buys three days of retries and a log line per attempt, and loses
+nothing at the end. So it is acknowledged, at `Warn`, with the payment
+reference in the line. What section 7.5 was reaching for is real and is kept
+where it belongs: a failure *on our side* is a 500, precisely so that Stripe
+retries it, and that is the case the retry exists for.
+
+**Settle the submission first, record the event second.** This is the opposite
+of what feels careful, and it is the one ordering in the payment path that must
+not be tidied. Record-then-crash means Stripe retries, the event is recognised
+as already seen, nothing is settled, and somebody has paid for a lunch the
+office has no record of selling — silent and permanent. Settle-then-crash means
+Stripe retries and settles again, and `submissionbus.Settle` is forwards-only
+and returns without writing when the status is already where it is going. One
+failure is recoverable by doing nothing; the other is not. A failure to *record*
+therefore returns success, because the effect has already happened and the only
+cost is that a retry repeats a no-op.
+
+**The lines sent to Stripe are derived a second time, and the two must agree.**
+Everywhere else this service derives a number once. Here `formbus.Validate`
+produces the total from the pinned definition, and `paybus.OrderFor` walks the
+same answers to produce the itemisation a person reads on Stripe's page —
+because Stripe needs the lines whether we want them or not. `paybus.Start`
+refuses to charge anything unless the lines sum exactly to the validator's
+total. The exception is earned: an itemisation that does not add up to the
+total is invisible until somebody reads their receipt, and two derivations that
+must agree catch it where one cannot. It caught a real bug immediately — a
+donation is an amount *field*, not a priced item, so a line list built from
+`Answers.Lines` charged for the tickets and dropped the gift. The confirmation
+page's receipt is now rendered from the same list, so the page and the charge
+cannot disagree.
+
+**`stripe-go`'s API-version check is switched off, and the event JSON is read
+by hand.** The SDK refuses an event whose `api_version` is from a different
+release train than the SDK, with a long message about recreating the endpoint.
+With that check on, an account whose API version does not match the binary's
+SDK has **every payment silently stop being confirmed** — money taken, no
+record of the sale, and a log full of release-train messages. That is the worst
+failure available to this service. Against it: the risk that a field is
+renamed. The four fields read (`id`, `metadata`, `payment_intent`,
+`amount_total`, plus `payment_status`) have been stable across every Stripe API
+version since 2019, and naming them in `stripepay.object` makes a rename a
+compile error in one file rather than a silent zero in a generated struct. The
+signature check is emphatically *not* hand-written; that is what the library is
+for.
+
+**A completed session is not a paid session.** `checkout.session.completed`
+fires for a delayed payment method before the money arrives, with
+`payment_status: "unpaid"`. Marking that paid would put a lunch on the list
+nobody bought, so only `paid` and `no_payment_required` settle, and the async
+events say which the rest became. `charge.dispute.created` is handled before the
+submission identifier is required, because our metadata lives on the payment
+intent and a dispute's metadata is the dispute's own — checked in the other
+order, every chargeback would be swallowed as "an event about nothing".
+
+Two consequences for operations, neither of them code:
+
+- **The webhook needs a third konsoleH subdomain and a third certificate.** It
+  cannot share a listener: the embed surface refuses a cross-site POST, which
+  is exactly what Stripe sends, and nothing above the webhook may read a body.
+  `config.example.toml` names `hooks.schoenstatt.link` and port 8412.
+- **`return_url` is now a required key on any form that sells.**
+  `formbus.Form.Check` refuses a selling definition without one, and requires
+  it to be https, on one of the form's own embedding origins, and to carry no
+  query string of its own — the payment step appends its marker by
+  concatenation, which is only safe because of that last rule.
+
+**Not built yet, and deliberately:** the return round trip. Stripe sends the
+browser back to `return_url` with `?dropin=<slug>&dropin_state=paid`, and
+nothing reads that marker yet — `embed.js` has to pass it into the frame for
+the in-line confirmation of section 7.3. Until then somebody who pays lands on
+the hosting page with the form blank again, and the authority on whether they
+paid is the webhook either way. Also not built: a housekeeping loop.
+`submissionbus.PruneNonces`, `userbus.Prune` and `paybus.Forget` all exist and
+none of them is called by anything, so three tables grow without bound. That
+gap predates this step and is named here so it is not rediscovered.
 
 ## 10. Dependencies
 
@@ -931,10 +1016,14 @@ missing. Three qualify:
   because the release build is `CGO_ENABLED=0`, which is not optional: an
   ordinary build links against the builder's glibc and dies on the server with
   `GLIBC_2.xx not found`.
-- **`stripe/stripe-go`** — no payments in the standard library. Webhook
-  signature verification is plain HMAC and could be `crypto/hmac`, but the
-  Checkout and PaymentIntent surface is large enough that hand-rolling it is
-  worse.
+- **`stripe/stripe-go`** — no payments in the standard library. Pinned at
+  `v83`. Webhook signature verification is plain HMAC and could be
+  `crypto/hmac`, but it is the one part worth a library's constant-time
+  comparison, and the Checkout surface is large enough that hand-rolling it is
+  worse. It is imported by exactly one package, `stripepay`, so every
+  Stripe-shaped fact stops there — including, per "Payment, as built", the
+  decision to read an event's JSON by hand rather than through the SDK's
+  generated types.
 - **a TOML parser** — none in the standard library, and `.gitignore` already
   commits to `config.toml` with a tracked `config.example.toml`.
 

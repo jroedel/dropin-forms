@@ -184,6 +184,11 @@ type form struct {
 	Currency string   `toml:"currency"`
 	Origins  []string `toml:"origins"`
 
+	// ReturnURL is where Stripe sends the browser after a payment, and it is
+	// the page this form is embedded on rather than anything on this service.
+	// Required on a form that sells something; formbus.Form.Check says so.
+	ReturnURL string `toml:"return_url"`
+
 	MinPerOrder int `toml:"min_per_order"`
 	MaxPerOrder int `toml:"max_per_order"`
 
@@ -261,6 +266,7 @@ func (w form) toForm() (formbus.Form, error) {
 		PaymentNote:     w.PaymentNote,
 		Confirmation:    w.Confirmation,
 		Notify:          w.Notify,
+		ReturnURL:       w.ReturnURL,
 	}
 
 	slug, err := types.ParseSlug(w.ID)

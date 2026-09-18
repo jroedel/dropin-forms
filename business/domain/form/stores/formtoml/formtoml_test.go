@@ -371,6 +371,7 @@ func minimal(id string, top ...string) string {
 	return `id = "` + id + `"
 title = "A form"
 currency = "usd"
+return_url = "https://example.test/form"
 ` + strings.Join(top, "\n") + `
 
 [[field]]

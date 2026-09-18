@@ -27,6 +27,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -260,6 +261,20 @@ type Form struct {
 	// fail-closed default and is not an error.
 	Origins []types.Origin
 
+	// ReturnURL is the page Stripe sends the browser back to after a payment.
+	//
+	// It is the address of the page that *hosts* this form, not a page on this
+	// service: the person ends up back where they started, and the
+	// confirmation appears in the frame there. So a form that sells something
+	// needs one, and Check refuses a definition that sells without it -- the
+	// alternative is discovering it when the first buyer reaches Stripe.
+	//
+	// Not part of the fingerprint, on the same line the fingerprint's comment
+	// draws: it does not change what a submission means, only where a browser
+	// lands afterwards, so changing it must not throw away every half-filled
+	// form on the site.
+	ReturnURL string
+
 	Fields []Field
 	Items  []Item
 
@@ -412,6 +427,8 @@ func (f *Form) Check() error {
 	case !f.PaymentRequired && f.PaymentNote != "":
 		add("it explains a payment it does not require")
 	}
+	p = append(p, f.checkReturnURL()...)
+
 	if f.MinPerOrder > 0 && len(f.Items) == 0 {
 		add("it requires at least %d of something and has nothing for sale", f.MinPerOrder)
 	}
@@ -433,6 +450,77 @@ func (f *Form) Check() error {
 	}
 
 	return nil
+}
+
+// checkReturnURL is the rule for where Stripe sends somebody afterwards.
+//
+// Held to the same standard as an origin somebody may frame us from, and for
+// the same reason: this string is typed by whoever owns a form, and it becomes
+// a URL Stripe navigates a person's browser to after taking their card
+// details. A definition that points it somewhere else is a definition that
+// walks a buyer off the site at the one moment they are paying attention.
+//
+// Query and fragment are refused rather than tolerated. The payment step
+// appends its own marker, and a URL that already carries one would either be
+// mangled by that or would silently override it.
+func (f *Form) checkReturnURL() []string {
+	var p []string
+
+	raw := strings.TrimSpace(f.ReturnURL)
+
+	if raw == "" {
+		if f.Sells() {
+			p = append(p, "it sells something and has no return_url; that is the page Stripe sends somebody back to after paying, and it has to be the page this form is embedded on")
+		}
+
+		return p
+	}
+
+	u, err := url.Parse(raw)
+
+	switch {
+	case err != nil:
+		return append(p, fmt.Sprintf("its return_url is not a URL: %v", err))
+	case u.Scheme != "https":
+		return append(p, fmt.Sprintf("its return_url is %q; it has to be https, because a person is arriving on it straight from a payment", raw))
+	case u.Host == "":
+		return append(p, fmt.Sprintf("its return_url %q names no host", raw))
+	case u.User != nil:
+		return append(p, "its return_url carries a username, which no page being linked to should")
+	case u.RawQuery != "" || u.ForceQuery:
+		return append(p, fmt.Sprintf("its return_url %q carries a query string; the payment step appends its own", raw))
+	case u.Fragment != "":
+		return append(p, fmt.Sprintf("its return_url %q carries a fragment", raw))
+	case strings.ContainsAny(raw, " \t\r\n"):
+		return append(p, "its return_url contains whitespace")
+	}
+
+	// And it has to be on a site that may frame this form. Not a formality:
+	// the two answer the same question from different directions -- who is
+	// hosting this form -- and a definition where they disagree is one where
+	// somebody edited one and forgot the other.
+	//
+	// Only checked when there is a list. An empty one means the
+	// installation-wide fallback applies, and this package does not know what
+	// that is.
+	if len(f.Origins) > 0 {
+		want := u.Scheme + "://" + u.Host
+
+		var found bool
+		for _, o := range f.Origins {
+			if o.String() == want {
+				found = true
+
+				break
+			}
+		}
+
+		if !found {
+			p = append(p, fmt.Sprintf("its return_url is on %s, which is not one of the origins allowed to embed it", want))
+		}
+	}
+
+	return p
 }
 
 func (f *Form) checkFields() []string {

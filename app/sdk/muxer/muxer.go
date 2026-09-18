@@ -36,18 +36,20 @@
 // outside Panics so the request line records the 500; both are inside
 // RequestID so both lines carry the id.
 //
-// # What is not here yet
+// # Two things about the webhook, kept here because this is where a route's
+// position in a chain is decided
 //
-// The submission grant arrives with the embedded form. When it does, note two
-// things the design document is emphatic about:
+// The grant check must not be the parent project's RequireFormToken. That
+// middleware passes through when there is no principal, which is correct there
+// and would admit every POST on a permanently cookie-free surface while this
+// comment still listed a gate. What guards the embed POST is the submission
+// grant, redeemed inside the handler.
 //
-//   - The grant check must not be the parent project's RequireFormToken. That
-//     middleware passes through when there is no principal, which is correct
-//     there and would admit every POST on a permanently cookie-free surface
-//     while this comment still listed a gate.
-//   - The Stripe webhook must not sit behind anything that reads the body.
-//     RequireFormToken calls r.ParseForm, which would consume the bytes the
-//     signature is computed over.
+// And the Stripe webhook must not sit behind anything that reads the body.
+// RequireFormToken calls r.ParseForm, which would consume the bytes the
+// signature is computed over -- so the webhook has a listener of its own, with
+// no origin gate and nothing above it that touches a body. See
+// app/domain/paymentapp.
 package muxer
 
 import (
@@ -58,6 +60,7 @@ import (
 
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
+	"github.com/jroedel/dropin-forms/app/domain/paymentapp"
 	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
 	"github.com/jroedel/dropin-forms/app/sdk/health"
 	"github.com/jroedel/dropin-forms/app/sdk/mid"
@@ -103,6 +106,12 @@ type Config struct {
 	// surface renders them and the admin surface names their fields as
 	// columns.
 	Forms submissionapp.Forms
+
+	// Payments is what the webhook surface calls, and only that surface. The
+	// embed surface reaches the same domain through Embed.Payments, which is a
+	// different and much narrower slice of it: one creates a payment and the
+	// other confirms one, and nothing should be able to do both by accident.
+	Payments paymentapp.Payments
 
 	// AdminBaseURL is the admin surface's own origin, used to build the link
 	// that goes in a sign-in email. Configured rather than taken from the
@@ -272,3 +281,47 @@ func Admin(cfg Config) (http.Handler, error) {
 // signInPath is where Require sends a signed-out reader, and it is the one
 // route authapp and the muxer both have to agree on.
 const signInPath = "/signin"
+
+// Webhook builds the surface Stripe posts to.
+//
+// A third listener rather than a path on one of the other two, and the reason
+// is the chain rather than the routing. This surface must have nothing above
+// it that reads a body and no origin gate at all, and both of those are
+// properties of a wrapped handler rather than of a route -- so the only way to
+// state them once and have them stay true is to build the chain separately.
+//
+// It answers /healthz too, like the others, because the deploy checks each
+// listener and a release where two of the three came up is precisely the
+// failure worth catching.
+func Webhook(cfg Config) (http.Handler, error) {
+	if cfg.Payments == nil {
+		return nil, errors.New("the webhook surface needs the payment domain; confirming a payment is the only thing it does")
+	}
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /healthz", health.Handler(cfg.Log, cfg.DB, cfg.Expected))
+
+	paymentapp.Routes(mux, paymentapp.Config{
+		Log:      cfg.Log,
+		Payments: cfg.Payments,
+	})
+
+	return web.Wrap(mux,
+		web.RequestID(),
+		web.Logging(cfg.Log),
+		web.Panics(cfg.Log),
+		web.SecureHeaders(page.WebhookPolicy()),
+
+		// And nothing else. No SameOriginOnly, because Stripe is not a
+		// browser and sends neither Sec-Fetch-Site nor Origin, so that gate
+		// would refuse every real delivery while refusing nothing that
+		// matters. No Authenticate, because there is no account behind this.
+		//
+		// The four above are the ones that refuse nothing: an id, a log line,
+		// a recovered panic and a header set. If a fifth ever appears here,
+		// read app/domain/paymentapp's comment first -- a middleware that
+		// reads the body destroys the signature this surface is
+		// authenticated by.
+	), nil
+}

@@ -40,26 +40,11 @@ import (
 	"fmt"
 	"time"
 
-	"modernc.org/sqlite"
-
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
 	"github.com/jroedel/dropin-forms/business/types"
 	"github.com/jroedel/dropin-forms/foundation/sqldb"
 )
-
-// sqliteConstraintPrimaryKey is SQLITE_CONSTRAINT_PRIMARYKEY, which is what a
-// replayed nonce produces. Written out rather than imported from
-// modernc.org/sqlite/lib, which is the whole translated library and a heavy
-// import for one integer.
-//
-// Verified against the driver rather than assumed, because the two plausible
-// codes are easy to mix up and the message actively misleads: a duplicate
-// TEXT PRIMARY KEY on a rowid table is enforced by a unique index, and the
-// driver reports `UNIQUE constraint failed: spent_grants.nonce (1555)` -- the
-// words say UNIQUE (2067) while the extended code is PRIMARYKEY. Matching on
-// the code is right; matching on the message would have been wrong.
-const sqliteConstraintPrimaryKey = 1555
 
 // Store is the SQLite implementation of submissionbus.Storer.
 type Store struct {
@@ -150,7 +135,7 @@ func (s *Store) Accept(ctx context.Context, sub submissionbus.Submission, nonce 
 	_, err = tx.ExecContext(ctx, spend, nonce, sub.Form.String(), msOf(sub.CreatedAt))
 
 	switch {
-	case isPrimaryKeyViolation(err):
+	case sqldb.IsPrimaryKeyViolation(err):
 		// Already spent. Nothing is written, and the caller turns this into
 		// the same answer as any other stale grant.
 		return false, nil
@@ -429,15 +414,6 @@ func unmarshalAnswers(raw string, form types.Slug, version, currency string, tot
 	}
 
 	return out, nil
-}
-
-// isPrimaryKeyViolation reports whether err is the conflict that makes a grant
-// single-use. The driver's own error type, so the extended result code is
-// compared rather than the message -- an error string is not an API.
-func isPrimaryKeyViolation(err error) bool {
-	e, ok := errors.AsType[*sqlite.Error](err)
-
-	return ok && e.Code() == sqliteConstraintPrimaryKey
 }
 
 func msOf(t time.Time) int64    { return t.UTC().UnixMilli() }

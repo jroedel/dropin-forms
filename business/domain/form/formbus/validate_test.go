@@ -37,6 +37,10 @@ func feast(t *testing.T) formbus.Form {
 		Title:    "Feast of Our Lady of Schoenstatt",
 		Currency: "usd",
 
+		// Where Stripe sends somebody back to. Required because this form
+		// sells, and unconstrained here because the fixture names no origins.
+		ReturnURL: "https://schoenstatt-austin.us/lunch",
+
 		// End of the day of the feast itself, because the page takes donations
 		// as well as tickets. Central Daylight Time: US daylight saving does
 		// not end until 1 November 2026, so the offset on this date is -05:00.
@@ -817,6 +821,7 @@ func TestValidateNumber(t *testing.T) {
 func TestValidateAmountField(t *testing.T) {
 	f := formbus.Form{
 		ID: mustSlug(t, "offering"), Title: "Offering", Currency: "usd",
+		ReturnURL: "https://example.test/offering",
 		Fields: []formbus.Field{{
 			Name: "gift", Label: "Your gift", Kind: formbus.KindAmount, Required: true,
 			Min: ptr(int64(500)), Max: ptr(int64(500000)),
@@ -917,6 +922,7 @@ func TestValidateTotalBounds(t *testing.T) {
 func TestValidateRefusesBelowThePaymentFloor(t *testing.T) {
 	f := formbus.Form{
 		ID: mustSlug(t, "candle"), Title: "Light a candle", Currency: "usd",
+		ReturnURL: "https://example.test/candle",
 		Fields: []formbus.Field{{
 			Name: "gift", Label: "Amount", Kind: formbus.KindAmount, Required: true,
 		}},

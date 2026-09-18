@@ -14,6 +14,12 @@
 #
 #   public_html/f.schoenstatt.link/public/     -> embed_addr
 #   public_html/forms.schoenstatt.link/public/ -> admin_addr
+#   public_html/hooks.schoenstatt.link/public/ -> stripe.addr
+#
+# So the webhook needs a third konsoleH subdomain and a third certificate. It
+# cannot share a listener with either of the others: the embed surface refuses
+# a cross-site POST, and Stripe's delivery is exactly that -- and nothing above
+# the webhook may read the request body, because the signature covers it.
 embed_addr = "127.0.0.1:8410"
 admin_addr = "127.0.0.1:8411"
 
@@ -94,6 +100,35 @@ file = ""
 # guessable route to a founding session that leaves no trace anywhere but our
 # own log.
 bootstrap_secret = ""
+
+[stripe]
+# Taking payment. All three empty switches payments off entirely: forms still
+# validate and store their submissions, and a form that sells shows no payment
+# button. Any one of them set requires the other two, because a half-configured
+# payment path is the one shape worth refusing at startup -- a key with no
+# webhook secret means money collected and no order ever marked paid, and
+# nothing anywhere would say so.
+
+# The API key, sk_test_... while rehearsing and sk_live_... when selling. The
+# log says which mode it is on every start, from the prefix; it never prints
+# the key.
+secret_key = ""
+
+# The endpoint's signing secret, whsec_..., and a DIFFERENT credential from the
+# key above. Stripe shows it when you create the webhook endpoint, and
+# `stripe listen` prints its own for local work. Confusing the two gives a
+# signature that never verifies, so every payment stays pending.
+#
+# This is what makes the webhook safe to expose. Without it there would be a
+# public URL that marks orders paid.
+webhook_secret = ""
+
+# The listener Stripe posts to, and it must differ from the other two. The
+# three surfaces are told apart by which socket accepted the connection rather
+# than by Host, because Apache's ProxyPreserveHost cannot be set in .htaccess
+# -- see app/sdk/muxer. This one needs its own .htaccess reverse proxy and its
+# own subdomain, and it is the address you paste into Stripe's dashboard.
+addr = "127.0.0.1:8412"
 
 [mail]
 # The relay that sends sign-in links and receipts.

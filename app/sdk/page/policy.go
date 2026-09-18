@@ -200,3 +200,37 @@ func frameAncestorList(frameAncestors FrameAncestorsFor, r *http.Request) string
 
 	return strings.Join(parts, " ")
 }
+
+// WebhookPolicy is the policy for the surface Stripe posts to.
+//
+// It renders no HTML at all, so most of a content policy is beside the point;
+// it is still strict, because the cost is a constant string and the day
+// somebody adds a debug page here is the day it matters.
+//
+// What is load-bearing is what this surface must *not* have, and none of it is
+// expressible as a header -- so it is written here, next to the other two
+// policies, where somebody comparing the three will read it:
+//
+//   - No SameOriginOnly. Stripe is not a browser and sends no Sec-Fetch-Site
+//     and no Origin, so an origin gate would refuse every real delivery while
+//     refusing nothing that matters. What authenticates this surface is a
+//     signature over the body.
+//   - Nothing that reads the body. The signature covers the exact bytes, so
+//     anything calling ParseForm above the handler destroys the only
+//     credential this surface has.
+func WebhookPolicy() web.PolicyFor {
+	return func(*http.Request) web.Policy {
+		return web.Policy{
+			ContentSecurityPolicy: strings.Join([]string{
+				"default-src 'none'",
+				"base-uri 'none'",
+				"frame-ancestors 'none'",
+			}, "; "),
+
+			ReferrerPolicy:  "no-referrer",
+			CacheControl:    "no-store",
+			FrameOptions:    "DENY",
+			StrictTransport: hsts,
+		}
+	}
+}
