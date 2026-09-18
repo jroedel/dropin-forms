@@ -10,13 +10,22 @@
 #   deploy/deploy.sh ports        are our loopback ports free? (read-only)
 #   deploy/deploy.sh install      directories, .htaccess, cron. Safe to re-run,
 #                                 and required after changing a port.
-#   deploy/deploy.sh deploy       build, upload, restart, health-check
+#   deploy/deploy.sh deploy       switch to main, pull it, build, upload,
+#                                 restart, health-check
 #   deploy/deploy.sh --skip-tests skip `make test` (do not make a habit of it)
 #   deploy/deploy.sh restart      restart without shipping a new binary
 #   deploy/deploy.sh backup       back up the database, app left running
 #   deploy/deploy.sh rollback     put the previous binary back
 #   deploy/deploy.sh status       is it up?
 #   deploy/deploy.sh logs [n]     tail the server log
+#
+# `deploy` moves the checkout to main and fast-forwards it, because deploying
+# means shipping main and there is no version of that where you wanted the
+# branch you happened to be on. A dirty tree cancels the whole thing rather
+# than being carried across. DEPLOY_ALLOW_BRANCH=1 deploys the current branch
+# instead, for trying a fix on the server before merging it.
+#
+# deploy/ensure-main-test.sh exercises all of that in a throwaway repository.
 #
 # THE ORDER OF A DEPLOY IS THE POINT OF THIS SCRIPT. Everything destructive
 # happens after the thing that could fail cheaply, the database is copied only
@@ -324,6 +333,43 @@ EOF
 
 # --- the deploy -------------------------------------------------------------
 
+# hand_over_if_changed re-executes this script when the last git operation
+# rewrote it.
+#
+# Called after anything that can move the checkout -- a branch switch or a
+# fast-forward -- and it must be called *immediately* after, with nothing in
+# between. Two hazards, and they are different:
+#
+#   - The rest of the deploy would otherwise run the previous procedure
+#     against the new commit: old build flags, old pre-flight, old rollback.
+#     That is not hypothetical. On 2026-09-17 a deploy from a checkout four
+#     commits behind ran the version of this script that only warned about
+#     being behind, built a month-old tree, and shipped a binary that could
+#     not read the config it was given. The rollback worked, but the guard
+#     that would have stopped it was sitting in the commits the deploy had not
+#     pulled yet -- the one deploy a guard cannot protect is the deploy that
+#     delivers it.
+#   - bash reads a script incrementally rather than all at once, so rewriting
+#     it mid-execution can make the shell run bytes from two different
+#     versions of the same file. exec is what avoids that, and it only avoids
+#     it if nothing has run in between.
+hand_over_if_changed() {
+	local was="$1" what="$2"
+
+	[ "$(sha256sum "$SELF" | cut -d" " -f1)" = "$was" ] && return 0
+
+	if [ -n "${DEPLOY_SELF_UPDATED:-}" ]; then
+		# Only possible if origin moved again in the last second, or if
+		# something outside git is rewriting this file. Either way, stop
+		# rather than loop.
+		die "cancelled: deploy.sh changed again after re-running once"
+	fi
+
+	log "$what changed deploy.sh; handing over to the new one"
+
+	DEPLOY_SELF_UPDATED=1 exec bash "$SELF" "${ARGV[@]}"
+}
+
 # ensure_main brings the checkout to origin/main before anything is built.
 #
 # This used to be two warnings -- "uncommitted changes will be included" and
@@ -333,28 +379,38 @@ EOF
 # whatever happens to be in the working tree, so that is the thing to pin down
 # rather than to mention.
 #
-# It fast-forwards when it safely can and cancels otherwise. It never discards
-# anything: a dirty tree, a different branch and a diverged history each cancel
-# the deploy with the command to fix it, because the alternative is a deploy
-# script that can lose somebody's work.
+# It switches to main, fast-forwards it, and cancels if it cannot do either
+# safely. It never discards anything: a dirty tree and a diverged history each
+# cancel the deploy with the command to fix it, because the alternative is a
+# deploy script that can lose somebody's work.
+#
+# # Why it switches rather than telling you to
+#
+# The first version of this refused when the checkout was not on main and
+# printed `git switch main` for somebody to run. That is a worse tool than it
+# looks. "Deploy" means "ship what is on main", every single time -- so the
+# switch is not a decision being made, it is a step being announced, and a
+# script that announces a step it could take is a script you type the same two
+# commands into for the rest of the project. It came up three times in one
+# afternoon before it was fixed.
+#
+# The branch that was current is named in the log, with the command to return
+# to it, because the checkout is left on main afterwards and that should not
+# be a surprise.
+#
+# The dirty check still comes first and still cancels the whole deploy, which
+# is what makes the switch safe to do unattended: git would carry uncommitted
+# changes across, or refuse halfway, and neither belongs inside a deploy.
+#
+# DEPLOY_ALLOW_BRANCH=1 is the escape hatch, for trying a fix on the server
+# before merging it.
 #
 # # Why it re-executes itself
 #
-# The fast-forward can change this file, and then the rest of the deploy would
-# run the *previous* procedure against the new commit: old build flags, old
-# pre-flight, old rollback. That is not hypothetical. On 2026-09-17 a deploy
-# from a checkout four commits behind ran the version of this script that only
-# warned about being behind, built a month-old tree, and shipped a binary that
-# could not read the config it was given. The rollback worked, but the guard
-# that would have stopped it was sitting in the commits the deploy had not
-# pulled yet -- the one deploy a guard cannot protect is the deploy that
-# delivers it.
-#
-# So after a fast-forward that changed this file, the script hands over to the
-# new one with exec. That also sidesteps a subtler hazard: bash reads a script
-# incrementally rather than all at once, so rewriting it mid-execution can make
-# the shell run bytes from two different versions. Nothing happens between the
-# merge and the exec for that reason -- do not put anything there.
+# Both the switch and the fast-forward can rewrite this very file, so each is
+# followed immediately by hand_over_if_changed. The reasoning is on that
+# function, and the "immediately" is load-bearing -- do not put anything
+# between a git operation and its hand-over.
 ensure_main() {
 	require git
 
@@ -382,20 +438,44 @@ ensure_main() {
 	fi
 
 	if [ "$branch" != main ]; then
-		if [ "${DEPLOY_ALLOW_BRANCH:-}" != 1 ]; then
-			warn "this checkout is on '$branch', and production runs main."
-			warn "  to deploy main:            git switch main"
-			warn "  to deploy '$branch' anyway: DEPLOY_ALLOW_BRANCH=1 deploy/deploy.sh deploy"
-			die "cancelled: this is not main"
+		if [ "${DEPLOY_ALLOW_BRANCH:-}" = 1 ]; then
+			# Deliberate, and sometimes necessary -- trying a fix on the
+			# server before merging it. Loud, because the next person to
+			# deploy main will silently replace it and wonder where it went.
+			warn "DEPLOY_ALLOW_BRANCH=1: deploying '$branch' rather than main"
+			log "building from $branch @ $(git -C "$REPO_DIR" rev-parse --short HEAD)"
+
+			return 0
 		fi
 
-		# Deliberate, and sometimes necessary -- trying a fix on the server
-		# before merging it. Loud, because the next person to deploy main will
-		# silently replace it and wonder where it went.
-		warn "DEPLOY_ALLOW_BRANCH=1: deploying '$branch' rather than main"
-		log "building from $branch @ $(git -C "$REPO_DIR" rev-parse --short HEAD)"
+		# Captured before the switch, because switching branches can rewrite
+		# this file -- which is in fact the common case, since the branch you
+		# are on is usually the one that changed it.
+		local was_before_switch
+		was_before_switch=$(sha256sum "$SELF" | cut -d" " -f1)
 
-		return 0
+		log "on '$branch'; switching to main, which is what production runs"
+
+		# Plain `git switch main`, which also creates a local main from
+		# origin/main when there is not one yet -- git does that itself when
+		# exactly one remote has the branch. The tree is known clean here, so
+		# this cannot carry changes across or stop halfway.
+		# Output captured rather than discarded: -q keeps "Your branch is up
+		# to date with 'origin/main'." out of a deploy log, and on a failure
+		# git's own sentence is the only useful thing there is to show.
+		local switch_said
+		if ! switch_said=$(git -C "$REPO_DIR" switch -q main 2>&1); then
+			warn "could not switch to main from '$branch'."
+			[ -z "$switch_said" ] || warn "  git said: $switch_said"
+			die "cancelled: could not get to main"
+		fi
+
+		# Named so that getting back is one command rather than a search
+		# through the reflog. The checkout stays on main after this.
+		log "you were on '$branch'; 'git switch $branch' returns to it"
+
+		# Immediately. See hand_over_if_changed.
+		hand_over_if_changed "$was_before_switch" "switching to main"
 	fi
 
 	log "fetching origin"
@@ -414,10 +494,9 @@ ensure_main() {
 		log "fast-forwarding main $behind commit(s) to origin/main"
 	fi
 
-	# What this file looked like before the fast-forward. Compared after, to
-	# decide whether the deploy is now running the wrong procedure.
-	local was
-	was=$(sha256sum "$SELF" | cut -d" " -f1)
+	# What this file looked like before the fast-forward.
+	local was_before_merge
+	was_before_merge=$(sha256sum "$SELF" | cut -d" " -f1)
 
 	# --ff-only, so this can only ever move forward to what origin already
 	# has. A diverged local main means somebody committed to it directly,
@@ -430,20 +509,9 @@ ensure_main() {
 		die "cancelled: main has diverged from origin"
 	fi
 
-	# Nothing between the merge above and the exec below. See the comment on
-	# this function.
-	if [ "$(sha256sum "$SELF" | cut -d" " -f1)" != "$was" ]; then
-		if [ -n "${DEPLOY_SELF_UPDATED:-}" ]; then
-			# Only possible if origin moved again in the last second, or if
-			# something outside git is rewriting this file. Either way, stop
-			# rather than loop.
-			die "cancelled: deploy.sh changed again after re-running once"
-		fi
-
-		log "that update changed deploy.sh; handing over to the new one"
-
-		DEPLOY_SELF_UPDATED=1 exec bash "$SELF" "${ARGV[@]}"
-	fi
+	# Immediately after the merge and nothing in between. See
+	# hand_over_if_changed.
+	hand_over_if_changed "$was_before_merge" "that update"
 
 	log "building from main @ $(git -C "$REPO_DIR" rev-parse --short HEAD)"
 }
