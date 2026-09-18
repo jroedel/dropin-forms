@@ -184,11 +184,11 @@ secrets-push: ## Send the deploy group to GitHub repository secrets (needs gh)
 	@scripts/secrets push
 
 .PHONY: secrets-install
-secrets-install: ## Write config.toml onto the server from secrets.env (needs ssh)
+secrets-install: ## Write config.toml onto the server and restart into it (needs ssh)
 	@scripts/secrets install
 
 .PHONY: secrets-install-test
-secrets-install-test: ## Same, but with the STRIPE_TEST_* keys: rehearse charging nobody
+secrets-install-test: ## Same, with the STRIPE_TEST_* keys: rehearse charging nobody
 	@scripts/secrets install test
 
 .PHONY: secrets-keygen
