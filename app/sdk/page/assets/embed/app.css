@@ -11,10 +11,31 @@
    snippet was pasted into, which may be 300px in a sidebar, and its height is
    whatever the parent sets from the message the page posts back. So nothing
    here is sized against vh, and nothing is positioned fixed: a fixed element
-   in a frame that is exactly as tall as its contents has nowhere to go. */
+   in a frame that is exactly as tall as its contents has nowhere to go.
+
+   THIS FILE HAS NO DARK MODE, AND THAT IS THE FIX RATHER THAN THE OMISSION.
+
+   It used to honour prefers-color-scheme, and on the real page that was a
+   bug: the form rendered as a black box in the middle of a cream Squarespace
+   page for every visitor whose operating system is set to dark. The reason is
+   that prefers-color-scheme reports the *viewer's* setting and not the host
+   page's design, and an iframe cannot see across origins to find out what it
+   has been dropped into. A Squarespace template is light whatever the visitor
+   has chosen, so the media query was answering a question nobody asked.
+
+   color-scheme is light rather than `light dark` for the same reason, and it
+   is load-bearing: without it the browser draws the form controls themselves
+   -- inputs, dropdowns, spinners, focus rings -- in dark widget colours over
+   these light backgrounds, which is worse than either scheme on its own.
+
+   The general answer, when this becomes a builder anybody can use, is for the
+   form to carry its own palette so it can be matched to the site it lives on.
+   That is Track B. Until then, light, because the page it is embedded in is
+   light. */
 
 :root {
-  color-scheme: light dark;
+  /* Not `light dark`. See above. */
+  color-scheme: light;
 
   --ink: #1b1b1f;
   --paper: #fdfdfb;
@@ -27,22 +48,6 @@
   --right: #1f5c3d;
   --right-tint: #eef6f1;
   --tint: #f4f3ee;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --ink: #e8e8ea;
-    --paper: #16161a;
-    --muted: #a0a0aa;
-    --rule: #3a3a44;
-    --accent: #8fb6dd;
-    --accent-ink: #12121a;
-    --wrong: #e8907f;
-    --wrong-tint: #2a1a18;
-    --right: #86c9a3;
-    --right-tint: #16241d;
-    --tint: #1e1e24;
-  }
 }
 
 *, *::before, *::after { box-sizing: border-box; }
