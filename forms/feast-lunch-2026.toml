@@ -40,6 +40,18 @@ currency = "usd"
 # site's www. host 301s to the apex, so the apex is the only entry needed.
 origins = ["https://schoenstatt-austin.us"]
 
+# Where Stripe sends somebody back to after they pay.
+#
+# TO CHANGE THIS, put the address of the page the form is pasted onto and
+# deploy. It must be on one of the origins above, https, and carry no query
+# string of its own -- the payment step appends its own marker, which is what
+# makes the confirmation appear in the frame rather than on a page of Stripe's.
+#
+# The apex is a placeholder that works: somebody who pays lands on the home
+# page rather than back at the form. Replace it with the real page before
+# tickets go on sale.
+return_url = "https://schoenstatt-austin.us"
+
 # Twenty tickets in one order; beyond that, please write to us. No minimum,
 # because the tickets are optional.
 max_per_order = 20

@@ -11,12 +11,16 @@ package sqldb
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
 	"strings"
 
-	_ "modernc.org/sqlite"
+	// Imported for its side effect of registering the driver, and now also
+	// by name, for the error type IsPrimaryKeyViolation reads a result code
+	// out of.
+	"modernc.org/sqlite"
 )
 
 // Open returns the shared handle, with the pragmas this service needs set in
@@ -166,4 +170,33 @@ func safeIdentifier(s string) bool {
 	}
 
 	return true
+}
+
+// sqliteConstraintPrimaryKey is SQLITE_CONSTRAINT_PRIMARYKEY. Written out
+// rather than imported from modernc.org/sqlite/lib, which is the whole
+// translated library and a heavy import for one integer.
+//
+// Verified against the driver rather than assumed, because the two plausible
+// codes are easy to mix up and the message actively misleads: a duplicate TEXT
+// PRIMARY KEY on a rowid table is enforced by a unique index, and the driver
+// reports `UNIQUE constraint failed: spent_grants.nonce (1555)` -- the words
+// say UNIQUE (2067) while the extended code is PRIMARYKEY. Matching on the
+// code is right; matching on the message would have been wrong.
+const sqliteConstraintPrimaryKey = 1555
+
+// IsPrimaryKeyViolation reports whether err is a duplicate primary key.
+//
+// This is what makes a single-use claim work: an INSERT whose conflict *is*
+// the check, so that two callers racing for the same nonce or the same webhook
+// event cannot both be told they were first. A read-then-write would let both
+// through.
+//
+// The driver's own error type, so the extended result code is compared rather
+// than the message -- an error string is not an API. It lives here rather than
+// in a store because it is a fact about the driver and knows no domain word,
+// and because two domains now make the same claim.
+func IsPrimaryKeyViolation(err error) bool {
+	e, ok := errors.AsType[*sqlite.Error](err)
+
+	return ok && e.Code() == sqliteConstraintPrimaryKey
 }

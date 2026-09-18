@@ -14,6 +14,9 @@
 #
 #   public_html/f.schoenstatt.link/public/     -> embed_addr
 #   public_html/forms.schoenstatt.link/public/ -> admin_addr
+#
+# Two, not three: the Stripe webhook shares the embed listener, at
+# /stripe/webhook, mounted outside that surface's origin gate. See muxer.Embed.
 embed_addr = "127.0.0.1:8410"
 admin_addr = "127.0.0.1:8411"
 
@@ -94,6 +97,33 @@ file = ""
 # guessable route to a founding session that leaves no trace anywhere but our
 # own log.
 bootstrap_secret = ""
+
+[stripe]
+# Taking payment. Both empty switches payments off entirely: forms still
+# validate and store their submissions, and a form that sells shows no payment
+# button. Either one set requires the other, because a half-configured payment
+# path is the one shape worth refusing at startup -- a key with no webhook
+# secret means money collected and no order ever marked paid, and nothing
+# anywhere would say so.
+#
+# There is no address here. The webhook is a route on the embed listener,
+# /stripe/webhook, mounted outside that surface's origin gate -- so the URL for
+# the Stripe dashboard is https://f.schoenstatt.link/stripe/webhook.
+
+# The API key, sk_test_... while rehearsing and sk_live_... when selling. The
+# log says which mode it is on every start, from the prefix; it never prints
+# the key.
+secret_key = ""
+
+# The endpoint's signing secret, whsec_..., and a DIFFERENT credential from the
+# key above. Stripe shows it when you create the webhook endpoint, and
+# `stripe listen` prints its own for local work. Confusing the two gives a
+# signature that never verifies, so every payment stays pending.
+#
+# This is what makes the webhook safe to expose. Without it there would be a
+# public URL that marks orders paid.
+webhook_secret = ""
+
 
 [mail]
 # The relay that sends sign-in links and receipts.

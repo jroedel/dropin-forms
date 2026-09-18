@@ -36,11 +36,25 @@
 {{end}}
 
 {{if .Owed}}
-{{/* The payment step replaces this with a button that leaves the site, in a
-     _top-targeted form so that a real click is the user activation no popup
-     blocker argues with. Until then it says where things stand rather than
-     promising something that does not exist yet. */}}
+{{if .PayURL}}
+{{/* A real link, targeted at _top, and not a redirect. Clicking it is a user
+     activation, which is what lets a frame navigate the whole page: a
+     scripted top-level navigation out of a cross-site iframe is blocked, and
+     a popup is blocked too. It is also honest -- somebody is about to leave
+     the shrine's website for Stripe's, and rel="noopener" means the page they
+     land on cannot reach back through window.opener. */}}
+<p class="pay">
+<a class="button" href="{{.PayURL}}" target="_top" rel="noopener">Continue to payment</a>
+</p>
+<p class="note">Payment is handled by Stripe. Your card details are never sent to this site.</p>
+{{else if .PaymentUnavailable}}
+{{/* Deliberately not an apology for losing anything, because nothing was
+     lost. The order is stored; only the payment could not be started. */}}
+<p class="note">We have your order, but we could not open the payment page just now.
+Nothing has been charged. Please get in touch and we will take the payment another way.</p>
+{{else}}
 <p class="note">Nothing has been charged yet. We will be in touch about the payment.</p>
+{{end}}
 {{end}}
 </div>
 {{end}}

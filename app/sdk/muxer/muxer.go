@@ -36,18 +36,20 @@
 // outside Panics so the request line records the 500; both are inside
 // RequestID so both lines carry the id.
 //
-// # What is not here yet
+// # Two things about the webhook, kept here because this is where a route's
+// position in a chain is decided
 //
-// The submission grant arrives with the embedded form. When it does, note two
-// things the design document is emphatic about:
+// The grant check must not be the parent project's RequireFormToken. That
+// middleware passes through when there is no principal, which is correct there
+// and would admit every POST on a permanently cookie-free surface while this
+// comment still listed a gate. What guards the embed POST is the submission
+// grant, redeemed inside the handler.
 //
-//   - The grant check must not be the parent project's RequireFormToken. That
-//     middleware passes through when there is no principal, which is correct
-//     there and would admit every POST on a permanently cookie-free surface
-//     while this comment still listed a gate.
-//   - The Stripe webhook must not sit behind anything that reads the body.
-//     RequireFormToken calls r.ParseForm, which would consume the bytes the
-//     signature is computed over.
+// And the Stripe webhook must not sit behind anything that reads the body.
+// RequireFormToken calls r.ParseForm, which would consume the bytes the
+// signature is computed over -- so the webhook has a listener of its own, with
+// no origin gate and nothing above it that touches a body. See
+// app/domain/paymentapp.
 package muxer
 
 import (
@@ -58,6 +60,7 @@ import (
 
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
+	"github.com/jroedel/dropin-forms/app/domain/paymentapp"
 	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
 	"github.com/jroedel/dropin-forms/app/sdk/health"
 	"github.com/jroedel/dropin-forms/app/sdk/mid"
@@ -104,6 +107,12 @@ type Config struct {
 	// columns.
 	Forms submissionapp.Forms
 
+	// Payments is what the webhook route calls. Embed.Payments is a different
+	// and much narrower slice of the same domain: one confirms a payment and
+	// the other can only start one, and nothing should be able to do both by
+	// accident. They share a listener and not an interface.
+	Payments paymentapp.Payments
+
 	// AdminBaseURL is the admin surface's own origin, used to build the link
 	// that goes in a sign-in email. Configured rather than taken from the
 	// request: a link built from a Host header is one an attacker can aim at
@@ -139,6 +148,10 @@ func Embed(cfg Config) (http.Handler, error) {
 
 	mux.HandleFunc("GET /healthz", health.Handler(cfg.Log, cfg.DB, cfg.Expected))
 
+	// The form routes. The origin gate goes to embedapp as an argument rather
+	// than onto the chain below, so that it covers the one route that accepts
+	// a write and nothing else -- in particular not the webhook.
+	//
 	// No Authenticate and no Require, and that is the whole shape of this
 	// surface rather than an omission. It is framed cross-site, so SameSite
 	// withholds any cookie it might carry from every request the frame makes
@@ -149,7 +162,39 @@ func Embed(cfg Config) (http.Handler, error) {
 	// In particular: do not mount the parent project's RequireFormToken here.
 	// It passes through when there is no principal, which is correct there and
 	// would admit every POST unconditionally here.
-	embedapp.Routes(mux, cfg.Embed)
+	// Writes only. It refuses a cross-site POST from a browser, and by its own
+	// admission lets a header-less client through -- which is why it is one of
+	// several things in front of a submission rather than the thing in front
+	// of it.
+	embedapp.Routes(mux, cfg.Embed, web.SameOriginOnly())
+
+	// The webhook, on this listener and deliberately *outside* that gate.
+	//
+	// It shares the listener because it does not need one of its own: nothing
+	// on this chain reads a request body, which is the only property the
+	// webhook actually requires of what sits above it. An earlier version of
+	// this comment claimed the origin gate would refuse Stripe's delivery and
+	// that a separate hostname was therefore forced. That was wrong --
+	// web.sameOrigin treats a request with neither Sec-Fetch-Site nor Origin
+	// as a pass, which is the hole its own comment documents, so a
+	// server-to-server POST would go straight through it.
+	//
+	// But passing a gate through a hole is not the same as not being behind
+	// it. Somebody may one day decide that hole should be closed, which would
+	// be a defensible change to make for the form POST -- and it would
+	// silently stop every payment being confirmed. So the gate is handed to
+	// embedapp for its own write route instead of being put on the chain, and
+	// this route is genuinely not behind it. That survives somebody tightening
+	// the gate without knowing this route exists.
+	//
+	// Mounted only when there is a payment domain. Without one this would be
+	// a public URL that verifies nothing, which is worse than no endpoint.
+	if cfg.Payments != nil {
+		paymentapp.Routes(mux, paymentapp.Config{
+			Log:      cfg.Log,
+			Payments: cfg.Payments,
+		})
+	}
 
 	return web.Wrap(mux,
 		web.RequestID(),
@@ -157,11 +202,11 @@ func Embed(cfg Config) (http.Handler, error) {
 		web.Panics(cfg.Log),
 		web.SecureHeaders(page.EmbedPolicy(cfg.FrameAncestors)),
 
-		// Writes only. It refuses a cross-site POST from a browser, and by its
-		// own admission lets a header-less client through -- which is why it
-		// is one of several things in front of a submission rather than the
-		// thing in front of it.
-		web.SameOriginOnly(),
+		// And nothing else. The four above refuse nothing: an id, a log line,
+		// a recovered panic and a header set. None of them reads a body, which
+		// is what makes it safe for the webhook to sit under them -- the
+		// signature covers the exact bytes, so anything calling ParseForm here
+		// would destroy the only credential that surface has.
 	), nil
 }
 

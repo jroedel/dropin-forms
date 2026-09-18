@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
@@ -18,6 +19,9 @@ import (
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/access/stores/accessdb"
 	"github.com/jroedel/dropin-forms/business/domain/form/stores/formtoml"
+	"github.com/jroedel/dropin-forms/business/domain/payment/paybus"
+	"github.com/jroedel/dropin-forms/business/domain/payment/stores/paydb"
+	"github.com/jroedel/dropin-forms/business/domain/payment/stores/stripepay"
 	"github.com/jroedel/dropin-forms/business/domain/submission/stores/submissiondb"
 	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
 	"github.com/jroedel/dropin-forms/business/domain/user/stores/userdb"
@@ -26,6 +30,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/jroedel/dropin-forms/app/sdk/muxer"
@@ -81,6 +86,12 @@ func run() error {
 		fmt.Printf("  database       %s\n", cfg.DB.Path)
 		fmt.Printf("  embed origins  %d\n", len(cfg.Embed.allowed))
 		fmt.Printf("  mail relay     %s\n", either(cfg.Mail.Host != "", "configured", "none: mail will not be sent"))
+
+		// Whether money is being taken, and in which mode, from the key's own
+		// prefix. Never the key. This is the line somebody reads at the worst
+		// possible moment, and "test" where they expected "LIVE" is the answer
+		// they need to see without having to look anywhere else.
+		fmt.Printf("  payments       %s\n", stripeMode(cfg))
 		fmt.Printf("  bootstrap      %s\n", either(cfg.Auth.BootstrapSecret != "", "route mounted", "route not mounted"))
 
 		return nil
@@ -129,6 +140,9 @@ func run() error {
 	if err := submissiondb.Init(ctx, db); err != nil {
 		return err
 	}
+	if err := paydb.Init(ctx, db); err != nil {
+		return err
+	}
 
 	// The schema is checked once at startup as well as on every health
 	// request. Failing here means the process never begins serving, which is
@@ -141,6 +155,7 @@ func run() error {
 	expected := sqldb.Expected{}
 	for _, part := range []sqldb.Expected{
 		sqldb.Infrastructure, userdb.Expected, accessdb.Expected, submissiondb.Expected,
+		paydb.Expected,
 	} {
 		for table, columns := range part {
 			if _, clash := expected[table]; clash {
@@ -169,6 +184,11 @@ func run() error {
 	}
 
 	sender, howMail, err := newSender(log, cfg)
+	if err != nil {
+		return err
+	}
+
+	payments, howPay, err := newPayments(log, cfg, db, submissions)
 	if err != nil {
 		return err
 	}
@@ -209,7 +229,22 @@ func run() error {
 			Render:      embedPages,
 			GrantKey:    cfg.Embed.grantKey,
 			TrustProxy:  cfg.Embed.TrustProxy,
+
+			// Nil when Stripe is not configured, which embedapp handles as a
+			// form that stores its orders and shows no way to pay. An
+			// interface holding a typed nil would not be nil, so this is
+			// assigned below rather than here.
 		},
+	}
+
+	// Assigned rather than set in the literal above, because `Payments:
+	// payments` with a nil *paybus.Business would store a non-nil interface
+	// holding a nil pointer -- and every nil check downstream would pass while
+	// the first method call panicked. This is the one Go trap in the wiring
+	// and it is worth the four lines.
+	if payments != nil {
+		mc.Payments = payments
+		mc.Embed.Payments = payments
 	}
 
 	log.Info("starting",
@@ -219,6 +254,7 @@ func run() error {
 		"db", cfg.DB.Path,
 		"embed_allowed_origins", len(cfg.Embed.allowed),
 		"mail", howMail,
+		"payments", howPay,
 
 		// Whether the route exists, never the secret. Worth logging because
 		// a bootstrap route left mounted after the first sign-in is something
@@ -236,10 +272,49 @@ func run() error {
 		return err
 	}
 
+	// Two listeners, not three. The webhook lives on the embed one, mounted
+	// outside its origin gate -- see muxer.Embed for why that is the whole of
+	// what it needs, and why it is not enough for it merely to pass the gate.
 	return web.Serve(ctx, log, cfg.Server.shutdownGraceD,
 		web.Surface{Name: "embed", Addr: cfg.Server.EmbedAddr, Handler: embed},
 		web.Surface{Name: "admin", Addr: cfg.Server.AdminAddr, Handler: admin},
 	)
+}
+
+// newPayments builds the payment domain, and returns a word for the log saying
+// whether there is one.
+//
+// Nil and no error when Stripe is not configured. That is the same shape
+// newSender uses for a missing mail relay and for the same reason: a developer
+// has to be able to run this without an account, and an operator who has
+// forgotten to configure one should find out from a line in the log rather
+// than from somebody reporting that nothing can be paid for.
+//
+// The difference from mail is that there is no recorder here. A fake payment
+// gateway that pretends to take money is a much worse thing to leave switched
+// on by accident than a mailer that prints to a log.
+func newPayments(log *slog.Logger, cfg config, db *sql.DB, submissions *submissionbus.Business) (*paybus.Business, string, error) {
+	if cfg.Stripe.SecretKey == "" {
+		log.Warn("Stripe is not configured, so nothing can be paid for",
+			"consequence", "a form that sells stores its orders as pending and shows no payment button")
+
+		return nil, "off", nil
+	}
+
+	gateway, err := stripepay.New(cfg.Stripe.SecretKey, cfg.Stripe.WebhookSecret)
+	if err != nil {
+		return nil, "", err
+	}
+
+	// Which mode, from the key's own prefix, because this is the one line in
+	// the log that answers "are we taking real money" -- and it is the
+	// question somebody asks at the worst moment. Never the key itself.
+	mode := "test"
+	if strings.HasPrefix(cfg.Stripe.SecretKey, "sk_live_") {
+		mode = "LIVE"
+	}
+
+	return paybus.NewBusiness(log, gateway, paydb.NewStore(db), submissions), mode, nil
 }
 
 // newSender builds the outbound mailer, and returns a word for the log saying
@@ -272,6 +347,22 @@ func newSender(log *slog.Logger, cfg config) (mail.Sender, string, error) {
 	}
 
 	return sender, fmt.Sprintf("%s:%d as %s", cfg.Mail.Host, cfg.Mail.Port, cfg.Mail.From), nil
+}
+
+// stripeMode says whether payments are on, and whether they are real.
+//
+// From the key's prefix rather than from a separate setting, because two
+// places to say "this is live" is one place to get it wrong. Never returns any
+// part of the key itself: this goes into a deploy log.
+func stripeMode(cfg config) string {
+	switch {
+	case cfg.Stripe.SecretKey == "":
+		return "off: a form that sells will store orders as pending"
+	case strings.HasPrefix(cfg.Stripe.SecretKey, "sk_live_"):
+		return "LIVE: real cards will be charged"
+	default:
+		return "test mode"
+	}
 }
 
 // either is a ternary for a log line, so the -check output above stays a list

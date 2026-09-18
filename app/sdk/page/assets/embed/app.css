@@ -233,6 +233,35 @@ button.go {
 
 button.go:hover { filter: brightness(1.08); }
 
+/* The continue-to-payment link, styled to match the submit button.
+ *
+ * An <a> rather than a <button>, because it has to be a real navigation: a
+ * cross-site frame may only move the whole page on a user activation, so the
+ * click itself is what makes this work. Given the same appearance as the
+ * submit button on purpose -- it is the next step of one action, and a link
+ * that looks like a link here reads as "more information" rather than "pay".
+ *
+ * inline-block so the padding applies, and the larger tap target is
+ * deliberate: this is the last thing somebody does on a phone before paying.
+ */
+a.button {
+  display: inline-block;
+  padding: .7rem 1.25rem;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  text-decoration: none;
+}
+
+a.button:hover { filter: brightness(1.08); }
+
+.pay {
+  margin: 1.25rem 0 0;
+}
+
 .note {
   margin: .75rem 0 0;
   font-size: .875rem;

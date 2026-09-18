@@ -52,6 +52,7 @@ import (
 	"github.com/jroedel/dropin-forms/app/sdk/page"
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/domain/form/stores/formtoml"
+	"github.com/jroedel/dropin-forms/business/domain/payment/paybus"
 	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
 	"github.com/jroedel/dropin-forms/business/types"
 	"github.com/jroedel/dropin-forms/foundation/web"
@@ -87,12 +88,33 @@ type Submissions interface {
 	Accept(ctx context.Context, now time.Time, g formbus.Grant, ns submissionbus.New) (submissionbus.Submission, error)
 }
 
+// Payments is the slice of the payment domain this app needs: it starts a
+// payment and can never confirm one.
+//
+// That narrowness is the point. Confirming a payment is the webhook's job and
+// nothing else's -- a browser arriving back from Stripe is a browser saying
+// something happened, and this surface is the one strangers talk to. A handler
+// here that could mark a submission paid would be a route that marks
+// submissions paid.
+type Payments interface {
+	Start(ctx context.Context, o paybus.Order) (paybus.Handoff, error)
+}
+
 // Config is what this app needs.
 type Config struct {
 	Log         *slog.Logger
 	Forms       Forms
 	Submissions Submissions
 	Render      *page.Renderer
+
+	// Payments is optional, and a nil one is a working service rather than a
+	// broken one: a form that sells something still validates, still stores
+	// the submission, and still says thank you -- it simply shows no way to
+	// pay, and the office sees a pending row. That is what this service did
+	// before the payment step existed and is the right thing to degrade to,
+	// because the alternative is that a missing Stripe key turns every form
+	// into an error page.
+	Payments Payments
 
 	// GrantKey signs the submission grants this app mints and redeems.
 	GrantKey formbus.GrantKey
@@ -133,11 +155,24 @@ func (a app) now() time.Time {
 }
 
 // Routes mounts this app.
-func Routes(mux *http.ServeMux, cfg Config) {
+//
+// writes is the same-origin gate, handed in by the muxer rather than built
+// here, and applied to the one route that accepts a write. The chain is
+// written down in one place and a route's position in it is not a decision an
+// app package gets to make -- which is also what lets the muxer mount the
+// Stripe webhook on this listener without that gate in front of it.
+//
+// A nil writes mounts the POST ungated, and that is for tests of this app
+// alone. Every surface built by the muxer passes one.
+func Routes(mux *http.ServeMux, cfg Config, writes func(http.Handler) http.Handler) {
 	a := app{cfg: cfg}
 
+	if writes == nil {
+		writes = func(h http.Handler) http.Handler { return h }
+	}
+
 	mux.HandleFunc("GET /f/{slug}", a.blank)
-	mux.HandleFunc("POST /f/{slug}", a.submit)
+	mux.Handle("POST /f/{slug}", writes(http.HandlerFunc(a.submit)))
 
 	// The snippet a site owner pastes names this path, and a pasted path
 	// cannot be changed afterwards -- so it is a fixed name rather than a
@@ -314,13 +349,48 @@ func (a app) submit(w http.ResponseWriter, r *http.Request) {
 		"form", f.ID.String(), "submission_id", sub.ID.String(),
 		"status", sub.Status, "total", sub.Answers.Total.String())
 
-	a.cfg.Render.Render(w, r, http.StatusOK, "done", doneView{
+	// One derivation of the lines, used for both the receipt on this page and
+	// the itemisation sent to Stripe. Built here rather than separately for
+	// each, because a confirmation that disagrees with the charge is the bug
+	// somebody finds by reading their bank statement.
+	order := paybus.OrderFor(f, sub)
+
+	view := doneView{
 		Form:         f,
 		Submission:   sub,
 		ParentOrigin: parentOrigin(f, r),
-		Lines:        viewLines(sub.Answers, f.Currency),
+		Lines:        viewLines(order, f.Currency),
 		Total:        totalOf(sub.Answers, f.Currency),
-	})
+	}
+
+	// The payment is started here, in the POST, and never while rendering the
+	// blank form. A Checkout session created on a GET would mean an
+	// unauthenticated crawler minting Stripe objects at crawl rate; created
+	// here it happens once per validated submission, after a single-use grant
+	// has been spent.
+	//
+	// And it happens after Accept has committed, never inside it. SQLite has
+	// one writer, and a network call held inside the write transaction is the
+	// mistake the parent project built a linter to prevent.
+	if view.Owed() && a.cfg.Payments != nil {
+		h, err := a.cfg.Payments.Start(r.Context(), order)
+		if err != nil {
+			// The submission is stored and safe. So this is not an error page:
+			// it is the confirmation, with a sentence saying the payment could
+			// not be started. Re-rendering the form instead would invite a
+			// second order for something already recorded, and answering 500
+			// would tell somebody their order was lost when it was not.
+			a.cfg.Log.Error("a payment could not be started",
+				"request_id", web.RequestIDFrom(r.Context()),
+				"form", f.ID.String(), "submission_id", sub.ID.String(), "error", err)
+
+			view.PaymentUnavailable = true
+		} else {
+			view.PayURL = h.URL
+		}
+	}
+
+	a.cfg.Render.Render(w, r, http.StatusOK, "done", view)
 }
 
 // doneView is the in-line confirmation, rendered in place of the form inside
@@ -341,6 +411,19 @@ type doneView struct {
 	// derived and not what a browser claimed.
 	Lines []lineView
 	Total string
+
+	// PayURL is Stripe's hosted page, when there is something to pay and a
+	// session was created. Rendered as a link the person clicks rather than a
+	// redirect: a real click is a user activation, which is what gets a
+	// top-level navigation out of a frame past every popup blocker, and it is
+	// honest that they are leaving the site.
+	PayURL string
+
+	// PaymentUnavailable says the order is stored and the payment could not be
+	// started. Kept apart from every other failure on this page because it is
+	// not a failure for the person: their answers are safe, the office can see
+	// the order, and telling them to try again would invite a second one.
+	PaymentUnavailable bool
 }
 
 // lineView is one priced line of the receipt.
@@ -485,14 +568,23 @@ func (a app) notFound(w http.ResponseWriter, r *http.Request) {
 }
 
 // viewLines formats the receipt from what was stored.
-func viewLines(a formbus.Answers, currency string) []lineView {
-	out := make([]lineView, 0, len(a.Lines))
+// viewLines formats the receipt from the order that will be charged.
+//
+// From the order rather than from formbus.Answers.Lines, which was a quiet bug
+// worth naming: Answers.Lines is the priced *items* only, and a donation is an
+// amount field that the validator adds into the total separately. A receipt
+// built from Answers.Lines therefore showed two lunch tickets and a total five
+// dollars larger than they came to, with nothing on the page accounting for
+// the difference. paybus.OrderFor walks both, and it is the same list Stripe
+// is given.
+func viewLines(o paybus.Order, currency string) []lineView {
+	out := make([]lineView, 0, len(o.Lines))
 
-	for _, l := range a.Lines {
+	for _, l := range o.Lines {
 		out = append(out, lineView{
 			Label:  l.Label,
 			Qty:    l.Qty,
-			Amount: formbus.Show(l.Amount, currency),
+			Amount: formbus.Show(l.Amount(), currency),
 		})
 	}
 
