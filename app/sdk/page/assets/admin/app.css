@@ -178,3 +178,148 @@ button.quiet {
 @media print {
   .masthead, .footnote, form { display: none; }
 }
+
+/* --- tables, for reading submissions ------------------------------------
+
+   Added with app/domain/submissionapp. This surface is the only way to read
+   what was submitted -- there is no CLI -- so these are working tables rather
+   than decoration: a lot of columns, numbers that have to line up, and a
+   phone as a plausible device for somebody checking numbers on the way to the
+   Shrine. */
+
+.listing,
+.detail {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 1.5rem;
+}
+
+.listing th,
+.listing td,
+.detail th,
+.detail td {
+  padding: .45rem .6rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--rule);
+}
+
+.listing thead th,
+.detail thead th {
+  font-size: .8rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--muted);
+  border-bottom-width: 2px;
+  white-space: nowrap;
+}
+
+.listing tbody tr:hover { background: var(--tint); }
+
+/* Numbers align on the right and share a width, so a column of amounts can be
+   compared down the page rather than read one row at a time. */
+.figure {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.detail th[scope="row"] {
+  width: 12rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.detail tr.total th,
+.detail tr.total td {
+  font-weight: 700;
+  border-bottom: none;
+}
+
+.listing caption,
+.detail caption {
+  caption-side: top;
+  text-align: left;
+  padding: 0 0 .5rem;
+  font-size: .9rem;
+  color: var(--muted);
+}
+
+/* A submission table is as wide as the form was long, and a form can have a
+   dozen fields. Scrolling the table rather than the page keeps the headings
+   and the rest of the chrome in place. */
+.scroller {
+  overflow-x: auto;
+  margin: 0 0 1.5rem;
+}
+
+/* --- the headline numbers ----------------------------------------------- */
+
+.summary-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem 1.5rem;
+  margin: 0 0 1.25rem;
+  padding: .9rem 1rem;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--tint);
+}
+
+.summary-cards p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.summary-cards strong {
+  display: block;
+  font-size: 1.4rem;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.money {
+  margin: 0 0 1.25rem;
+}
+
+.crumb {
+  margin: -.5rem 0 1.25rem;
+}
+
+/* A value nobody supplied, and a value nobody was asked for. Muted and
+   italic, so a table of answers does not read as though somebody typed the
+   words "not asked". */
+.absent {
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* An opaque identifier, which is for copying into a support conversation
+   rather than for reading aloud. */
+.ref {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .85rem;
+  word-break: break-all;
+}
+
+/* --- a link that acts as a button --------------------------------------- */
+
+a.go {
+  display: inline-block;
+  padding: .5rem 1rem;
+  font-weight: 600;
+  color: var(--paper);
+  background: var(--accent);
+  border-radius: 4px;
+  text-decoration: none;
+}
+
+a.go:hover { filter: brightness(1.08); }
+
+@media (max-width: 34rem) {
+  /* The row heading is the link to the submission, so it stays readable
+     rather than wrapping to one word per line. */
+  .listing th[scope="row"] { white-space: nowrap; }
+
+  .detail th[scope="row"] { width: auto; }
+}

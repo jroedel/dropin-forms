@@ -15,11 +15,14 @@ import (
 	"time"
 
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
+	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
 	"github.com/jroedel/dropin-forms/app/sdk/mid"
 	"github.com/jroedel/dropin-forms/app/sdk/muxer"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/access/stores/accessdb"
+	"github.com/jroedel/dropin-forms/business/domain/submission/stores/submissiondb"
+	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
 	"github.com/jroedel/dropin-forms/business/domain/user/stores/userdb"
 	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/business/types"
@@ -59,13 +62,17 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 	if err := accessdb.Init(t.Context(), db); err != nil {
 		t.Fatalf("accessdb.Init: %v", err)
 	}
+	if err := submissiondb.Init(t.Context(), db); err != nil {
+		t.Fatalf("submissiondb.Init: %v", err)
+	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	users := userbus.NewBusiness(log, userdb.NewStore(db))
 	access := accessbus.NewBusiness(log, accessdb.NewStore(db))
+	submissions := submissionbus.NewBusiness(log, submissiondb.NewStore(db))
 	sent := &mail.Recorder{}
 
-	renderer, err := page.NewRenderer(log, page.AdminChrome(), authapp.Templates)
+	renderer, err := page.NewRenderer(log, page.AdminChrome(), authapp.Templates, submissionapp.Templates)
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
 	}
@@ -80,6 +87,9 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 	for table, columns := range accessdb.Expected {
 		expected[table] = columns
 	}
+	for table, columns := range submissiondb.Expected {
+		expected[table] = columns
+	}
 
 	h, err := muxer.Admin(muxer.Config{
 		Log:          log,
@@ -87,6 +97,8 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 		Expected:     expected,
 		Users:        users,
 		Access:       access,
+		Submissions:  submissions,
+		Forms:        definitions,
 		Mail:         sent,
 		Render:       renderer,
 		AdminBaseURL: "https://forms.test",
@@ -355,12 +367,16 @@ func newAdminWithBrokenMail(t *testing.T) harness {
 	if err := accessdb.Init(t.Context(), db); err != nil {
 		t.Fatalf("accessdb.Init: %v", err)
 	}
+	if err := submissiondb.Init(t.Context(), db); err != nil {
+		t.Fatalf("submissiondb.Init: %v", err)
+	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	users := userbus.NewBusiness(log, userdb.NewStore(db))
 	access := accessbus.NewBusiness(log, accessdb.NewStore(db))
+	submissions := submissionbus.NewBusiness(log, submissiondb.NewStore(db))
 
-	renderer, err := page.NewRenderer(log, page.AdminChrome(), authapp.Templates)
+	renderer, err := page.NewRenderer(log, page.AdminChrome(), authapp.Templates, submissionapp.Templates)
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
 	}
@@ -375,6 +391,9 @@ func newAdminWithBrokenMail(t *testing.T) harness {
 	for table, columns := range accessdb.Expected {
 		expected[table] = columns
 	}
+	for table, columns := range submissiondb.Expected {
+		expected[table] = columns
+	}
 
 	h, err := muxer.Admin(muxer.Config{
 		Log:          log,
@@ -382,6 +401,8 @@ func newAdminWithBrokenMail(t *testing.T) harness {
 		Expected:     expected,
 		Users:        users,
 		Access:       access,
+		Submissions:  submissions,
+		Forms:        definitions,
 		Mail:         brokenMail{},
 		Render:       renderer,
 		AdminBaseURL: "https://forms.test",

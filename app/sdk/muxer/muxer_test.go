@@ -11,6 +11,7 @@ import (
 
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
+	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
 	"github.com/jroedel/dropin-forms/app/sdk/muxer"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
@@ -57,7 +58,7 @@ func newConfig(t *testing.T, origins []types.Origin, expected sqldb.Expected) mu
 		t.Fatalf("initialising the grant table: %v", err)
 	}
 
-	renderer, err := page.NewRenderer(log, page.AdminChrome(), authapp.Templates)
+	renderer, err := page.NewRenderer(log, page.AdminChrome(), authapp.Templates, submissionapp.Templates)
 	if err != nil {
 		t.Fatalf("building the renderer: %v", err)
 	}
@@ -70,12 +71,6 @@ func newConfig(t *testing.T, origins []types.Origin, expected sqldb.Expected) mu
 	// submissiondb's tables too, because the embed surface accepts writes.
 	if err := submissiondb.Init(t.Context(), db); err != nil {
 		t.Fatalf("initialising the submission tables: %v", err)
-	}
-
-	// The real definitions, so that these tests mount what production mounts.
-	definitions, err := formtoml.Load(forms.FS)
-	if err != nil {
-		t.Fatalf("loading the form definitions: %v", err)
 	}
 
 	return muxer.Config{
@@ -91,6 +86,11 @@ func newConfig(t *testing.T, origins []types.Origin, expected sqldb.Expected) mu
 		Users:  userbus.NewBusiness(log, userdb.NewStore(db)),
 		Access: accessbus.NewBusiness(log, accessdb.NewStore(db)),
 
+		// The admin surface reads submissions, so it needs both the rows
+		// and the definitions the rows are columns of.
+		Submissions: submissionbus.NewBusiness(log, submissiondb.NewStore(db)),
+		Forms:       definitions,
+
 		Embed: embedapp.Config{
 			Log:         log,
 			Forms:       definitions,
@@ -103,6 +103,20 @@ func newConfig(t *testing.T, origins []types.Origin, expected sqldb.Expected) mu
 		AdminBaseURL: "https://forms.test",
 	}
 }
+
+// definitions is the real form set, loaded once, so that these tests mount
+// what production mounts. Package level rather than per-harness because both
+// surfaces need it and both test files build one: the embed surface to render
+// and price a form, the admin surface because a submission's columns come from
+// the form it was made against.
+var definitions = func() *formtoml.Store {
+	s, err := formtoml.Load(forms.FS)
+	if err != nil {
+		panic(err)
+	}
+
+	return s
+}()
 
 // grantKey is a signing key for the tests. Not a secret: it signs grants for
 // a database in a temporary directory that is deleted when the test ends.

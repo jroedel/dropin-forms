@@ -58,6 +58,7 @@ import (
 
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
+	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
 	"github.com/jroedel/dropin-forms/app/sdk/health"
 	"github.com/jroedel/dropin-forms/app/sdk/mid"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
@@ -93,6 +94,15 @@ type Config struct {
 	Access *accessbus.Business
 	Mail   mail.Sender
 	Render *page.Renderer
+
+	// Submissions is what the admin surface reads to show what was submitted.
+	// Read-only from here: the app that lists them cannot change one.
+	Submissions submissionapp.Submissions
+
+	// Forms is the definition store, needed on both surfaces -- the embed
+	// surface renders them and the admin surface names their fields as
+	// columns.
+	Forms submissionapp.Forms
 
 	// AdminBaseURL is the admin surface's own origin, used to build the link
 	// that goes in a sign-in email. Configured rather than taken from the
@@ -176,6 +186,10 @@ func Admin(cfg Config) (http.Handler, error) {
 		return nil, errors.New("the admin surface needs the account domain")
 	case cfg.Access == nil:
 		return nil, errors.New("the admin surface needs the access domain, which is what decides who may read a form's submissions")
+	case cfg.Submissions == nil:
+		return nil, errors.New("the admin surface needs the submission domain; reading submissions is the whole reason it exists")
+	case cfg.Forms == nil:
+		return nil, errors.New("the admin surface needs the form definitions, which is where a submission's columns come from")
 	case cfg.Mail == nil:
 		return nil, errors.New("the admin surface needs somewhere to send mail, even if that is a recorder")
 	case cfg.AdminBaseURL == "":
@@ -199,8 +213,12 @@ func Admin(cfg Config) (http.Handler, error) {
 	// does not become a catch-all that swallows every typo as a redirect.
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		to := signInPath
+
+		// The forms list rather than the account page. Somebody typing this
+		// hostname from memory came to look at submissions; the account page
+		// is for backup codes, which is a thing you do once.
 		if _, ok := mid.UserFrom(r.Context()); ok {
-			to = "/account"
+			to = "/forms"
 		}
 
 		http.Redirect(w, r, to, http.StatusSeeOther)
@@ -217,6 +235,25 @@ func Admin(cfg Config) (http.Handler, error) {
 		BaseURL:   cfg.AdminBaseURL,
 		Bootstrap: cfg.Bootstrap,
 	}, guard)
+
+	// results is the second gate, and it is mounted here rather than inside
+	// the app for the same reason guard is: a route's position in the chain is
+	// written down in one place. "Who is this" is settled by guard before
+	// "what may they do" is asked, which is the order the web skill is
+	// explicit about.
+	//
+	// The role is results and not admin. Reading the numbers is not editing
+	// the price, and whoever is counting lunches should not have to be able to
+	// change what a ticket costs.
+	results := mid.RequireFormRole(cfg.Log, cfg.Access, accessbus.RoleResults)
+
+	submissionapp.Routes(mux, submissionapp.Config{
+		Log:         cfg.Log,
+		Forms:       cfg.Forms,
+		Submissions: cfg.Submissions,
+		Grants:      cfg.Access,
+		Render:      cfg.Render,
+	}, guard, results)
 
 	return web.Wrap(mux,
 		web.RequestID(),
