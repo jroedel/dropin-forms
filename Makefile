@@ -113,8 +113,25 @@ test-unit: ## Run unit tests, with the race detector
 	@# lives there and not in a pipeline somebody adds to each run by hand.
 	@GO=$(GO) scripts/go-test -race ./...
 
+# The shell tests, which are their own target because they are not Go and
+# because both of them guard something that cannot be caught by a type.
+#
+# ensure-main was written after deploy.sh moved somebody's working tree and
+# then cancelled three deploys in an afternoon. The render test holds still
+# which Stripe keys reach the server, including that a live key in the test
+# slot is refused rather than charged.
+#
+# Neither reaches the network or a server, and neither can: one runs in a
+# throwaway git repository with its dispatcher cut off, and the other calls
+# only `render`, whose whole contract is to print and touch nothing.
+.PHONY: shell-test
+shell-test: ## The shell tests: deploy.sh's branch guard, and what render writes
+	@bash deploy/ensure-main-test.sh deploy/deploy.sh
+	@echo
+	@bash scripts/secrets-render-test.sh
+
 .PHONY: test
-test: test-unit lint vuln-check ## Full check: unit tests + lint + vulnerability scan
+test: test-unit lint shell-test vuln-check ## Full check: unit tests + lint + shell tests + vulnerability scan
 
 .PHONY: cover
 cover: ## Unit tests with a coverage summary
@@ -169,6 +186,10 @@ secrets-push: ## Send the deploy group to GitHub repository secrets (needs gh)
 .PHONY: secrets-install
 secrets-install: ## Write config.toml onto the server from secrets.env (needs ssh)
 	@scripts/secrets install
+
+.PHONY: secrets-install-test
+secrets-install-test: ## Same, but with the STRIPE_TEST_* keys: rehearse charging nobody
+	@scripts/secrets install test
 
 .PHONY: secrets-keygen
 secrets-keygen: ## Mint the deploy key, pin the host key, fill both into secrets.env
