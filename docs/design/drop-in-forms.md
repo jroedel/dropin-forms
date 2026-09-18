@@ -637,9 +637,32 @@ emptiness and never values; a pinned `known_hosts` from `ssh-keyscan` with **no
 `StrictHostKeyChecking=no` anywhere**; tests re-run in the deploy job rather
 than trusted from CI; and an external health check that rolls back on failure.
 
-Deploying on a **version tag** rather than every push to `main`: a form taking
-money should ship when somebody decides it should. `make test` runs on every PR
-regardless.
+Deploying on **every push to `main`**, plus tags and `workflow_dispatch`. This
+reverses the original decision here, which was tags-only on the grounds that a
+form taking money should ship when somebody decides it should.
+
+What that argument missed is where the deciding happens. Nothing reaches `main`
+except through a reviewed pull request, so the merge *is* the decision, and a
+tag afterwards is a second ceremony for the same choice — one that in practice
+means a fix sits unshipped until somebody is at a laptop. The `production`
+environment is where a required reviewer goes if a particular change wants one,
+which is a better place for that than the trigger.
+
+Two consequences worth knowing rather than discovering:
+
+- **A pushed deploy ships the binary only.** There is no `secrets.env` in CI,
+  so `deploy.sh` leaves the server's `config.toml` alone — deliberately, since
+  the Stripe keys, the SMTP password and the grant signing key must never pass
+  through GitHub. A merge that introduces a *required* config key fails the
+  pre-flight and swaps nothing, which is safe but stalls until someone runs
+  `make secrets-install`. The `[stripe]` section was exactly such a change.
+- **Actions minutes on this account have run out before** (see the risks
+  below). Deploying on every push spends more of them than tagging did, and
+  feast week is a bad time to find the quota gone. `deploy/deploy.sh` from a
+  laptop needs nothing from GitHub and is the fallback.
+
+`make test` runs on every PR regardless, and again inside the deploy job,
+because a tag or a dispatch can name a commit CI never saw.
 
 The deploy ordering from `uebung` is the reusable asset, and every step earns its
 place:
