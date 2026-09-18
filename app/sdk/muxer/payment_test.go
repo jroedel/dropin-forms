@@ -16,12 +16,14 @@ import (
 	"time"
 
 	"github.com/jroedel/dropin-forms/app/domain/paymentapp"
+	"github.com/jroedel/dropin-forms/business/domain/notify/notifybus"
 	"github.com/jroedel/dropin-forms/business/domain/payment/paybus"
 	"github.com/jroedel/dropin-forms/business/domain/payment/stores/paydb"
 	"github.com/jroedel/dropin-forms/business/domain/payment/stores/stripepay"
 	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
 	"github.com/jroedel/dropin-forms/business/types"
 	"github.com/jroedel/dropin-forms/foundation/logger"
+	"github.com/jroedel/dropin-forms/foundation/mail"
 )
 
 // Taking a payment, through the surfaces as they are mounted.
@@ -107,6 +109,11 @@ type till struct {
 
 	subs *submissionbus.Business
 	pay  *counter
+
+	// sent is every message the notifier wrote, so that a test can assert who
+	// was told what and -- more usefully -- that nobody was told anything
+	// while an order was still only half made.
+	sent *mail.Recorder
 }
 
 func newTill(t *testing.T) till {
@@ -135,11 +142,34 @@ func newTill(t *testing.T) till {
 	pay := &counter{}
 	cfg.Embed.Payments = pay
 
+	// The real notifier over a recorder, because what is worth asserting about
+	// the mail is when it is sent rather than how: a receipt for an order
+	// nobody has paid for is worse than no receipt at all.
+	sent := &mail.Recorder{}
+	cfg.Mail = sent
+
+	notifier, err := notifybus.NewBusiness(notifybus.Config{
+		Log:          cfg.Log,
+		Mail:         sent,
+		Forms:        definitions,
+		Submissions:  subs,
+		Grants:       cfg.Access,
+		Accounts:     cfg.Users,
+		Office:       "office@schoenstatt.test",
+		AdminBaseURL: "https://forms.test",
+	})
+	if err != nil {
+		t.Fatalf("notifybus.NewBusiness: %v", err)
+	}
+
+	cfg.Notify = notifier
+
 	return till{
 		embed: embedOf(t, cfg),
 		admin: adminOf(t, cfg),
 		subs:  subs,
 		pay:   pay,
+		sent:  sent,
 	}
 }
 

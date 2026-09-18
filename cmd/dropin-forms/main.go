@@ -19,6 +19,7 @@ import (
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/access/stores/accessdb"
 	"github.com/jroedel/dropin-forms/business/domain/form/stores/formtoml"
+	"github.com/jroedel/dropin-forms/business/domain/notify/notifybus"
 	"github.com/jroedel/dropin-forms/business/domain/payment/paybus"
 	"github.com/jroedel/dropin-forms/business/domain/payment/stores/paydb"
 	"github.com/jroedel/dropin-forms/business/domain/payment/stores/stripepay"
@@ -86,6 +87,7 @@ func run() error {
 		fmt.Printf("  database       %s\n", cfg.DB.Path)
 		fmt.Printf("  embed origins  %d\n", len(cfg.Embed.allowed))
 		fmt.Printf("  mail relay     %s\n", either(cfg.Mail.Host != "", "configured", "none: mail will not be sent"))
+		fmt.Printf("  notify         %s\n", either(cfg.Mail.Notify != "", cfg.Mail.Notify, "nobody by default: the form's own list and its results holders"))
 
 		// Whether money is being taken, and in which mode, from the key's own
 		// prefix. Never the key. This is the line somebody reads at the worst
@@ -193,6 +195,24 @@ func run() error {
 		return err
 	}
 
+	// Built whatever the mail configuration is, because a recorder is a
+	// sender: with no relay the notifications are written to the log with
+	// everything else, which is what a developer wants and what tells an
+	// operator that mail is not going out.
+	notifier, err := notifybus.NewBusiness(notifybus.Config{
+		Log:          log,
+		Mail:         sender,
+		Forms:        definitions,
+		Submissions:  submissions,
+		Grants:       access,
+		Accounts:     users,
+		Office:       cfg.Mail.Notify,
+		AdminBaseURL: cfg.Server.AdminBaseURL,
+	})
+	if err != nil {
+		return err
+	}
+
 	adminPages, err := page.NewRenderer(log, page.AdminChrome(), authapp.Templates, submissionapp.Templates)
 	if err != nil {
 		return err
@@ -216,6 +236,8 @@ func run() error {
 		Render:       adminPages,
 		AdminBaseURL: cfg.Server.AdminBaseURL,
 		Bootstrap:    cfg.Auth.BootstrapSecret,
+
+		Notify: notifier,
 
 		// Read from embed.trust_proxy and handed to both surfaces, because
 		// what it describes is the deployment rather than one surface: the
@@ -260,6 +282,13 @@ func run() error {
 		"embed_allowed_origins", len(cfg.Embed.allowed),
 		"mail", howMail,
 		"payments", howPay,
+
+		// Whether anybody is told about a submission by default. A form's own
+		// notify list and its results holders are the other two ways, so this
+		// being empty is not on its own a silent service -- but it is the one
+		// of the three that is set in a file rather than in a database, which
+		// makes it the one worth printing.
+		"notify", either(cfg.Mail.Notify != "", cfg.Mail.Notify, "nobody by default"),
 
 		// Whether the route exists, never the secret. Worth logging because
 		// a bootstrap route left mounted after the first sign-in is something

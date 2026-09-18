@@ -141,3 +141,18 @@ user = ""
 password = ""
 from = "forms@schoenstatt.link"
 from_name = "Schoenstatt Austin"
+
+# Told about every submission on every form.
+#
+# Three things decide who hears about a submission, and they answer different
+# questions: this one is "where does this installation's post go", a form's own
+# `notify` list is "who else cares about this particular form" -- the kitchen,
+# for a lunch -- and the accounts holding `results` on the form are "who has
+# been given the job of reading these", which is the list that stays right when
+# somebody leaves.
+#
+# Empty is allowed and means the other two are the only ways. A submission that
+# reaches nobody by any of the three is logged as a warning, because a service
+# that stores orders nobody is told about is the failure this exists to
+# prevent.
+notify = ""
