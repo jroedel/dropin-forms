@@ -354,3 +354,62 @@ func TestAGatewayNeedsBothCredentials(t *testing.T) {
 		t.Error("New accepted an empty webhook secret, which would mean a public URL that verifies nothing")
 	}
 }
+
+// The decline reason is read for one purpose: telling one unlucky buyer apart
+// from a list of stolen cards being worked through. It decides nothing -- the
+// payment failed either way -- so what matters is that the more specific of
+// Stripe's two codes is the one that reaches the log.
+func TestTheDeclineReasonIsRead(t *testing.T) {
+	g := gateway(t)
+
+	failure := func(t *testing.T, errorBlock string) paybus.Event {
+		t.Helper()
+
+		body := `{
+  "id": "evt_1Decline` + string(rune('A'+len(errorBlock)%26)) + `",
+  "object": "event",
+  "api_version": "2026-03-31.basil",
+  "type": "payment_intent.payment_failed",
+  "data": {
+    "object": {
+      "id": "pi_3DeclineExample",
+      "object": "payment_intent",
+      "currency": "usd",
+      "metadata": {"submission_id": "` + types.NewID().String() + `"}` + errorBlock + `
+    }
+  }
+}`
+
+		e, err := g.Verify([]byte(body), sign(t, body, time.Now()))
+		if err != nil {
+			t.Fatalf("Verify: %v", err)
+		}
+
+		return e
+	}
+
+	// The issuer's answer, which is the one worth having: a run of
+	// generic_decline is what card testing looks like from this side.
+	both := failure(t, `,
+      "last_payment_error": {"code": "card_declined", "decline_code": "generic_decline"}`)
+	if both.Decline != "generic_decline" {
+		t.Errorf("decline = %q, want the issuer's own code", both.Decline)
+	}
+
+	// Stripe's category, when the issuer gave nothing more specific.
+	only := failure(t, `,
+      "last_payment_error": {"code": "expired_card"}`)
+	if only.Decline != "expired_card" {
+		t.Errorf("decline = %q, want the code Stripe did send", only.Decline)
+	}
+
+	// And a failure with no reason at all is still a failure. An absent block
+	// is a fact rather than a parse error.
+	none := failure(t, "")
+	if none.Decline != "" {
+		t.Errorf("decline = %q, want empty", none.Decline)
+	}
+	if none.Result != paybus.ResultFailed {
+		t.Errorf("result = %q, want failed whatever the reason", none.Result)
+	}
+}

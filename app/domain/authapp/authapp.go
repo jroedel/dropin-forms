@@ -79,6 +79,35 @@ type Config struct {
 	// bootstrap route is not mounted at all, which is the right answer once a
 	// service has accounts.
 	Bootstrap string
+
+	// TrustProxy says whether X-Forwarded-For carries the visitor's address.
+	// It decides what the throttle below counts, and believing it with nothing
+	// in front means letting whoever is trying addresses choose their own
+	// bucket.
+	TrustProxy bool
+
+	// Limit is how often one address may try to sign in. The zero value is
+	// [DefaultSignInRate].
+	Limit web.Rate
+}
+
+// DefaultSignInRate is what the sign-in routes are held to.
+//
+// Five attempts at once and then one every thirty seconds. Generous for a
+// person -- who signs in perhaps twice a day, and whose worst case is
+// mistyping their address twice and then asking for a second link -- and
+// ungenerous for anything working through a list of addresses or of backup
+// codes.
+//
+// It is keyed by address and not by the email typed, which is the narrower
+// thing to key on and needs the request body read in a middleware to do. That
+// is a rule this service does not want to relax anywhere: nothing above a
+// handler touches a body. What the per-address key would buy is protection
+// against somebody mailing one person a hundred sign-in links from a hundred
+// hosts, and what stands there instead is userbus, which logs every request
+// for an address that has no account and never says whether one does.
+func DefaultSignInRate() web.Rate {
+	return web.Rate{Burst: 5, Every: 30 * time.Second}
 }
 
 type app struct {
@@ -88,21 +117,45 @@ type app struct {
 // Routes mounts this app. Everything here is outside Require except the
 // account page, which is why the mounting is split.
 func Routes(mux *http.ServeMux, cfg Config, guard func(http.Handler) http.Handler) {
+	if cfg.Limit.Zero() {
+		cfg.Limit = DefaultSignInRate()
+	}
+
 	a := app{cfg: cfg}
 
+	// One allowance across all four of these, deliberately. They are four ways
+	// of presenting one credential, and a limit that let somebody exhaust the
+	// backup codes and then start on the sign-in links would be four limits
+	// and no limit.
+	//
+	// The GETs are not behind it. They render a form and read nothing, and a
+	// throttle on the page somebody is trying to sign in *on* is a throttle
+	// that locks out the person who reloaded it.
+	tries := web.Throttle(web.Throttling{
+		Rate: cfg.Limit,
+		Key: func(r *http.Request) string {
+			return "signin|" + web.IPBucket(web.ClientIP(r, cfg.TrustProxy))
+		},
+		Log: cfg.Log,
+	})
+
 	mux.HandleFunc("GET /signin", a.signInForm)
-	mux.HandleFunc("POST /signin", a.requestLink)
+	mux.Handle("POST /signin", tries(http.HandlerFunc(a.requestLink)))
 	mux.HandleFunc("GET /signin/link", a.confirmLink)
-	mux.HandleFunc("POST /signin/link", a.redeemLink)
+	mux.Handle("POST /signin/link", tries(http.HandlerFunc(a.redeemLink)))
 	mux.HandleFunc("GET /signin/code", a.codeForm)
-	mux.HandleFunc("POST /signin/code", a.redeemCode)
+	mux.Handle("POST /signin/code", tries(http.HandlerFunc(a.redeemCode)))
+
+	// Signing out is not a credential being presented and is not throttled: it
+	// is somebody ending a session they already hold, and a refusal there
+	// leaves a session open that its owner asked to close.
 	mux.HandleFunc("POST /signout", a.signOut)
 
 	// Only when there is a secret to compare against. An unmounted route is a
 	// 404, which is a better answer than a form that can never succeed.
 	if cfg.Bootstrap != "" {
 		mux.HandleFunc("GET /signin/bootstrap", a.bootstrapForm)
-		mux.HandleFunc("POST /signin/bootstrap", a.redeemBootstrap)
+		mux.Handle("POST /signin/bootstrap", tries(http.HandlerFunc(a.redeemBootstrap)))
 	}
 
 	mux.Handle("GET /account", guard(http.HandlerFunc(a.account)))

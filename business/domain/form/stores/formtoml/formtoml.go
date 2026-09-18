@@ -198,6 +198,11 @@ type form struct {
 	PaymentRequired bool   `toml:"payment_required"`
 	PaymentNote     string `toml:"payment_note"`
 
+	// DailyCap is an abuse control rather than a stock level -- see
+	// formbus.Form.DailyCap, which says why the number to write is far above
+	// any real day rather than near it.
+	DailyCap int `toml:"daily_cap"`
+
 	Confirmation string   `toml:"confirmation"`
 	Notify       []string `toml:"notify"`
 
@@ -264,6 +269,7 @@ func (w form) toForm() (formbus.Form, error) {
 		MaxPerOrder:     w.MaxPerOrder,
 		PaymentRequired: w.PaymentRequired,
 		PaymentNote:     w.PaymentNote,
+		DailyCap:        w.DailyCap,
 		Confirmation:    w.Confirmation,
 		Notify:          w.Notify,
 		ReturnURL:       w.ReturnURL,

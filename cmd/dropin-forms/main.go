@@ -217,6 +217,12 @@ func run() error {
 		AdminBaseURL: cfg.Server.AdminBaseURL,
 		Bootstrap:    cfg.Auth.BootstrapSecret,
 
+		// Read from embed.trust_proxy and handed to both surfaces, because
+		// what it describes is the deployment rather than one surface: the
+		// sign-in throttle has to count the visitor for the same reason the
+		// payment path does.
+		TrustProxy: cfg.Embed.TrustProxy,
+
 		// Each form's own list, which is what makes frame-ancestors a
 		// property of the form rather than of the installation. The
 		// configured list is the fallback for a definition that names none.
@@ -228,7 +234,6 @@ func run() error {
 			Submissions: submissions,
 			Render:      embedPages,
 			GrantKey:    cfg.Embed.grantKey,
-			TrustProxy:  cfg.Embed.TrustProxy,
 
 			// Nil when Stripe is not configured, which embedapp handles as a
 			// form that stores its orders and shows no way to pay. An
@@ -272,13 +277,26 @@ func run() error {
 		return err
 	}
 
+	// Started before the listeners and waited for after them, so that a sweep
+	// in flight finishes before the deferred db.Close above runs.
+	swept := housekeeper{
+		log:         log,
+		submissions: submissions,
+		users:       users,
+		payments:    payments,
+	}.start(ctx)
+
 	// Two listeners, not three. The webhook lives on the embed one, mounted
 	// outside its origin gate -- see muxer.Embed for why that is the whole of
 	// what it needs, and why it is not enough for it merely to pass the gate.
-	return web.Serve(ctx, log, cfg.Server.shutdownGraceD,
+	err = web.Serve(ctx, log, cfg.Server.shutdownGraceD,
 		web.Surface{Name: "embed", Addr: cfg.Server.EmbedAddr, Handler: embed},
 		web.Surface{Name: "admin", Addr: cfg.Server.AdminAddr, Handler: admin},
 	)
+
+	<-swept
+
+	return err
 }
 
 // newPayments builds the payment domain, and returns a word for the log saying

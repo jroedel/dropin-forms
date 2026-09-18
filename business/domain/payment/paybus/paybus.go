@@ -43,6 +43,7 @@ import (
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
 	"github.com/jroedel/dropin-forms/business/types"
+	"github.com/jroedel/dropin-forms/foundation/alarm"
 )
 
 // The errors this package returns.
@@ -168,6 +169,15 @@ type Event struct {
 	// submission.
 	Ref string
 
+	// Decline is why a failed payment failed, as Stripe's own code:
+	// generic_decline, insufficient_funds, expired_card. Empty on everything
+	// that is not a failure, and empty on a failure Stripe gave no reason for.
+	//
+	// Logged and never acted on. A declined payment is declined whatever the
+	// reason, and what the reason is for is telling one unlucky buyer apart
+	// from somebody working through a list of stolen cards.
+	Decline string
+
 	// Total and Currency are what Stripe says was charged, kept so that a
 	// mismatch against what we asked for can be logged. Deliberately not used
 	// to *decide* anything: the amount that matters is the one the validator
@@ -217,17 +227,44 @@ type Submissions interface {
 	Settle(ctx context.Context, now time.Time, id types.ID, to submissionbus.Status, ref string) error
 }
 
+// declinesPerHour is how many payments may fail in an hour before somebody is
+// told.
+//
+// Twenty, which is far above any hour this service has a right to expect: the
+// form it was written for sells lunch tickets to a parish, and a decline is
+// rare enough that the office would remember it. Card testing is the shape
+// this is watching for, and it does not look like nineteen declines -- it
+// looks like hundreds.
+//
+// The alarm refuses nothing, which is the whole reason the number can be set
+// this low. Stopping payments because payments are failing would turn a wave
+// of stolen cards into a closed shop, and the wave is Stripe's problem to
+// block; ours is to know it is happening while it is happening.
+const declinesPerHour = 20
+
 // Business is the set of operations on payments.
 type Business struct {
 	log         *slog.Logger
 	gateway     Gateway
 	seen        Seen
 	submissions Submissions
+
+	// declines counts failures across the whole installation rather than per
+	// form, because that is the level the answer is wanted at: somebody
+	// testing cards does not care which form they are using, and this service
+	// has one Stripe account behind every one of them.
+	declines *alarm.Ceiling
 }
 
 // NewBusiness constructs one.
 func NewBusiness(log *slog.Logger, gateway Gateway, seen Seen, submissions Submissions) *Business {
-	return &Business{log: log, gateway: gateway, seen: seen, submissions: submissions}
+	return &Business{
+		log:         log,
+		gateway:     gateway,
+		seen:        seen,
+		submissions: submissions,
+		declines:    alarm.NewCeiling(declinesPerHour, time.Hour),
+	}
 }
 
 // Start creates the hosted payment session for an accepted submission.
@@ -368,6 +405,19 @@ func (b *Business) Fulfil(ctx context.Context, now time.Time, payload []byte, si
 	case ResultFailed:
 		if err := b.submissions.Settle(ctx, now, e.SubmissionID, submissionbus.StatusFailed, e.Ref); err != nil {
 			return Event{}, fmt.Errorf("recording a failed payment: %w", err)
+		}
+
+		// One line per failure, because the count is the signal and a decline
+		// nobody can see is a decline nobody can count.
+		b.log.Info("a payment failed",
+			"submission_id", e.SubmissionID.String(), "ref", e.Ref, "decline", e.Decline)
+
+		if crossed, count := b.declines.Count("declines", now); crossed {
+			// Error, and the sentence says what to do: this is the one alarm
+			// here whose right answer might be to take the form down, and the
+			// person reading it at the time will not have read section 7.6.
+			b.log.Error("payments are failing far more often than expected; if this is card testing, the damage is our decline rate with card issuers. Check the Stripe dashboard, and consider closing the form",
+				"in_the_last_hour", count, "expected_at_most", declinesPerHour, "latest_decline", e.Decline)
 		}
 
 		// No arm for ResultDisputed: it returned above, before the

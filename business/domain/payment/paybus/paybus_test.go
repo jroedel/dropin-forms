@@ -616,3 +616,87 @@ func mustSlug(t *testing.T, s string) types.Slug {
 
 	return slug
 }
+
+// --- the decline alarm --------------------------------------------------------
+
+// The realistic damage from card testing is not a breach: it is a decline rate
+// with card issuers that outlasts the testing and raises declines for the
+// orders we wanted. Nothing here refuses anything -- what this asserts is that
+// somebody is told, once, while it is still happening.
+func TestAWaveOfDeclinesIsReportedOnceAnHour(t *testing.T) {
+	var lines strings.Builder
+
+	log := slog.New(slog.NewTextHandler(&lines, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	g := &gateway{}
+	b := paybus.NewBusiness(log, g, newSeen(), newSettler())
+
+	// Twenty is the ceiling, so the twenty-first is the one that reports.
+	for i := range 40 {
+		g.event = paybus.Event{
+			ID:           "evt_" + string(rune('a'+i%26)) + string(rune('0'+i/26)),
+			Kind:         "payment_intent.payment_failed",
+			Result:       paybus.ResultFailed,
+			SubmissionID: types.NewID(),
+			Ref:          "pi_test",
+			Decline:      "generic_decline",
+		}
+
+		if _, err := b.Fulfil(t.Context(), beforeTheFeast, []byte("{}"), "sig"); err != nil {
+			t.Fatalf("delivery %d: %v", i+1, err)
+		}
+	}
+
+	out := lines.String()
+
+	if got := strings.Count(out, "payments are failing far more often than expected"); got != 1 {
+		t.Errorf("the alarm fired %d times in one hour, want exactly 1:\n%s", got, out)
+	}
+
+	// The count in the line is what somebody decides from, and the decline
+	// code is what tells a bad afternoon from a list of stolen cards.
+	if !strings.Contains(out, "generic_decline") {
+		t.Errorf("the alarm does not name the decline:\n%s", out)
+	}
+
+	// An hour later it is a new wave and worth saying again.
+	g.event.ID = "evt_next"
+
+	for range 21 {
+		g.event.ID += "x"
+		if _, err := b.Fulfil(t.Context(), beforeTheFeast.Add(time.Hour), []byte("{}"), "sig"); err != nil {
+			t.Fatalf("the second hour: %v", err)
+		}
+	}
+
+	if got := strings.Count(lines.String(), "payments are failing far more often than expected"); got != 2 {
+		t.Errorf("the alarm fired %d times across two hours, want 2", got)
+	}
+}
+
+// A handful of declines is an ordinary week and must say nothing beyond the
+// one line each failure already gets.
+func TestOrdinaryDeclinesAreQuiet(t *testing.T) {
+	var lines strings.Builder
+
+	log := slog.New(slog.NewTextHandler(&lines, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	g := &gateway{}
+	b := paybus.NewBusiness(log, g, newSeen(), newSettler())
+
+	for i := range 5 {
+		g.event = paybus.Event{
+			ID:           "evt_" + string(rune('a'+i)),
+			Kind:         "payment_intent.payment_failed",
+			Result:       paybus.ResultFailed,
+			SubmissionID: types.NewID(),
+			Decline:      "insufficient_funds",
+		}
+
+		if _, err := b.Fulfil(t.Context(), beforeTheFeast, []byte("{}"), "sig"); err != nil {
+			t.Fatalf("delivery %d: %v", i+1, err)
+		}
+	}
+
+	if strings.Contains(lines.String(), "far more often than expected") {
+		t.Errorf("five declines set off the alarm:\n%s", lines.String())
+	}
+}

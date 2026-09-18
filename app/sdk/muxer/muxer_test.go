@@ -27,6 +27,7 @@ import (
 	"github.com/jroedel/dropin-forms/foundation/logger"
 	"github.com/jroedel/dropin-forms/foundation/mail"
 	"github.com/jroedel/dropin-forms/foundation/sqldb"
+	"github.com/jroedel/dropin-forms/foundation/web"
 )
 
 // Tests go through the mounted mux rather than against a bare handler,
@@ -389,6 +390,14 @@ func TestSameOriginOnlyDecidesWrites(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r := httptest.NewRequest(tc.method, "https://"+host+"/f/"+theForm, nil)
 			r.Host = host
+
+			// The content type every one of these carries, so that the gate
+			// being tested is the origin one. Without it the writes are
+			// refused a step earlier, by the allowlist that exists to keep
+			// this surface from ever parsing a multipart body, and every row
+			// here would assert 415 about the wrong thing.
+			r.Header.Set("Content-Type", web.FormEncoded)
+
 			for k, v := range tc.headers {
 				r.Header.Set(k, v)
 			}

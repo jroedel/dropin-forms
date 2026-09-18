@@ -1185,6 +1185,121 @@ Nothing logged, nothing answered 500, and the right content was on the page.
 POST → confirmation → Back → form. Confirmed by reverting the template, which
 fails two of its assertions.
 
+### The abuse controls, as built
+
+Section 7.6 lists six things in value order. Two of them were already here
+before this step and are named so that the list can be read as finished: Stripe
+objects are created on POST only, and every session carries the end user's IP
+and email. A third, the per-form minimum amount, turns out to be spent as well
+— the feast form's donation field has a $5 floor, which is exactly the "a form
+with a floor is a poor card checker" argument, written where an author can see
+it. `min_total` exists for a form whose floor cannot be expressed on a single
+field; this one's can.
+
+What this step added is the other three.
+
+**A token bucket keyed by address *and* form, not by form.** The plan says
+"per-IP and per-form token buckets", and the obvious reading — one bucket per
+address, one per form — is the wrong one. A bucket shared by every visitor to a
+form is a bucket a stranger can empty from one machine, and the person it
+refuses afterwards is the next real buyer. So the key is the pair: a visitor's
+allowance is their own, and spending it on one form leaves the others alone.
+IPv6 is bucketed by /64 rather than by address, because a household is
+allocated a /64 at its smallest and counting per address is counting one
+household as eighteen quintillion strangers.
+
+The numbers are in `embedapp.DefaultLimits`, written down in one place so that
+somebody who has watched the real traffic can re-make the judgement: ten
+submissions at once and then one every six seconds, and sixty page views at
+once and then one a second. Ten is far more than a person needs — three or four
+corrections is a bad day — and one every six seconds is nothing to a machine
+trying cards. The Back button is on the read allowance rather than the submit
+one, because it stores nothing and reaches nobody's API.
+
+`foundation/web.Limiter` is the buckets, and the part of it worth reading is
+the eviction. A limiter keyed by something an attacker chooses is a memory leak
+with a rate limit attached: a bucket that has refilled to full is
+indistinguishable from one never seen, so it is deleted, and if distinct keys
+arrive faster than they refill the least-recently-seen go. That does weaken the
+limit for whoever is evicted, and it is the right direction — the alternative
+is a process that runs out of memory, which refuses everybody.
+
+**An hourly ceiling that alerts and refuses nothing.** This is the per-form
+control, and it is deliberately not a limiter. A form taking two hundred
+submissions in an hour is either an attack or the best afternoon this service
+will ever have, and a limiter cannot tell the difference — so it writes one
+`Error` line, once per hour however far past the line the count goes, and lets
+every submission through. `foundation/alarm` is that shape and nothing else,
+and it is a separate package from the limiter precisely so that the two cannot
+be confused: one decides whether the request in front of it happens, the other
+decides whether somebody is told.
+
+The same shape watches declines. A run of `generic_decline` is what card
+testing looks like from this side, and the damage it does is a decline rate
+with card issuers that outlasts the testing — so `paybus` reads Stripe's
+decline code (the issuer's `decline_code` where there is one, its own `code`
+otherwise), logs one line per failure, and raises an `Error` naming the count
+when twenty fail in an hour. It refuses nothing either, for a sharper version
+of the same reason: stopping payments because payments are failing turns a wave
+of stolen cards into a closed shop, and blocking the cards is Stripe's job.
+Ours is to know while it is happening.
+
+**A content type allowlist of exactly one.** Every write here is a browser
+posting a form this service rendered, and there is no upload anywhere in it —
+so `application/x-www-form-urlencoded` is the whole list. What it buys on a
+route that can reach Stripe is that `ParseForm` also accepts
+`multipart/form-data`, which is the expensive parse, and refusing it before the
+handler runs means the only bodies this service ever parses are the ones the
+form can produce. It is mounted with the same-origin gate, handed to `embedapp`
+for its own routes rather than put on the chain, and the reason is the reason
+that arrangement exists at all: **the Stripe webhook is on that listener and
+posts JSON.** A 415 there would stop every payment being confirmed, silently,
+and `TestTheWebhookIsNotBehindTheFormBodyRules` is there to fail if anybody
+tightens the chain instead.
+
+**An owner-set daily cap, set on nothing.** `daily_cap` in a definition bounds
+a day's damage — rows, mail and Stripe objects created by something that got
+past the per-address limits — and the feast form deliberately does not set one.
+The number to write is far above any plausible real day rather than near it,
+and a cap set to what the event expects is a cap that turns a good afternoon
+into a closed form with nothing on the page to say why. The mechanism is here,
+tested, and one edit away for a form that wants it.
+
+Three details of the cap are deliberate. It is counted in `submissionbus`
+rather than in the validator, because counting what has already been stored is
+a question for storage and `formbus` has no database. It is a trailing
+twenty-four hours rather than a calendar day, so the rule needs no opinion
+about which midnight in which offset. And the count is taken before the insert
+rather than inside its transaction: two submissions in the same instant can
+both see the same count and both be accepted, which costs one row over the line
+on a bound whose whole purpose is an order of magnitude, and saves a second
+statement in the write path of a database with one writer.
+
+Left out, and named so it is not looked for: a CAPTCHA, which section 7.6 puts
+last because its origins would have to go into the CSP of a page that leads to
+a payment.
+
+### The housekeeping loop, which closes a gap named above
+
+"Still not built: a housekeeping loop" is now built. `submissionbus.PruneNonces`,
+`userbus.Prune` and `paybus.Forget` all existed and nothing called any of them,
+so three tables grew without bound on a shared host with a disk quota.
+
+`cmd/dropin-forms/housekeeping.go` runs all three every six hours, and once at
+startup before the first tick — a process restarted more often than the
+interval, which is what a deploy does, would otherwise never sweep at all. Each
+of the three keeps its own retention, because how long a spent grant nonce
+matters is a property of how long a grant lives and not a number to re-derive
+in a scheduler.
+
+Two small things it does on purpose. A failure in one sweep does not skip the
+other two: they are unrelated tables, and stopping at the first would let one
+stubborn error quietly switch off everything after it in the list. And the
+goroutine hands back a channel that `run` waits on after the listeners have
+stopped, so a `DELETE` in flight finishes before the database is closed —
+otherwise the last line of a clean shutdown is an alarming one, at exactly the
+moment somebody is reading the log to find out whether the deploy went well.
+
 ## 10. Dependencies
 
 A dependency needs a comment naming the standard-library answer that was

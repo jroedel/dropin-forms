@@ -326,6 +326,22 @@ type Form struct {
 	// Notify are addresses told about each submission, over and above the
 	// accounts holding the results role on this form.
 	Notify []string
+
+	// DailyCap is the most submissions this form will take in twenty-four
+	// hours. Zero, the usual answer, means no cap.
+	//
+	// It is an abuse control and not a stock level. What it bounds is a day's
+	// worth of damage from something automated -- rows, mail, and Stripe
+	// objects created by a script that got past the per-address limits -- and
+	// the number to write is therefore far above any plausible real day rather
+	// than near it. A cap set to what the event expects is a cap that turns a
+	// good afternoon into a closed form, with nothing on the page to say why.
+	//
+	// Left out of the fingerprint deliberately, on the same line ReturnURL is
+	// left out: it does not change what a submission means, so raising it in a
+	// hurry must not invalidate every half-filled form already open in
+	// somebody's browser.
+	DailyCap int
 }
 
 // Currencies this service will take. One, today. The list exists so that
@@ -431,6 +447,9 @@ func (f *Form) Check() error {
 
 	if f.MinPerOrder > 0 && len(f.Items) == 0 {
 		add("it requires at least %d of something and has nothing for sale", f.MinPerOrder)
+	}
+	if f.DailyCap < 0 {
+		add("its daily cap is negative; leave it out for no cap")
 	}
 	if f.MinTotal < 0 {
 		add("its minimum total is negative")

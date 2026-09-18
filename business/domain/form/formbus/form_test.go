@@ -786,6 +786,7 @@ func TestFingerprintTracksMeaningAndIgnoresPresentation(t *testing.T) {
 		{"the closed note", func(f *formbus.Form) { f.ClosedNote = "Sold out." }},
 		{"the wording of the payment note", func(f *formbus.Form) { f.PaymentNote = "Buy a ticket or give something." }},
 		{"who is notified", func(f *formbus.Form) { f.Notify = []string{"kitchen@example.org"} }},
+		{"the daily cap", func(f *formbus.Form) { f.DailyCap = 500 }},
 		{"the same instant in another offset", func(f *formbus.Form) {
 			f.ClosesAt = f.ClosesAt.In(time.FixedZone("CDT", -5*60*60))
 		}},
