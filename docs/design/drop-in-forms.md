@@ -1008,6 +1008,17 @@ submission identifier is required, because our metadata lives on the payment
 intent and a dispute's metadata is the dispute's own — checked in the other
 order, every chargeback would be swallowed as "an event about nothing".
 
+**Four events, not the three section 7.5 lists.** The plan named
+`checkout.session.completed`, `payment_intent.payment_failed` and
+`charge.dispute.created`; the code adds
+`checkout.session.async_payment_failed`, which is the delayed counterpart of
+the first and the reason the paragraph above can afford to say nothing when a
+completed session is not yet paid. Attaching fewer than four to the endpoint
+fails **silently** — the order never leaves `pending` and nothing anywhere says
+why — so the four are written out, with what each one does, beside
+`STRIPE_WEBHOOK_SECRET` in `secrets.env.example`, which is where somebody
+creating the endpoint is actually looking.
+
 **The webhook shares the embed listener, and an earlier draft of this section
 was wrong about why it could not.** That draft said a separate hostname was
 forced, because the embed surface refuses a cross-site POST and Stripe's
