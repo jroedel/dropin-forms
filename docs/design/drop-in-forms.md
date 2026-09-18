@@ -1008,6 +1008,17 @@ submission identifier is required, because our metadata lives on the payment
 intent and a dispute's metadata is the dispute's own — checked in the other
 order, every chargeback would be swallowed as "an event about nothing".
 
+**Four events, not the three section 7.5 lists.** The plan named
+`checkout.session.completed`, `payment_intent.payment_failed` and
+`charge.dispute.created`; the code adds
+`checkout.session.async_payment_failed`, which is the delayed counterpart of
+the first and the reason the paragraph above can afford to say nothing when a
+completed session is not yet paid. Attaching fewer than four to the endpoint
+fails **silently** — the order never leaves `pending` and nothing anywhere says
+why — so the four are written out, with what each one does, beside
+`STRIPE_WEBHOOK_SECRET` in `secrets.env.example`, which is where somebody
+creating the endpoint is actually looking.
+
 **The webhook shares the embed listener, and an earlier draft of this section
 was wrong about why it could not.** That draft said a separate hostname was
 forced, because the embed surface refuses a cross-site POST and Stripe's
@@ -1298,6 +1309,60 @@ The definition types should not foreclose it; nothing above builds it.
 - **A dress rehearsal before tickets go on sale**: seed the real form, buy a
   ticket with a live card at the real price, refund it in Stripe, then sign in to
   the management app and confirm the row is there and the CSV downloads.
+
+### Rehearsing after the keys are live
+
+The end-to-end test above is the only one that exercises the real page, the
+real frame, the real Squarespace nesting and the real webhook — so it is the
+one worth repeating, and after the switch to live keys it would charge a real
+card every time.
+
+So the sandbox keys stay in `secrets.env` alongside the live ones, as
+`STRIPE_TEST_SECRET_KEY`, `STRIPE_TEST_PUBLISHABLE_KEY` and
+`STRIPE_TEST_WEBHOOK_SECRET`, and `install` takes a mode:
+
+```sh
+make secrets-install-test     # config.toml with the sandbox keys
+deploy/deploy.sh restart      # startup says: payments test mode
+#   ... rehearse on the real page with 4242 4242 4242 4242 ...
+make secrets-install          # the live keys again
+deploy/deploy.sh restart      # startup says: payments LIVE
+```
+
+Four properties make this safe to do on the machine that sells the tickets,
+and each is asserted by `scripts/secrets-render-test.sh` rather than trusted:
+
+- **Nothing else in the config differs between the modes.** Same ports, same
+  origins, same grant key, same database. A rehearsal against a different
+  configuration is a rehearsal of something else.
+- **`render test` refuses a `STRIPE_TEST_SECRET_KEY` that is not `sk_test_`.**
+  That slot has one meaning, and a live key pasted into it would charge a real
+  card during a rehearsal. The other direction is deliberately *not* checked:
+  the `STRIPE_*` keys are whatever the installation runs on, and they were
+  sandbox keys until the day it went live.
+- **A spare key in `secrets.env` is inert.** The renderer writes named
+  settings one at a time and never loops over the file, which is what makes
+  keeping a second pair there free. It matters because `loadConfig` refuses a
+  config carrying a setting it does not understand, so a renderer that copied
+  every line would have turned a spare key into a service that will not start.
+- **Which mode is running is visible.** The binary reports `payments LIVE: real
+  cards will be charged` or `payments test mode` on startup and in `-check`,
+  and `deploy.sh` prints it — so a rehearsal left installed shows up in the
+  next deploy's output rather than in a bank statement.
+
+Both modes need **their own webhook endpoint** in Stripe, because an endpoint
+belongs to one mode. The same URL is created twice, once in the sandbox and
+once live, with the same four events attached to each, and each endpoint's
+`whsec_` lives in its own slot — so the key and the signing secret always move
+together and there is no way to end up with a live key checking sandbox
+signatures.
+
+Neither shell test can reach a server, and that is structural rather than
+careful: `ensure-main-test.sh` runs in a throwaway git repository with the
+script's dispatcher cut off, and the render test calls only `render`, whose
+whole contract is to print a config and touch nothing. `install` and `push`
+are never invoked by a test. They run in CI and under `make test`, which until
+now ran neither — a test nothing runs is a test you do not have.
 
 ### The postMessage resize channel
 
