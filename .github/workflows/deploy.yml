@@ -1,9 +1,39 @@
-# Ship to production, on a version tag.
+# Ship to production, on every push to main.
 #
-# A tag rather than every push to main, because a form that takes money should
-# go live when somebody decides it should. `make test` runs on every pull
-# request regardless, so this is not the only gate -- it is the moment of
-# choosing.
+# This reverses the original decision, which was tags-only on the grounds that
+# a form taking money should go live when somebody decides it should. What that
+# argument missed is where the deciding actually happens: nothing reaches main
+# except through a reviewed pull request, so the merge *is* the decision, and a
+# tag afterwards is a second ceremony for the same choice. Requiring both meant
+# every change waited on somebody being at a laptop -- which in practice is how
+# a fix sits unshipped for a day.
+#
+# Tags still deploy, and so does workflow_dispatch. Nothing was taken away.
+#
+# What still gates a release, so that "on push" is not the only thing standing
+# between a merge and production:
+#
+#   - ci.yml on the pull request, and `make test` again in this job, because a
+#     tag or a dispatch can name a commit CI never saw.
+#   - the loopback health check in deploy.sh, which rolls the binary back by
+#     itself when the new one does not answer.
+#   - the `production` environment below. If it has required reviewers, this
+#     waits for one -- which is how to get the old behaviour back for a single
+#     risky change without editing this file.
+#
+# Two things to know before relying on it:
+#
+#   - A pushed deploy ships the BINARY ONLY. There is no secrets.env in CI, so
+#     deploy.sh leaves the server's config.toml alone -- deliberately, because
+#     the Stripe keys, the SMTP password and the grant signing key must never
+#     pass through GitHub. A merge that introduces a *required* config key will
+#     therefore fail the pre-flight and swap nothing, which is safe but stalls
+#     until somebody runs `make secrets-install` from a laptop. That is not
+#     hypothetical: the [stripe] section was exactly such a change.
+#   - GitHub Actions minutes on this account have run out before. Deploying on
+#     every push spends more of them than tagging did, and a feast-week release
+#     that cannot run is a bad week to discover the quota. deploy/deploy.sh from
+#     a laptop is the fallback and needs nothing from GitHub.
 #
 # Be clear-eyed about what this workflow holds. The target is a konsoleH
 # account with no root, so there is no sudoers entry that can narrow the deploy
@@ -20,12 +50,17 @@ name: deploy
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 
-# Two deploys at once would race on the binary swap. Never cancel one in
-# flight: the dangerous moment is between `supervise.sh stop` and the rename,
-# and a cancelled job there leaves the service down.
+# Two deploys at once would race on the binary swap, and on push that is no
+# longer a theoretical case: merging two pull requests a minute apart starts
+# two. They queue.
+#
+# Never cancel one in flight, however tempting it looks when three are queued.
+# The dangerous moment is between `supervise.sh stop` and the rename, and a job
+# cancelled there leaves the service down with no binary in place.
 concurrency:
   group: deploy-production
   cancel-in-progress: false
