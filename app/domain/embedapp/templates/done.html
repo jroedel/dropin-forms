@@ -65,7 +65,7 @@ Nothing has been charged. Please get in touch and we will take the payment anoth
 
      Second in the document and quieter than the payment button on purpose.
      One of these two actions is what almost everybody wants. */}}
-<form class="back" method="post" action="/f/{{.Form.ID}}/edit">
+<form class="back" method="post" action="{{.BackTo}}">
 {{range .Answers}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">
 {{end}}<button class="go quiet" type="submit">Back</button>
 </form>

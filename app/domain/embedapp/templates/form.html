@@ -22,7 +22,7 @@
      explains. */}}
 <p class="problem" data-live-summary aria-live="polite"></p>
 
-<form method="post" action="/f/{{.Form.ID}}" data-dropin-form>
+<form method="post" action="{{.Action}}" data-dropin-form>
 <input type="hidden" name="_grant" value="{{.Grant}}">
 
 {{range $fld := .Fields}}

@@ -1130,6 +1130,50 @@ Section 7.5 above still describes the webhook as needing "its own
 surface's 64 KiB, because an event embeds the whole object it is about and too
 small a cap produces a signature that cannot verify against a truncated body.
 
+### The form has no background of its own
+
+Asked to match the shrine's page colour, and the better answer is to have no
+colour to match.
+
+A cross-origin iframe whose document sets no background is drawn transparent,
+and what shows through is the host page. So the embedded form's `body` is
+`background: transparent`, its panels tint what is behind them rather than
+painting over it — `--tint` is black at four per cent, not a grey — and only
+the fields keep a solid surface, because an input should look like something
+you write in. The two callout tints became washes of their own colour for the
+same reason.
+
+Before this, `--paper` was a near-white, which rendered as a white card in the
+middle of a cream Squarespace page: the form announced itself as a foreign
+object, which is the opposite of dropping in. Matching the colour instead would
+have meant a value in our CSS that has to be kept in step with a theme setting
+somebody can re-tweak in an afternoon, and a re-deploy when they do.
+
+The limit of this, which is the same limit the no-dark-mode decision already
+has: the ink is dark, so a **dark** host page would need the per-form palette
+that is Track B's answer. A Squarespace template is light whatever the visitor's
+operating system prefers, and `color-scheme: light` is load-bearing for that
+reason — without it the browser draws the controls themselves in dark widget
+colours over light backgrounds.
+
+### One parameter, dropped, and a tall empty box
+
+Every page of the embed surface learns which origin it may post its height to
+from a single query parameter, and from nothing else: the surface sends
+`Referrer-Policy: no-referrer`, so there is no referrer to read, and it is
+cookie-free by construction, so there is nowhere to keep it. The form page had
+it. **Its own POST target did not.**
+
+So the confirmation that POST rendered knew no parent, never posted its height,
+and the frame kept whatever height the form had had — a short receipt at the
+top of a tall empty box, which is what a screenshot of the live page showed.
+Nothing logged, nothing answered 500, and the right content was on the page.
+
+`withParent` now adds it to every address this app hands out, and
+`TestEveryPageCanTellTheFrameHowTallItIs` asserts it survives each hop: form →
+POST → confirmation → Back → form. Confirmed by reverting the template, which
+fails two of its assertions.
+
 ## 10. Dependencies
 
 A dependency needs a comment naming the standard-library answer that was
