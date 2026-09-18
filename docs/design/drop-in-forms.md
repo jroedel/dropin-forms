@@ -1521,12 +1521,20 @@ So the sandbox keys stay in `secrets.env` alongside the live ones, as
 `STRIPE_TEST_WEBHOOK_SECRET`, and `install` takes a mode:
 
 ```sh
-make secrets-install-test     # config.toml with the sandbox keys
-deploy/deploy.sh restart      # startup says: payments test mode
+make secrets-install-test     # sandbox keys, and a restart: payments test mode
 #   ... rehearse on the real page with 4242 4242 4242 4242 ...
-make secrets-install          # the live keys again
-deploy/deploy.sh restart      # startup says: payments LIVE
+make secrets-install          # the live keys again, and a restart: payments LIVE
 ```
+
+`install` restarts rather than printing the command to restart, and that is
+worth a sentence because it was two commands here first. The running process
+holds its settings in memory, so between the two the config on disk and the
+service disagree -- and the way that bites is exactly this dance: forget the
+restart after the *second* install and the sandbox keys are still running on
+the machine selling the tickets. Every real card is then charged in test mode,
+no money arrives, and every order stays pending with nothing anywhere saying
+why. There is no flag to skip the restart, because a config staged and not
+applied is the state this was producing by accident.
 
 Four properties make this safe to do on the machine that sells the tickets,
 and each is asserted by `scripts/secrets-render-test.sh` rather than trusted:

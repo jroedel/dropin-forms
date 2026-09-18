@@ -66,10 +66,16 @@ require() { command -v "$1" >/dev/null 2>&1 || die "$1 is required but not insta
 
 # --- configuration ----------------------------------------------------------
 
-if [ -f "$REPO_DIR/secrets.env" ]; then
+# SECRETS_ENV, like scripts/secrets, so that the two agree on which file is
+# "the" secrets file. They now call each other -- `scripts/secrets install`
+# ends by restarting through this script -- and reading two different files
+# would mean installing one server's config and restarting another's.
+SECRETS_ENV="${SECRETS_ENV:-$REPO_DIR/secrets.env}"
+
+if [ -f "$SECRETS_ENV" ]; then
 	set -a
 	# shellcheck disable=SC1091
-	. "$REPO_DIR/secrets.env"
+	. "$SECRETS_ENV"
 	set +a
 fi
 
