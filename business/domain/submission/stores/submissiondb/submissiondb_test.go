@@ -532,3 +532,53 @@ func TestCountSinceCountsOneFormsRecentRows(t *testing.T) {
 		t.Errorf("CountSince on an unused form = %d, want 0", none)
 	}
 }
+
+func TestUnpaidFindsOrdersInsideTheWindowOnly(t *testing.T) {
+	_, store := open(t)
+
+	write := func(status submissionbus.Status, at time.Time) types.ID {
+		t.Helper()
+
+		s := sample(t)
+		s.ID = types.NewID()
+		s.Status = status
+		s.CreatedAt = at
+		s.UpdatedAt = at
+
+		ok, err := store.Accept(t.Context(), s, s.ID.String())
+		if err != nil || !ok {
+			t.Fatalf("Accept: ok=%v err=%v", ok, err)
+		}
+
+		return s.ID
+	}
+
+	old := write(submissionbus.StatusPending, now.Add(-72*time.Hour))
+	older := write(submissionbus.StatusPending, now.Add(-48*time.Hour))
+
+	// Inside the grace period: somebody typing a card number, not gone.
+	write(submissionbus.StatusPending, now.Add(-10*time.Minute))
+
+	// Before the floor, which is what stops a restored database mailing the
+	// office about every order anybody ever abandoned.
+	write(submissionbus.StatusPending, now.Add(-90*24*time.Hour))
+
+	// Settled, in both the ways a submission can be.
+	write(submissionbus.StatusPaid, now.Add(-48*time.Hour))
+	write(submissionbus.StatusReceived, now.Add(-48*time.Hour))
+
+	got, err := store.Unpaid(t.Context(), now.Add(-30*24*time.Hour), now.Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("Unpaid: %v", err)
+	}
+
+	if len(got) != 2 {
+		t.Fatalf("Unpaid returned %d rows, want the two pending ones inside the window", len(got))
+	}
+
+	// Oldest first, because the list goes into a message somebody reads top to
+	// bottom and the one that has been waiting longest matters most.
+	if got[0].ID != old || got[1].ID != older {
+		t.Errorf("Unpaid returned them out of order: %v, %v", got[0].CreatedAt, got[1].CreatedAt)
+	}
+}

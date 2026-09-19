@@ -1449,6 +1449,63 @@ The forms list carries the state as a column, because "am I getting these" is a
 question asked while looking at that page, and it is the one thing on it that
 is about the reader rather than about the form.
 
+### Orders that were started and never paid for
+
+The notification step had a hole in it that took a while to name. Stripe sends
+an event when a payment succeeds and an event when one fails, and **nothing at
+all when somebody closes the checkout tab**. `checkout.session.expired` is not
+one of the four events this endpoint subscribes to, and even with it the notice
+would arrive a day later. So an abandoned order sat `pending` in the management
+app and waited to be noticed by somebody who thought to look.
+
+That is a quiet failure mode by nature, and the quiet part is the dangerous
+one: **a payment step that has broken entirely looks exactly like an afternoon
+when nobody bought anything.** Both are an empty inbox.
+
+`notifybus.ReportUnpaid` closes it, on a timer rather than on a request.
+
+**Nothing is sent at the time, and that part has not changed.** Somebody who
+has just been handed a payment page has not finished, and an email saying "we
+have your order" arriving while they are still typing their card number would
+either read as a receipt or as a reason to stop. The grace period is an hour:
+somebody four minutes in is typing a card number, somebody who was going to
+finish has finished. The sweep runs hourly, so an abandoned order is reported
+between one and two hours later.
+
+**One message per form, not one per order.** An abandoned order is worth
+knowing about and is not worth an email of its own. The message lists what has
+been sitting there -- when, who, how much, and a link to each -- and says
+plainly that nothing has been charged, because the first question a message
+like this provokes is "have we been paid or not" and the second is "is
+something broken".
+
+**The submitter is told nothing, ever.** They did not pay, they may well have
+meant not to, and chasing them is not this service's business.
+
+**Each order is reported once**, and `unpaid_notices` is what makes that true.
+An unpaid order stays unpaid forever, so without a record of what has been said
+the office would hear about the same one every hour until they stopped reading
+these messages -- which would cost them the ones that matter. The claim is a
+single `INSERT ... ON CONFLICT DO NOTHING` that reports whether it inserted,
+the same shape `userbus` uses for its single-use credentials, so a restart
+cannot land between "has this been reported" and "record that it has".
+
+**The order of operations is recipients, then claim, then send**, and the first
+two are that way round deliberately. Claiming before knowing there is anybody
+to tell would spend the one notice an order gets on a service whose
+notification list happens to be empty, and the day somebody was finally given
+the form they would hear about none of it. Claiming before *sending*, on the
+other hand, is the right way round: a send that fails costs one message and a
+loud line in the log, where a claim that fails would cost a message an hour
+forever.
+
+**Two bounds on how far back it looks.** The upper one is the grace period. The
+lower is a floor of thirty days, and it exists for the day somebody restores a
+database without the ledger: unbounded, the next sweep would mail the office
+about every order anybody ever abandoned. The notices are pruned at ninety
+days, which has to stay longer than that floor -- forget a notice while the
+order it names is still in the window and the next sweep sends it again.
+
 ### Giving somebody access, as built
 
 The notification step made a promise the service could not keep. Submissions go

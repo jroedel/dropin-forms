@@ -126,6 +126,117 @@ func (b *Business) forOffice(f formbus.Form, sub submissionbus.Submission, paid 
 	return mail.Message{Subject: subject, Text: body.String()}
 }
 
+// forUnpaid is the message about orders that were started and never paid for.
+//
+// One message listing all of them rather than one per order, and that is the
+// whole reason this is a sweep and not a notification. An abandoned order is
+// worth knowing about and is not worth an email of its own: the office wants
+// to know that three are sitting there, which is a sentence, not an inbox.
+func (b *Business) forUnpaid(f formbus.Form, subs []submissionbus.Submission, to recipient) mail.Message {
+	var body strings.Builder
+
+	fmt.Fprintf(&body, "%s for %q %s started and %s not been paid for.\n\n",
+		sentenceCase(count(len(subs), "order", "orders")),
+		f.Title,
+		was(len(subs)),
+		have(len(subs)))
+
+	for _, sub := range subs {
+		who := sub.Email.String()
+		if name, ok := sub.Answers.Field("name"); ok && name.Value() != "" {
+			who = name.Value()
+			if sub.Email.String() != "" {
+				who += " <" + sub.Email.String() + ">"
+			}
+		}
+
+		if who == "" {
+			// A form that asks for neither a name nor an address. The time and
+			// the total are still worth a line: what this message is for is
+			// noticing that orders are piling up.
+			who = "somebody"
+		}
+
+		fmt.Fprintf(&body, "  %s -- %s -- %s\n",
+			b.when(sub.CreatedAt), who, formbus.Show(sub.Answers.Total, f.Currency))
+
+		if link := b.link(sub); link != "" {
+			fmt.Fprintf(&body, "    %s\n", link)
+		}
+	}
+
+	body.WriteString("\n")
+
+	// Said plainly, because the first reading of a message like this is "have
+	// we been paid or not", and the second is "is something broken".
+	body.WriteString("Nothing has been charged for any of these. Somebody who closes the " +
+		"payment page before finishing leaves one behind, which is ordinary -- but " +
+		"several at once, or one on a form that is usually paid straight away, is " +
+		"worth checking.\n\n")
+
+	body.WriteString("Each order is reported here once. If one of them is paid later you " +
+		"will get the usual note saying so.\n")
+
+	body.WriteString("\n")
+	body.WriteString(b.why(f, to))
+
+	return mail.Message{
+		Subject: fmt.Sprintf("Started and not paid, %s: %s", count(len(subs), "order", "orders"), f.Title),
+		Text:    body.String(),
+	}
+}
+
+// count writes a small number as a word, the way a person would.
+//
+// Up to ten, because beyond that the numeral reads better and because the
+// point of the sentence changes: "three orders" is a note and "27 orders" is
+// something being looked up.
+func count(n int, one, many string) string {
+	words := []string{"no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"}
+
+	name := many
+	if n == 1 {
+		name = one
+	}
+
+	if n >= 0 && n < len(words) {
+		return words[n] + " " + name
+	}
+
+	return fmt.Sprintf("%d %s", n, name)
+}
+
+// sentenceCase capitalises the first letter, for the one place a count begins
+// a sentence. strings.ToUpper on the first rune rather than on the first byte,
+// because the words above are ASCII today and a helper that quietly mangles
+// anything else is a trap for whoever adds the eleventh.
+func sentenceCase(s string) string {
+	r := []rune(s)
+	if len(r) == 0 {
+		return s
+	}
+
+	return strings.ToUpper(string(r[0])) + string(r[1:])
+}
+
+// was and have agree with the count above. Two tiny functions rather than one
+// conditional inside the format string, which is harder to read than either.
+func was(n int) string {
+	if n == 1 {
+		return "was"
+	}
+
+	return "were"
+}
+
+func have(n int) string {
+	if n == 1 {
+		return "has"
+	}
+
+	return "have"
+}
+
 // why is the last line of an office notification: what put this address on the
 // list, and what to do about it.
 //

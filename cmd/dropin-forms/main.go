@@ -226,6 +226,7 @@ func run() error {
 		Grants:       access,
 		Accounts:     users,
 		Mutes:        notifydb.NewStore(db),
+		Reports:      notifydb.NewStore(db),
 		MuteKey:      muteKey,
 		Office:       cfg.Mail.Notify,
 		AdminBaseURL: cfg.Server.AdminBaseURL,
@@ -335,7 +336,16 @@ func run() error {
 		submissions: submissions,
 		users:       users,
 		payments:    payments,
+		notify:      notifier,
 	}.start(ctx)
+
+	// And the one sweep that sends mail rather than deleting rows: orders that
+	// were started and never paid for. Stripe reports a payment that fails and
+	// a payment that succeeds, and says nothing at all about a checkout page
+	// somebody closed -- so without this an abandoned order waits in the
+	// management app to be noticed, and a payment step that has stopped
+	// working looks exactly like an afternoon when nobody bought anything.
+	reported := unpaidWatch{notify: notifier}.start(ctx)
 
 	// Two listeners, not three. The webhook lives on the embed one, mounted
 	// outside its origin gate -- see muxer.Embed for why that is the whole of
@@ -346,6 +356,7 @@ func run() error {
 	)
 
 	<-swept
+	<-reported
 
 	return err
 }

@@ -1,4 +1,5 @@
-// Package notifydb stores who has turned off email about which form.
+// Package notifydb stores who has turned off email about which form, and what
+// the office has already been told.
 //
 // One row per (account, form), and a row means silence. The default is
 // therefore "notify me", which is the important half: somebody given the job
@@ -23,7 +24,7 @@ import (
 	"github.com/jroedel/dropin-forms/foundation/sqldb"
 )
 
-// Store is the SQLite implementation of notifybus.Mutes.
+// Store is the SQLite implementation of notifybus.Mutes and notifybus.Reports.
 type Store struct {
 	db *sql.DB
 }
@@ -35,6 +36,7 @@ func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 // will read.
 var Expected = sqldb.Expected{
 	"notification_mutes": {"user_id", "form_slug", "muted_at"},
+	"unpaid_notices":     {"submission_id", "sent_at"},
 }
 
 // Init creates this domain's table. Idempotent, and run at every startup.
@@ -57,10 +59,33 @@ CREATE TABLE IF NOT EXISTS notification_mutes (
 -- exists is inert and costs nothing.
 
 CREATE INDEX IF NOT EXISTS notification_mutes_form ON notification_mutes (form_slug);
+
+-- One row per order the office has been told was started and never paid for.
+--
+-- This table is what stops the same order being reported every hour until
+-- somebody deals with it. The primary key is the whole mechanism: claiming a
+-- notice is an INSERT that either inserts or does not, so "has this been
+-- reported" and "record that it has" are one statement rather than a read
+-- followed by a write that a restart can land between.
+--
+-- Losing it costs one repeated message per order still unpaid inside the
+-- window submissionbus.Unpaid looks at, which is why that window has a floor.
+CREATE TABLE IF NOT EXISTS unpaid_notices (
+    submission_id  TEXT    PRIMARY KEY,
+    sent_at        INTEGER NOT NULL
+) STRICT;
+
+-- No foreign key on submission_id, unlike user_id above, and the difference is
+-- worth the line. A preference is meaningless without the account that set it,
+-- so that one cascades. Nothing deletes a submission -- there is no path in
+-- this service that does -- so a reference here would buy nothing, and it
+-- would make this domain's Init depend on another domain's having run first.
+
+CREATE INDEX IF NOT EXISTS unpaid_notices_sent_at ON unpaid_notices (sent_at);
 `
 
 	if _, err := db.ExecContext(ctx, schema); err != nil {
-		return fmt.Errorf("creating the notification preference table: %w", err)
+		return fmt.Errorf("creating the notification tables: %w", err)
 	}
 
 	return nil
@@ -183,6 +208,53 @@ func (s *Store) Unmute(ctx context.Context, userID types.ID, form types.Slug) er
 
 	if _, err := s.db.ExecContext(ctx, q, userID.String(), form.String()); err != nil {
 		return fmt.Errorf("clearing the notification preference: %w", err)
+	}
+
+	return nil
+}
+
+// ClaimUnpaidNotice records that the office is being told about an unpaid
+// order, and reports false if it already has been.
+//
+// A single atomic claim, in the shape userbus uses for its single-use
+// credentials and for the same reason: a SELECT followed by an INSERT is two
+// statements a restart can land between, and the visible consequence here is
+// the office getting the same message every hour.
+//
+// Claimed before the message is sent rather than after. Both orders lose
+// something -- this one loses a notice when the relay is down, and the other
+// repeats one every hour until the write succeeds. A missing message is a
+// loud line in the log; a message that arrives hourly forever is how somebody
+// decides these notifications are not worth reading.
+func (s *Store) ClaimUnpaidNotice(ctx context.Context, id types.ID, at time.Time) (bool, error) {
+	const q = `
+INSERT INTO unpaid_notices (submission_id, sent_at)
+VALUES (?, ?)
+ON CONFLICT (submission_id) DO NOTHING`
+
+	res, err := s.db.ExecContext(ctx, q, id.String(), at.UTC().UnixMilli())
+	if err != nil {
+		return false, fmt.Errorf("claiming the unpaid notice: %w", err)
+	}
+
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("claiming the unpaid notice: %w", err)
+	}
+
+	return n == 1, nil
+}
+
+// ForgetUnpaidNotices drops the record of what has been reported, for orders
+// old enough that nothing will look at them again.
+//
+// The retention has to be longer than the window submissionbus.Unpaid
+// considers, or forgetting a notice would be the same as re-sending it.
+func (s *Store) ForgetUnpaidNotices(ctx context.Context, before time.Time) error {
+	const q = `DELETE FROM unpaid_notices WHERE sent_at < ?`
+
+	if _, err := s.db.ExecContext(ctx, q, before.UTC().UnixMilli()); err != nil {
+		return fmt.Errorf("forgetting the unpaid notices: %w", err)
 	}
 
 	return nil
