@@ -26,7 +26,26 @@
 {{if .Name}}{{.Name}}<br><span class="ref">{{.Email}}</span>{{else}}{{.Email}}{{end}}
 {{if .You}} <span class="ref">(you)</span>{{end}}
 </th>
-<td>{{.Role}}{{if .SiteWide}} <span class="ref">site-wide</span>{{end}}</td>
+<td>
+{{/* The role, as a control where it is one the page may change. Two rows get
+     the plain word instead, and they are the two with no remove button: your
+     own, and a site-wide grant. A select with a Save beside it rather than one
+     that submits on change, because this surface has no script to submit
+     with -- and because a role changing the instant a thumb brushes a dropdown
+     is not what anybody meant. */}}
+{{if .Choices}}
+<form method="post" action="/forms/{{$.FormID}}/people/role" class="inline role">
+  <input type="hidden" name="user" value="{{.UserID}}">
+  <label class="visually-hidden" for="role-{{.UserID}}">What {{if .Name}}{{.Name}}{{else}}{{.Email}}{{end}} may do</label>
+  <select id="role-{{.UserID}}" name="role">
+    {{range .Choices}}<option value="{{.Value}}" {{if .Selected}}selected{{end}}>{{.Value}}</option>{{end}}
+  </select>
+  <button type="submit" class="quiet">Save</button>
+</form>
+{{else}}
+{{.Role}}{{if .SiteWide}} <span class="ref">site-wide</span>{{end}}
+{{end}}
+</td>
 {{if $.Email}}<td>{{if .Emailed}}yes{{else}}no{{end}}</td>{{end}}
 <td>{{.Since}}</td>
 <td>
@@ -59,6 +78,9 @@
 unless they have turned that off for themselves, which they can do from the
 bottom of any one of those emails.</p>
 {{end}}
+
+<p class="help">To change what somebody already has, use the dropdown on their
+row. Adding an address that already appears above does the same thing.</p>
 
 <h2>Give somebody access</h2>
 

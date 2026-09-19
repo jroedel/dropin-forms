@@ -1587,6 +1587,35 @@ rather than one per row, which is the same shape the notifier uses and for the
 same reason. Together with the unsubscribe page, that makes "why am I the only
 one getting these" a question with an answer somebody can look up.
 
+**Changing a role was possible and undiscoverable**, which issue #29 found by
+asking whether it was possible at all. The "Give somebody access" form is an
+upsert on (account, form), so re-typing an address with a different role always
+worked — and nothing said so, the person was already in the table above, and
+the heading invited you to do a thing you had already done. There is now a role
+control on each person's row, which is where somebody looks for it. The old
+path still works and the page says it does.
+
+Two rows have no control, and they are the two with no remove button: your own,
+and a site-wide grant. The reasons are the ones revoke already gives.
+
+**And a refusal that was missing.** `revoke` has always refused to remove your
+own access, on the grounds that it locks you out of the page you are standing
+on. The add form did not refuse the same thing done by degree — type your own
+address, pick `results`, and the next request is a 403. That mattered more once
+there were three roles, because choosing the middle one for yourself looks like
+a smaller act than removing your own access and locks you out just as hard. It
+is refused on both paths now. A site-wide administrator would in fact have
+survived it, since `Allowed` consults the form's grant and then the site-wide
+one and deliberately does not stop at the first; telling the two apart would
+mean a second lookup to permit something nobody wants to do, so both are
+refused and told the same thing.
+
+**A role change sends no mail**, and that is a gap rather than a decision to be
+proud of. An invitation is the wrong message for a change of degree — "You have
+been given an account" to somebody who has had one for a month — and a second
+template was more than the change was worth. What would be right is a short
+note saying what changed.
+
 ### The visual builder, as built
 
 Step 12, and the one that makes this repository reusable rather than
