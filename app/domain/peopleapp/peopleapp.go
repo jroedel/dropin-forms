@@ -518,8 +518,10 @@ func describe(r accessbus.Role) string {
 	switch r {
 	case accessbus.RoleResults:
 		return "Read the submissions and download them"
+	case accessbus.RoleDoor:
+		return "Read the submissions, and work the will-call table"
 	case accessbus.RoleAdmin:
-		return "Read the submissions, and manage who else can"
+		return "Read the submissions, work the table, edit the form, and manage who else can"
 	default:
 		return r.String()
 	}
@@ -527,11 +529,14 @@ func describe(r accessbus.Role) string {
 
 // verb is how a granted role reads in a sentence about a person.
 func verb(r accessbus.Role) string {
-	if r == accessbus.RoleAdmin {
+	switch r {
+	case accessbus.RoleAdmin:
 		return "read and manage"
+	case accessbus.RoleDoor:
+		return "read, and hand out tokens for"
+	default:
+		return "read"
 	}
-
-	return "read"
 }
 
 // invite is the message somebody gets when they are given a form.
@@ -546,7 +551,10 @@ func (a app) invite(u userbus.User, f formbus.Form, role accessbus.Role, created
 
 	b.WriteString("You can read its submissions")
 
-	if role == accessbus.RoleAdmin {
+	switch role {
+	case accessbus.RoleDoor:
+		b.WriteString(", and check people off at the will-call table")
+	case accessbus.RoleAdmin:
 		b.WriteString(", and decide who else can")
 	}
 

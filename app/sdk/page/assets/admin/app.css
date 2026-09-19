@@ -476,3 +476,87 @@ code {
 }
 
 h3 { font-size: 1rem; margin: 1.5rem 0 0.5rem; }
+
+/* --- the will-call table -------------------------------------------------
+
+   Added with app/domain/willcallapp. The one page in this app with a known
+   device and a known posture: a phone, held in one hand, at a table, by
+   somebody who is also talking to the person in front of them. So the tap
+   targets are large, the row that matters is the one that is not greyed out,
+   and nothing here depends on hover. */
+
+.search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+
+.search label {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.search input[type="search"] {
+  flex: 1 1 12rem;
+  min-width: 0;
+  padding: 0.55rem 0.6rem;
+  font: inherit;
+  color: inherit;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+/* A row already handed over. Greyed rather than hidden, because the question
+   at the table is as often "did we already give this one out" as it is "who
+   is next" -- and a row that vanished on being tapped would make an accidental
+   tap impossible to find and undo. */
+.will-call tr.done th,
+.will-call tr.done td {
+  color: var(--muted);
+}
+
+.will-call tr.done th[scope="row"] {
+  text-decoration: line-through;
+  text-decoration-color: var(--rule);
+}
+
+/* How many tokens to count into somebody's hand. The one number on the page
+   that is read aloud, so it is the one thing set larger than the prose. */
+.tally {
+  display: inline-block;
+  min-width: 2.2rem;
+  padding: 0.1rem 0.5rem;
+  margin: 0.2rem 0 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  background: var(--tint);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+.will-call tr.done .tally {
+  background: transparent;
+}
+
+/* A thumb, not a mouse. 44px is the usual floor for a touch target and these
+   buttons are the only thing on the page anybody taps in a hurry. */
+.will-call button {
+  min-height: 44px;
+  padding: 0.6rem 0.9rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 34rem) {
+  /* The name wraps here, unlike every other listing: a row heading that
+     refuses to wrap would push the Hand over button off a phone screen, and
+     that button is the whole page. */
+  .will-call th[scope="row"] { white-space: normal; }
+
+  .will-call th,
+  .will-call td { padding: 0.6rem 0.35rem; }
+}

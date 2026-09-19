@@ -19,6 +19,7 @@ import (
 	"github.com/jroedel/dropin-forms/app/domain/notifyapp"
 	"github.com/jroedel/dropin-forms/app/domain/peopleapp"
 	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
+	"github.com/jroedel/dropin-forms/app/domain/willcallapp"
 	"github.com/jroedel/dropin-forms/app/sdk/mid"
 	"github.com/jroedel/dropin-forms/app/sdk/muxer"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
@@ -60,6 +61,11 @@ type harness struct {
 	// every other test on this harness reads its forms the way production
 	// does, through the catalogue rather than straight out of the file store.
 	catalogue *formbus.Business
+
+	// orders is the submission domain over the same database, so a test can
+	// seed a paid order for the will-call table without going through a
+	// payment.
+	orders *submissionbus.Business
 }
 
 func newAdmin(t *testing.T, bootstrap string) harness {
@@ -99,7 +105,7 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 
 	renderer, err := page.NewRenderer(log, page.AdminChrome(),
 		authapp.Templates, submissionapp.Templates, notifyapp.Templates, peopleapp.Templates,
-		formapp.Templates)
+		formapp.Templates, willcallapp.Templates)
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
 	}
@@ -156,6 +162,7 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 		Users:        users,
 		Access:       access,
 		Submissions:  submissions,
+		Table:        submissions,
 		Forms:        catalogue,
 		Builder:      catalogue,
 		EmbedBaseURL: "https://f.forms.test",
@@ -171,7 +178,7 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 
 	return harness{
 		h: h, users: users, access: access, sent: sent,
-		notify: notifier, muteKey: muteKey, catalogue: catalogue,
+		notify: notifier, muteKey: muteKey, catalogue: catalogue, orders: submissions,
 	}
 }
 

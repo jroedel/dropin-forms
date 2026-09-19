@@ -873,9 +873,18 @@ The gate also refuses, loudly and in the log, when it is mounted without
 mounting mistakes, and a gate whose absent input makes it a silent no-op is
 precisely the trap the parent project's `RequireFormToken` set — §5.3.
 
-**There is no UI for granting yet.** Until there is, the bootstrap account is
-the only account with access, which is enough for October — one person reads
-the lunch numbers — and it is the first thing `formapp` needs in Track B.
+**There was no UI for granting when this was written**, and there is now:
+`peopleapp`, step 11. The sentence that stood here said the bootstrap account
+was the only one with access and that one person reading the lunch numbers was
+enough for October. Both halves stopped being true — the second first, when the
+will-call table turned out to need two people with phones — and it is left
+visible rather than deleted because an assumption that expires is worth being
+able to find again.
+
+**There are three roles, not two.** `results` reads and changes nothing;
+`door` also marks an order collected at the will-call table; `admin` also edits
+the form and decides who else may have it. The middle one is new, and "The
+will-call table, as built" below says why neither of its neighbours would do.
 
 ### The embedded form, as built
 
@@ -1710,6 +1719,95 @@ into an email nobody can sign in without, and this one makes one page more
 useful. Requiring it would mean an installation predating the setting refuses
 to start. Without it the builder names the setting rather than printing a
 snippet with a guessed host, which would fail silently on somebody else's page.
+
+### The will-call table, as built
+
+Issue #24, and the first requirement in this repository that came from
+standing somewhere rather than from the design. Two volunteers work a table at
+the Shrine from eight until Mass on the day of the feast, handing one physical
+token per ticket to people holding a receipt email. The thing that makes it
+more than a printout: **people in the queue buy on their phones while
+queuing**, so a list exported that morning is wrong by the time the queue
+forms.
+
+**Three of the issue's premises had moved by the time it was built**, and they
+are worth recording because two of them moved *because* of work done after it
+was filed.
+
+- It says there is no way to give the two volunteers access, and asks for
+  grants inserted by hand. `peopleapp` shipped in step 11; the granting UI
+  exists, and nobody needs SQL.
+- It offers "an `admin`-only action" as one of two acceptable answers. That was
+  reasonable when `admin` meant reading submissions and managing people. Since
+  the builder shipped it also means editing the form and setting the ticket
+  price, so handing it to two volunteers on their phones on the morning the
+  tickets are sold is a materially worse trade than it was.
+- It asks for a poll every ten seconds. There is no `script-src` on this
+  surface at all, so a poll is not available and was never going to be.
+
+**So there is a third role**, `door`, between `results` and `admin`.
+`accessbus.roles` is an ordered chain whose own comment says adding a role
+means putting it in the right place rather than editing a comparison — which
+is exactly what it took. The alternative the issue names, letting `results`
+write this one field, is refused on the issue's own grounds: the read/write
+boundary the roles were drawn on stops being true, and nothing enforces it
+again.
+
+**Collected is a row in its own table, not a column on the submission.**
+`submissionbus` opens by saying a submission is immutable apart from its
+status, and this is not a payment status — it is a fact about a morning. The
+primary key on `submission_id` is the whole of the once-only property, the same
+mechanism `spent_grants` uses: two volunteers tapping the same order from two
+phones is a constraint violation rather than a check either of them has to
+remember, and the one that lost is told who got there first rather than shown
+a failure. That is also the answer to "who checked off what", which the issue
+names as the thing a single shared account would lose on the one surface where
+it is the point.
+
+**Only a settled order can be collected.** An order that still owes money is
+somebody who reached the checkout page and closed it, and handing them a plate
+is the mistake the list exists to prevent — not something a volunteer can be
+expected to catch while a queue waits. `Status.Settled` is the existing word
+and is reused rather than restated, so a free sign-up run through the same
+table would work.
+
+**Undo is one button and is not restricted to whoever marked it.** The mis-tap
+is certain: a phone, a queue, a list of names that look alike. The two people
+are working one queue, and a correction only its author could make is one that
+waits for them to come back from the car park. Who marked it is still
+recorded, and the page shows it.
+
+**"Live" is `<meta http-equiv="refresh">`.** No CSP directive governs it, it
+needs no script, and it works on a phone with one bar of signal, which the car
+park has. Two things follow and both are load-bearing. Every write redirects
+rather than rendering, because a page rendered in answer to a POST would be
+re-submitted by the reload a few seconds later — so the sentence that reports
+an outcome travels in the query string, which is the only place left for it.
+And the refresh carries the current search, because a filter silently cleared
+every ten seconds is worse than no filter; there is a pause link for somebody
+who is typing, since a meta refresh will interrupt that and nothing can stop it
+mid-keystroke.
+
+**It is its own app rather than a page of `submissionapp`.** It reads the same
+rows and everything else about it differs: a different role, it writes, it
+refreshes, and it shows one line per order rather than one column per field.
+Folding it in would have cost that package the property its own comment states
+— "Read-only: nothing here changes a submission" — and a sentence like that
+stops being true silently.
+
+**The id in the path is checked against the form in the path.** The gate
+authorises the account against the slug; the submission id is a separate
+wildcard that nothing has looked at. Without that check somebody who works one
+form's table could collect an order on a form they hold nothing on, by editing
+a URL. It answers 404 rather than 403, because whether a submission exists on
+some other form is not that reader's business.
+
+**What this deliberately does not do**, per the scope the form owner asked
+for: no printed fallback, no per-volunteer statistics, and no change to how the
+ticket price rises on 10 October. That stays one edit to `price` in
+`forms/feast-lunch-2026.toml` and a deploy — the feast form ships in the binary
+and the builder refuses to edit a built-in, so §13's settled decision is
+untouched and still the only way it happens.
 
 ## 10. Dependencies
 

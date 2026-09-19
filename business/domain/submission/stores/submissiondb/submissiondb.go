@@ -59,6 +59,7 @@ func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 var Expected = sqldb.Expected{
 	"submissions":  {"id", "form_slug", "version", "status", "answers", "email", "total", "currency", "remote_ip", "payment_ref", "created_at", "updated_at"},
 	"spent_grants": {"nonce", "form_slug", "spent_at"},
+	"collections":  {"submission_id", "form_slug", "collected_at", "collected_by"},
 }
 
 // Init creates this domain's tables. Idempotent, and run at every startup.
@@ -101,6 +102,32 @@ CREATE TABLE IF NOT EXISTS spent_grants (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS spent_grants_spent_at ON spent_grants (spent_at);
+
+-- One row per order whose tokens have been handed over at the will-call
+-- table. A table of its own rather than a column on submissions, because a
+-- submission is immutable apart from its status -- submissionbus says so in
+-- its first paragraph -- and collecting is not a payment status. It is
+-- somebody standing at a table on the morning of the feast.
+--
+-- The primary key is the whole of the once-only property, exactly as it is on
+-- spent_grants: two volunteers tapping Collect on the same order from two
+-- phones is a constraint violation rather than a check either of them has to
+-- remember to perform, and the one that lost is told who got there first.
+--
+-- collected_by records which of them it was. That is the reason the table
+-- exists rather than a flag: the alternative considered was one shared
+-- account, which loses exactly this on the one surface where it is the point.
+CREATE TABLE IF NOT EXISTS collections (
+    submission_id  TEXT    PRIMARY KEY REFERENCES submissions(id) ON DELETE CASCADE,
+    form_slug      TEXT    NOT NULL,
+    collected_at   INTEGER NOT NULL,
+    collected_by   TEXT    NOT NULL
+) STRICT;
+
+-- The will-call page reads every collection on one form in one query, because
+-- a query per row is how a page that is fast with two orders is slow with two
+-- hundred on a phone in a car park.
+CREATE INDEX IF NOT EXISTS collections_form ON collections (form_slug);
 `
 
 	if _, err := db.ExecContext(ctx, schema); err != nil {
@@ -469,6 +496,149 @@ func unmarshalAnswers(raw string, form types.Slug, version, currency string, tot
 	}
 
 	return out, nil
+}
+
+// Collect records that an order's tokens were handed over, and reports false
+// when somebody had already recorded it.
+//
+// The bool rather than an error for that case is the shape Accept uses and for
+// the same reason: "somebody else got there first" is an outcome rather than a
+// fault. The caller wants to show who, so the row that won comes back either
+// way.
+func (s *Store) Collect(ctx context.Context, c submissionbus.Collection) (submissionbus.Collection, bool, error) {
+	const insert = `
+INSERT INTO collections (submission_id, form_slug, collected_at, collected_by)
+VALUES (?, ?, ?, ?)`
+
+	_, err := s.db.ExecContext(ctx, insert,
+		c.SubmissionID.String(), c.Form.String(), msOf(c.CollectedAt), c.CollectedBy.String())
+
+	switch {
+	case sqldb.IsPrimaryKeyViolation(err):
+		won, err := s.collection(ctx, c.SubmissionID)
+		if err != nil {
+			return submissionbus.Collection{}, false, err
+		}
+
+		return won, false, nil
+
+	case err != nil:
+		return submissionbus.Collection{}, false, fmt.Errorf("recording the collection: %w", err)
+	}
+
+	return c, true, nil
+}
+
+// Uncollect takes the mark off again, for the mis-tap that is going to happen
+// at a table at eight in the morning.
+//
+// Removing nothing is not an error, for the reason accessdb.Delete gives: the
+// caller wanted the mark gone and it is gone.
+func (s *Store) Uncollect(ctx context.Context, id types.ID) error {
+	const q = `DELETE FROM collections WHERE submission_id = ?`
+
+	if _, err := s.db.ExecContext(ctx, q, id.String()); err != nil {
+		return fmt.Errorf("removing the collection: %w", err)
+	}
+
+	return nil
+}
+
+// CollectionsForForm reads every collection on one form, keyed by submission.
+//
+// One query for the whole page rather than one per row, which is the shape
+// peopleapp and submissionapp already use for the same kind of lookup.
+func (s *Store) CollectionsForForm(ctx context.Context, form types.Slug) (map[types.ID]submissionbus.Collection, error) {
+	const q = `
+SELECT submission_id, form_slug, collected_at, collected_by
+FROM collections
+WHERE form_slug = ?`
+
+	rows, err := s.db.QueryContext(ctx, q, form.String())
+	if err != nil {
+		return nil, fmt.Errorf("reading the collections: %w", err)
+	}
+	defer rows.Close()
+
+	out := map[types.ID]submissionbus.Collection{}
+
+	for rows.Next() {
+		c, err := scanCollection(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+
+		out[c.SubmissionID] = c
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading the collections: %w", err)
+	}
+
+	return out, nil
+}
+
+// collection reads one, which is only ever the row that won a race.
+func (s *Store) collection(ctx context.Context, id types.ID) (submissionbus.Collection, error) {
+	const q = `
+SELECT submission_id, form_slug, collected_at, collected_by
+FROM collections
+WHERE submission_id = ?`
+
+	c, err := scanCollection(s.db.QueryRowContext(ctx, q, id.String()).Scan)
+
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// The row that violated the primary key a moment ago and is not there
+		// now. Only reachable if somebody uncollected it in between, which is
+		// a person at a table rather than a fault.
+		return submissionbus.Collection{}, fmt.Errorf("%w: the collection was removed while it was being read", submissionbus.ErrNotFound)
+	case err != nil:
+		return submissionbus.Collection{}, err
+	}
+
+	return c, nil
+}
+
+// scanCollection decodes one row, from either the single-row or the many-row
+// path -- the scan function is the only thing that differs between them.
+func scanCollection(scan func(...any) error) (submissionbus.Collection, error) {
+	var (
+		id     string
+		form   string
+		at     int64
+		byWhom string
+	)
+
+	if err := scan(&id, &form, &at, &byWhom); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return submissionbus.Collection{}, err
+		}
+
+		return submissionbus.Collection{}, fmt.Errorf("reading a collection: %w", err)
+	}
+
+	submissionID, err := types.ParseID(id)
+	if err != nil {
+		return submissionbus.Collection{}, fmt.Errorf("a collection names an unreadable submission %q: %w", id, err)
+	}
+
+	slug, err := types.ParseSlug(form)
+	if err != nil {
+		return submissionbus.Collection{}, fmt.Errorf("a collection names an unreadable form %q: %w", form, err)
+	}
+
+	// Not parsed strictly: the column records which volunteer it was, and a
+	// page that refused to show an order because that string had stopped being
+	// an id would be refusing over an audit field.
+	by, _ := types.ParseID(byWhom)
+
+	return submissionbus.Collection{
+		SubmissionID: submissionID,
+		Form:         slug,
+		CollectedAt:  timeOf(at),
+		CollectedBy:  by,
+	}, nil
 }
 
 func msOf(t time.Time) int64    { return t.UTC().UnixMilli() }
