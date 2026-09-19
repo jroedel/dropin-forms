@@ -48,6 +48,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -554,8 +555,17 @@ func (a app) invite(u userbus.User, f formbus.Form, role accessbus.Role, created
 	// The sign-in page rather than a link that signs them in. See the package
 	// comment: a fifteen-minute token in a message read that evening is a dead
 	// link, and a dead link looks like a broken service.
-	b.WriteString("Sign in here with this address and we will email you a link:\r\n\r\n" +
-		a.cfg.BaseURL + "/signin\r\n\r\n")
+	//
+	// The address travels in the query so the field arrives filled in. It is
+	// not a credential and it grants nothing -- signing in still means
+	// receiving mail at that address -- but most people have more than one,
+	// and picking the wrong one here fails silently: the sign-in page says to
+	// check your email whichever address is typed, because saying anything
+	// else would say which addresses have accounts. So the cost of the guess
+	// is somebody waiting for a message that is never coming, and this is what
+	// removes the guess.
+	b.WriteString("Sign in here and we will email you a link:\r\n\r\n" +
+		a.cfg.BaseURL + "/signin?email=" + url.QueryEscape(u.Email.String()) + "\r\n\r\n")
 
 	if a.cfg.Notifications != nil {
 		b.WriteString("You will also get an email each time somebody submits this form. " +

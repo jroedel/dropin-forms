@@ -154,8 +154,13 @@ func TestGivingAccessToANewAddressMakesAnAccountAndTellsThem(t *testing.T) {
 		t.Fatal("nothing was emailed to the person who was given access")
 	case m.To != "kitchen@schoenstatt.test":
 		t.Errorf("the invitation went to %q", m.To)
-	case !strings.Contains(m.Text, "https://forms.test/signin"):
-		t.Errorf("the invitation does not say where to sign in:\n%s", m.Text)
+	case !strings.Contains(m.Text, "https://forms.test/signin?email=kitchen%40schoenstatt.test"):
+		// The address travels in the link so the field arrives filled in.
+		// Most people have several, and picking the wrong one on the sign-in
+		// page fails silently -- it says to check your email whichever
+		// address is typed, because saying anything else would say which
+		// addresses have accounts.
+		t.Errorf("the invitation does not carry the address to sign in with:\n%s", m.Text)
 	case strings.Contains(m.Text, "/signin/link?t="):
 		t.Errorf("the invitation carries a sign-in token, which expires long before it is read:\n%s", m.Text)
 	}

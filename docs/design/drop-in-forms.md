@@ -1483,6 +1483,17 @@ credential lifetime to reason about, sitting in a mailbox indefinitely. So the
 invitation names the sign-in page and the person asks for their own link, which
 is always fresh when they use it.
 
+**The address travels in that link**, as `?email=`, and the sign-in page fills
+its field in from it. Most people have more than one address, and choosing the
+wrong one on first use fails *silently*: the page says to check your email
+whichever address is typed, because saying anything else would say which
+addresses have accounts -- so the cost of the guess is somebody waiting for a
+message that is never coming, and writing to ask why. Nothing is granted by the
+parameter; signing in still means receiving mail at the address. It is parsed
+rather than echoed, and dropped when it does not parse: `html/template` would
+escape anything safely, but a sign-in field pre-filled with a sentence a
+stranger wrote is still a stranger's sentence on our page.
+
 **A send failure is reported here, unlike on the sign-in page.** There, saying
 "we could not email you" would say which addresses have accounts, so it is
 logged and nothing else. Here the reader is an administrator who has just typed
