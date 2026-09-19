@@ -11,6 +11,7 @@
 //
 //	GET  /forms/{slug}/people          Require, then RequireFormRole(admin)
 //	POST /forms/{slug}/people          the same
+//	POST /forms/{slug}/people/role     the same
 //	POST /forms/{slug}/people/revoke   the same
 //
 // admin rather than results throughout, and that is the whole difference
@@ -144,6 +145,7 @@ func Routes(mux *http.ServeMux, cfg Config, guard, admins func(http.Handler) htt
 
 	mux.Handle("GET /forms/{"+mid.FormSlugParam+"}/people", behind(a.list))
 	mux.Handle("POST /forms/{"+mid.FormSlugParam+"}/people", behind(a.add))
+	mux.Handle("POST /forms/{"+mid.FormSlugParam+"}/people/role", behind(a.changeRole))
 	mux.Handle("POST /forms/{"+mid.FormSlugParam+"}/people/revoke", behind(a.revoke))
 }
 
@@ -193,8 +195,16 @@ type personView struct {
 	Emailed bool
 
 	// You marks the reader's own row, which is also the row with no remove
-	// button on it.
+	// button and no role control on it.
 	You bool
+
+	// Choices is the role select on this person's row, with what they hold
+	// already selected. Per row rather than one list for the page, because the
+	// selected option differs by row and a template working that out would be
+	// answering accessbus's question in markup.
+	//
+	// Empty on a row that has no control: your own, and a site-wide grant.
+	Choices []roleView
 }
 
 // roleView is one choice in the role select. The label is here rather than on
@@ -203,6 +213,11 @@ type personView struct {
 type roleView struct {
 	Value string
 	Label string
+
+	// Selected marks what somebody holds already, for the control on their
+	// row. Unused by the add form below the table, where nobody holds
+	// anything yet.
+	Selected bool
 }
 
 func (v listView) Any() bool { return len(v.People) > 0 }
@@ -295,6 +310,25 @@ func (a app) add(w http.ResponseWriter, r *http.Request) {
 	// called because a colleague guessed at their name while granting them a
 	// role is a surprise nobody asked for.
 
+	// Typing your own address with anything less than admin takes this page
+	// away from you, and the way back is another administrator. It is the same
+	// refusal revoke makes and was missing here, which mattered more once
+	// there were three roles: picking the middle one for yourself looks like a
+	// smaller act than removing your own access, and locks you out just as
+	// hard.
+	//
+	// Refused for a site-wide administrator too, who would in fact survive it
+	// -- accessbus.Allowed consults the form's grant and then the site-wide
+	// one, and deliberately does not stop at the first. Telling the two apart
+	// here would mean a second lookup to permit something nobody wants to do,
+	// so the page refuses both and says the same thing.
+	if u.ID == me.ID && !role.Includes(accessbus.RoleAdmin) {
+		said.Problem = "You cannot take your own administration of this form away. Ask another administrator to change your role."
+		a.show(w, r, http.StatusConflict, f, said)
+
+		return
+	}
+
 	if _, err := a.cfg.Grants.Grant(r.Context(), now, me.ID, u.ID, f.ID, role); err != nil {
 		a.oops(w, r, "the grant could not be saved", err)
 
@@ -327,6 +361,130 @@ func (a app) add(w http.ResponseWriter, r *http.Request) {
 
 	a.show(w, r, http.StatusOK, f, listView{
 		Done: u.Email.String() + " can now " + verb(role) + " this form, and we have emailed them about it.",
+	})
+}
+
+// changeRole changes what somebody already holds on this form.
+//
+// It exists because changing a role was possible and undiscoverable. The
+// "Give somebody access" form is an upsert on (account, form), so re-typing an
+// address with a different role has always worked -- and nothing on the page
+// said so, the person was already listed in the table above, and the heading
+// invited you to do something you had already done. Issue #29 asked whether it
+// was possible at all, which is the answer to whether it was findable.
+//
+// Deliberately narrower than add: it changes a grant that exists and cannot
+// create one. Granting somebody new means typing their address, which is what
+// makes an account and sends the invitation, and a route that could do it
+// from a hidden field would be a second way in with none of that.
+//
+// It sends no mail. An invitation is the wrong message for a change of
+// degree -- "You have been given an account" to somebody who has had one for
+// a month -- and a second template is more than this is worth today. What
+// would be right is a short note saying what changed, and it is not here.
+func (a app) changeRole(w http.ResponseWriter, r *http.Request) {
+	f, ok := a.form(w, r)
+	if !ok {
+		return
+	}
+
+	me, ok := mid.UserFrom(r.Context())
+	if !ok {
+		a.oops(w, r, "a people page was reached with no account", nil)
+
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		a.show(w, r, http.StatusBadRequest, f, listView{
+			Problem: "We could not read that. Please try again.",
+		})
+
+		return
+	}
+
+	id, err := types.ParseID(r.PostFormValue("user"))
+	if err != nil {
+		a.show(w, r, http.StatusBadRequest, f, listView{
+			Problem: "We could not tell who that was. Please try again.",
+		})
+
+		return
+	}
+
+	role, err := accessbus.ParseRole(r.PostFormValue("role"))
+	if err != nil {
+		a.show(w, r, http.StatusBadRequest, f, listView{
+			Problem: "Choose what they may do with this form.",
+		})
+
+		return
+	}
+
+	// Your own row, for the reason revoke gives: changing it takes this page
+	// away from you and the way back is somebody else. The row has no control
+	// on it, and this is the same refusal made again for a request that did
+	// not come from the row.
+	if id == me.ID {
+		a.show(w, r, http.StatusConflict, f, listView{
+			Problem: "You cannot change your own role on this form. Ask another administrator to do it.",
+		})
+
+		return
+	}
+
+	// It must already be a grant on this form. Two things that are not:
+	// somebody with no grant at all, who should be added by address so that an
+	// account is made and an invitation sent; and somebody holding the service
+	// site-wide, whose authority is not this form's to change -- the same
+	// reason those rows have no remove button.
+	held, err := a.cfg.Grants.ForForm(r.Context(), f.ID)
+	if err != nil {
+		a.oops(w, r, "the grants on that form could not be listed", err)
+
+		return
+	}
+
+	at := slices.IndexFunc(held, func(g accessbus.Grant) bool { return g.UserID == id && !g.SiteWide() })
+	if at < 0 {
+		a.show(w, r, http.StatusConflict, f, listView{
+			Problem: "That person does not have this form to change. Add them by their email address below.",
+		})
+
+		return
+	}
+
+	was := held[at].Role
+
+	if was == role {
+		// Nothing to do, and not a mistake: two administrators looking at the
+		// same page, or a double submit. Reported as the state rather than as
+		// an error, because the page it re-renders is the answer.
+		a.show(w, r, http.StatusOK, f, listView{
+			Done: "No change: they already " + verb(role) + " this form.",
+		})
+
+		return
+	}
+
+	if _, err := a.cfg.Grants.Grant(r.Context(), time.Now(), me.ID, id, f.ID, role); err != nil {
+		a.oops(w, r, "the role could not be changed", err)
+
+		return
+	}
+
+	a.cfg.Log.Info("role changed",
+		"request_id", web.RequestIDFrom(r.Context()),
+		"form", f.ID.String(), "user_id", id.String(),
+		"from", was.String(), "to", role.String(), "by", me.ID.String())
+
+	who := id.String()
+	if u, err := a.cfg.Accounts.ByID(r.Context(), id); err == nil {
+		who = cmp.Or(u.Name, u.Email.String())
+	}
+
+	a.show(w, r, http.StatusOK, f, listView{
+		Done: who + " can now " + verb(role) + " this form. They have not been emailed about it.",
 	})
 }
 
@@ -462,7 +620,7 @@ func (a app) show(w http.ResponseWriter, r *http.Request, status int, f formbus.
 			continue
 		}
 
-		view.People = append(view.People, personView{
+		person := personView{
 			UserID:   u.ID.String(),
 			Name:     u.Name,
 			Email:    u.Email.String(),
@@ -471,7 +629,17 @@ func (a app) show(w http.ResponseWriter, r *http.Request, status int, f formbus.
 			SiteWide: g.SiteWide(),
 			Emailed:  !quiet[u.ID],
 			You:      u.ID == me.ID,
-		})
+		}
+
+		// The role control, on the rows that may have one. The two that may
+		// not are the two with no remove button either, and for the same
+		// reasons: your own row, because changing it takes this page away from
+		// you; and a site-wide grant, because it is not this form's to change.
+		if !person.You && !person.SiteWide {
+			person.Choices = rolesWith(g.Role)
+		}
+
+		view.People = append(view.People, person)
 	}
 
 	// Form-specific first, then site-wide, and by name inside each group. The
@@ -509,6 +677,23 @@ func rolesFor() []roleView {
 
 	for _, r := range all {
 		out = append(out, roleView{Value: r.String(), Label: describe(r)})
+	}
+
+	return out
+}
+
+// rolesWith is the choice on one person's row, with what they hold already
+// selected. Weakest first, which is accessbus's own order.
+func rolesWith(held accessbus.Role) []roleView {
+	all := accessbus.Roles()
+	out := make([]roleView, 0, len(all))
+
+	for _, r := range all {
+		out = append(out, roleView{
+			Value:    r.String(),
+			Label:    describe(r),
+			Selected: r == held,
+		})
 	}
 
 	return out

@@ -382,3 +382,171 @@ func rowFor(t *testing.T, body, address string) string {
 
 	return ""
 }
+
+// Changing a role after setting it, which is issue #29.
+//
+// It was always possible and never findable: the form below the table is an
+// upsert, so re-typing an address with a different role worked and nothing
+// said so. These assert both the control that now says so and the refusal that
+// was missing beside it.
+
+func TestARoleCanBeChangedFromThePersonsOwnRow(t *testing.T) {
+	a := newAdmin(t, "")
+
+	boss := formAdmin(t, a, "boss@schoenstatt.test")
+	cookie := sessionFor(t, a, boss)
+
+	// Somebody added as results, in the ordinary way.
+	if w := a.post(t, peoplePage, url.Values{
+		"email": {"helper@schoenstatt.test"},
+		"name":  {"A Helper"},
+		"role":  {"results"},
+	}, cookie); w.Code != http.StatusOK {
+		t.Fatalf("adding = %d:\n%s", w.Code, w.Body)
+	}
+
+	helper, ok := accountFor(t, a, "helper@schoenstatt.test")
+	if !ok {
+		t.Fatal("the helper has no account")
+	}
+
+	// The row carries a control naming them, which is the discoverability the
+	// issue was about.
+	page := a.get(t, peoplePage, cookie)
+	if !strings.Contains(page.Body.String(), `name="user" value="`+helper.ID.String()+`"`) {
+		t.Errorf("the person's row has no role control:\n%s", page.Body)
+	}
+
+	// Up, and then down again.
+	for _, want := range []accessbus.Role{accessbus.RoleDoor, accessbus.RoleAdmin, accessbus.RoleResults} {
+		w := a.post(t, peoplePage+"/role", url.Values{
+			"user": {helper.ID.String()},
+			"role": {want.String()},
+		}, cookie)
+		if w.Code != http.StatusOK {
+			t.Fatalf("changing to %s = %d:\n%s", want, w.Code, w.Body)
+		}
+
+		if got := roleOn(t, a, helper); got != want {
+			t.Errorf("after asking for %s they hold %s", want, got)
+		}
+	}
+}
+
+// The refusal that was missing: an administrator taking their own
+// administration away and losing the page they are standing on. revoke has
+// always refused it; the form below the table did not, and three roles made
+// picking the middle one for yourself look like a smaller act than it is.
+func TestAnAdminCannotDemoteThemselves(t *testing.T) {
+	a := newAdmin(t, "")
+
+	boss := formAdmin(t, a, "boss@schoenstatt.test")
+	cookie := sessionFor(t, a, boss)
+
+	// Through the add form, which is the path that had no guard.
+	w := a.post(t, peoplePage, url.Values{
+		"email": {boss.Email.String()},
+		"name":  {"The Boss"},
+		"role":  {"results"},
+	}, cookie)
+	if w.Code != http.StatusConflict {
+		t.Errorf("demoting yourself by address = %d, want 409:\n%s", w.Code, w.Body)
+	}
+
+	// And through the new row control, which has no option for your own row
+	// and refuses one anyway.
+	w = a.post(t, peoplePage+"/role", url.Values{
+		"user": {boss.ID.String()},
+		"role": {"results"},
+	}, cookie)
+	if w.Code != http.StatusConflict {
+		t.Errorf("demoting yourself from the row = %d, want 409:\n%s", w.Code, w.Body)
+	}
+
+	if got := roleOn(t, a, boss); got != accessbus.RoleAdmin {
+		t.Errorf("they now hold %s, want admin", got)
+	}
+
+	// The page is still theirs, which is the thing the guard protects.
+	if page := a.get(t, peoplePage, cookie); page.Code != http.StatusOK {
+		t.Errorf("the people page after the refusals = %d, want 200", page.Code)
+	}
+
+	// Their own row offers no control, so the refusal is a second line of
+	// defence rather than the only one.
+	page := a.get(t, peoplePage, cookie)
+	if strings.Contains(page.Body.String(), `name="user" value="`+boss.ID.String()+`"`) {
+		t.Errorf("the reader's own row carries a role control:\n%s", page.Body)
+	}
+}
+
+// The route changes a grant and cannot create one. Granting somebody new means
+// typing their address, which is what makes an account and sends an
+// invitation.
+func TestTheRoleRouteCannotGrantSomebodyNew(t *testing.T) {
+	a := newAdmin(t, "")
+
+	boss := formAdmin(t, a, "boss@schoenstatt.test")
+	cookie := sessionFor(t, a, boss)
+
+	stranger, err := a.users.Create(t.Context(), time.Now(), userbus.NewUser{
+		Email: mustEmail(t, "stranger@schoenstatt.test"),
+		Name:  "A Stranger",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	w := a.post(t, peoplePage+"/role", url.Values{
+		"user": {stranger.ID.String()},
+		"role": {"admin"},
+	}, cookie)
+	if w.Code != http.StatusConflict {
+		t.Errorf("granting a stranger from the role route = %d, want 409:\n%s", w.Code, w.Body)
+	}
+
+	if got := roleOn(t, a, stranger); got != "" {
+		t.Errorf("the stranger now holds %s", got)
+	}
+}
+
+// A site-wide grant is not this form's to change, which is why those rows have
+// no control -- the same reason they have no remove button.
+func TestASiteWideGrantCannotBeChangedFromAFormsPage(t *testing.T) {
+	a := newAdmin(t, "")
+
+	boss := formAdmin(t, a, "boss@schoenstatt.test")
+	cookie := sessionFor(t, a, boss)
+
+	whole, err := a.users.Create(t.Context(), time.Now(), userbus.NewUser{
+		Email: mustEmail(t, "site@schoenstatt.test"),
+		Name:  "The Administrator",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if _, err := a.access.Grant(t.Context(), time.Now(), types.ID{}, whole.ID, types.Slug{}, accessbus.RoleAdmin); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+
+	w := a.post(t, peoplePage+"/role", url.Values{
+		"user": {whole.ID.String()},
+		"role": {"results"},
+	}, cookie)
+	if w.Code != http.StatusConflict {
+		t.Errorf("changing a site-wide grant = %d, want 409:\n%s", w.Code, w.Body)
+	}
+
+	// And they are listed, with no control on the row.
+	page := a.get(t, peoplePage, cookie)
+	body := page.Body.String()
+
+	if !strings.Contains(body, "site-wide") {
+		t.Errorf("the site-wide holder is not listed:\n%s", body)
+	}
+
+	if strings.Contains(body, `name="user" value="`+whole.ID.String()+`"`) {
+		t.Errorf("a site-wide row carries a role control:\n%s", body)
+	}
+}
