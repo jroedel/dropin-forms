@@ -323,3 +323,56 @@ a.go:hover { filter: brightness(1.08); }
 
   .detail th[scope="row"] { width: auto; }
 }
+
+/* --- managing who can see a form ----------------------------------------
+
+   Added with app/domain/peopleapp. Three small things the pages above never
+   needed: a radio group, a button that sits inside a table cell without
+   becoming a block of its own, and a heading a screen reader should read
+   where sighted readers see an empty column. */
+
+fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+legend {
+  padding: 0;
+  font-weight: 600;
+  margin: 0 0 0.25rem;
+}
+
+/* A radio and its label on one line. label is display:block above, which is
+   right for a text field's caption and wrong for the words beside a radio. */
+.choice {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0 0 0.4rem;
+}
+
+.choice label {
+  font-weight: 400;
+  margin: 0;
+}
+
+/* A one-button form in a table cell. Without this the form is a block and the
+   row grows a line of white space under every button. */
+form.inline {
+  display: inline;
+}
+
+/* Present for a screen reader, absent for everybody else. Used for the header
+   of the column holding the remove buttons, which needs no visible title and
+   still needs a name in the table's structure. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

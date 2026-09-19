@@ -15,6 +15,7 @@ import (
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
 	"github.com/jroedel/dropin-forms/app/domain/notifyapp"
+	"github.com/jroedel/dropin-forms/app/domain/peopleapp"
 	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
@@ -234,7 +235,7 @@ func run() error {
 	}
 
 	adminPages, err := page.NewRenderer(log, page.AdminChrome(),
-		authapp.Templates, submissionapp.Templates, notifyapp.Templates)
+		authapp.Templates, submissionapp.Templates, notifyapp.Templates, peopleapp.Templates)
 	if err != nil {
 		return err
 	}

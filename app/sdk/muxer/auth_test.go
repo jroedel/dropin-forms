@@ -16,6 +16,7 @@ import (
 
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/domain/notifyapp"
+	"github.com/jroedel/dropin-forms/app/domain/peopleapp"
 	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
 	"github.com/jroedel/dropin-forms/app/sdk/mid"
 	"github.com/jroedel/dropin-forms/app/sdk/muxer"
@@ -85,7 +86,7 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 	sent := &mail.Recorder{}
 
 	renderer, err := page.NewRenderer(log, page.AdminChrome(),
-		authapp.Templates, submissionapp.Templates, notifyapp.Templates)
+		authapp.Templates, submissionapp.Templates, notifyapp.Templates, peopleapp.Templates)
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
 	}
@@ -817,5 +818,33 @@ func TestAMalformedAddressIsRefusedWithoutRevealingAnything(t *testing.T) {
 	}
 	if len(a.sent.Sent) != 0 {
 		t.Error("a malformed address still sent mail")
+	}
+}
+
+// An invitation puts the address in the query so the field arrives filled in.
+// It grants nothing -- signing in still means receiving mail at the address --
+// so the only question is what the page will display.
+func TestTheSignInPageFillsInAnAddressFromTheLink(t *testing.T) {
+	a := newAdmin(t, "")
+
+	w := a.get(t, "/signin?email=kitchen%40schoenstatt.test", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /signin = %d, want 200", w.Code)
+	}
+
+	if body := w.Body.String(); !strings.Contains(body, `value="kitchen@schoenstatt.test"`) {
+		t.Errorf("the address from the link is not in the field:\n%s", body)
+	}
+
+	// And anything that is not an address is dropped rather than reflected.
+	// html/template would escape it safely; a sign-in field pre-filled with a
+	// sentence somebody else wrote is still a sentence somebody else wrote on
+	// our page.
+	w = a.get(t, "/signin?email="+url.QueryEscape("Call 555-0199 to verify your account"), "")
+	switch {
+	case w.Code != http.StatusOK:
+		t.Fatalf("GET /signin with rubbish = %d, want 200", w.Code)
+	case strings.Contains(w.Body.String(), "555-0199"):
+		t.Errorf("the page echoed something that is not an address:\n%s", w.Body)
 	}
 }

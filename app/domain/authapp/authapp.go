@@ -179,10 +179,31 @@ func (a app) signInForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.cfg.Render.Render(w, r, http.StatusOK, "signin", signInView{
+	// An address in the query fills the field in. What puts one there is an
+	// invitation -- see app/domain/peopleapp -- and the point of it is that
+	// somebody arriving for the first time does not have to work out which of
+	// their addresses the account was made with. Getting that wrong is a
+	// silent failure: the page says to check your email either way, because
+	// saying anything else would say which addresses have accounts, so the
+	// person waits for a message that is never coming.
+	//
+	// Parsed rather than echoed, and dropped when it does not parse. A value
+	// from a URL that reaches a page is a value somebody can put anything in;
+	// html/template would escape it safely, but a sign-in field pre-filled
+	// with a sentence somebody else wrote is still a sentence somebody else
+	// wrote on our page. Nothing is granted by it either way -- signing in
+	// still means receiving mail at the address -- so there is nothing to
+	// refuse, only something not to display.
+	view := signInView{
 		Next:          mid.SafeNext(r.URL.Query().Get("next")),
 		HaveBootstrap: a.cfg.Bootstrap != "",
-	})
+	}
+
+	if email, err := types.ParseEmail(r.URL.Query().Get("email")); err == nil {
+		view.Email = email.String()
+	}
+
+	a.cfg.Render.Render(w, r, http.StatusOK, "signin", view)
 }
 
 func (a app) requestLink(w http.ResponseWriter, r *http.Request) {
