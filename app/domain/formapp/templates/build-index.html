@@ -1,0 +1,65 @@
+{{define "title"}}Build a form{{end}}
+
+{{define "masthead"}}<a href="/forms">Forms</a>{{end}}
+
+{{define "content"}}
+<h1>Build a form</h1>
+
+{{if .Problem}}<p class="problem">{{.Problem}}</p>{{end}}
+
+<p class="lede">A form built here is a definition in this service's database.
+You can change it whenever you like, and it is on the web from the moment you
+publish it.</p>
+
+<p><a class="go" href="/build/new">New form</a></p>
+
+{{if .Any}}
+<table class="listing">
+<thead>
+<tr>
+<th scope="col">Form</th>
+<th scope="col">Fields</th>
+<th scope="col">State</th>
+<th scope="col">Changed</th>
+</tr>
+</thead>
+<tbody>
+{{range .Built}}
+<tr>
+<th scope="row"><a href="/forms/{{.ID}}/edit">{{if .Title}}{{.Title}}{{else}}{{.ID}}{{end}}</a><br>
+<span class="ref">{{.ID}}</span></th>
+<td class="figure">{{.Fields}}</td>
+{{/* Three states rather than two. "Draft" and "ready" are both off the web,
+     and the difference between them is whether pressing publish would work --
+     which is the one thing somebody wants to know from a list. */}}
+<td>{{if .Live}}live{{else if .Ready}}ready to publish{{else}}draft{{end}}</td>
+<td>{{.Updated}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p>Nothing has been built here yet.</p>
+{{end}}
+
+{{if .Release}}
+<h2>Forms that ship with this release</h2>
+
+<p class="help">These are files in the repository, read when the service
+starts. They are changed by editing the file and deploying, not from here.</p>
+
+<table class="listing">
+<thead>
+<tr><th scope="col">Form</th><th scope="col">Fields</th></tr>
+</thead>
+<tbody>
+{{range .Release}}
+<tr>
+<th scope="row">{{.Title}}<br><span class="ref">{{.ID}}</span></th>
+<td class="figure">{{.Fields}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{end}}
+{{end}}

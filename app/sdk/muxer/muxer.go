@@ -28,7 +28,10 @@
 //	SecureHeaders          the per-surface header policy
 //	  SameOriginOnly       writes only: refuses a cross-site write
 //	  FormEncodedOnly      writes only: refuses a body that is not a form
-//	    the app
+//	    Authenticate       admin only: establishes who, and refuses nobody
+//	      Require          admin only: refuses a request with no account
+//	        RequireFormRole    or RequireSiteAdmin, per route
+//	          the app
 //
 // The three above SecureHeaders are not gates and refuse nothing. They are
 // there so that whatever the gates below decide is logged, and so that a panic
@@ -72,6 +75,7 @@ import (
 
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
+	"github.com/jroedel/dropin-forms/app/domain/formapp"
 	"github.com/jroedel/dropin-forms/app/domain/notifyapp"
 	"github.com/jroedel/dropin-forms/app/domain/paymentapp"
 	"github.com/jroedel/dropin-forms/app/domain/peopleapp"
@@ -121,6 +125,20 @@ type Config struct {
 	// surface renders them and the admin surface names their fields as
 	// columns.
 	Forms submissionapp.Forms
+
+	// Builder is the write half of the form domain, and the one dependency
+	// here that only one app has. Optional: without it the service serves
+	// every form it has and offers no way to author one, which is exactly
+	// right for a test that is not about authoring and is a defensible way to
+	// run an installation whose forms all ship in the binary.
+	Builder formapp.Catalog
+
+	// EmbedBaseURL is the public surface's own origin, and the builder is the
+	// only thing that wants it -- it is what turns the builder's page into the
+	// two lines somebody pastes into their website. Optional, for the reason
+	// formapp.Config.EmbedBaseURL gives: an installation that predates the
+	// setting should keep starting.
+	EmbedBaseURL string
 
 	// Payments is what the webhook route calls. Embed.Payments is a different
 	// and much narrower slice of the same domain: one confirms a payment and
@@ -400,6 +418,26 @@ func Admin(cfg Config) (http.Handler, error) {
 	}
 
 	peopleapp.Routes(mux, pc, guard, admins)
+
+	// The builder, behind the same per-form admin gate as the people page for
+	// everything that names a form, and behind a site-wide one for the routes
+	// that make a form -- which cannot be a per-form question, because the
+	// form does not exist yet and no grant on it can. mid.RequireSiteAdmin is
+	// emphatic about why that has to be a second gate rather than
+	// RequireFormRole with an empty slug.
+	//
+	// Mounted only when there is somewhere to write a definition. Without one
+	// these would be pages whose every button fails.
+	if cfg.Builder != nil {
+		site := mid.RequireSiteAdmin(cfg.Log, cfg.Access, accessbus.RoleAdmin)
+
+		formapp.Routes(mux, formapp.Config{
+			Log:          cfg.Log,
+			Catalog:      cfg.Builder,
+			Render:       cfg.Render,
+			EmbedBaseURL: cfg.EmbedBaseURL,
+		}, guard, admins, site)
+	}
 
 	// The page that turns email about a form off and on, and the one route on
 	// this surface that is deliberately *outside* guard.

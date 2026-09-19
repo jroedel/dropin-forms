@@ -1521,6 +1521,139 @@ rather than one per row, which is the same shape the notifier uses and for the
 same reason. Together with the unsubscribe page, that makes "why am I the only
 one getting these" a question with an answer somebody can look up.
 
+### The visual builder, as built
+
+Step 12, and the one that makes this repository reusable rather than
+one-form-specific. `app/domain/formapp` is a form authored in a browser:
+questions, things for sale, settings, and the two lines to paste into a
+website.
+
+**A form is now a definition from one of two stores, and the app layer cannot
+tell which.** `formtoml` reads the files in `forms/`, compiled into the binary
+and changed by a pull request. `formdb` keeps what the builder writes, as one
+JSON document per row. `formbus.Business` is the catalogue over both, and it
+answers exactly the `ByID(slug)` and `All()` every reader already used, so
+adding the second store changed no caller — only what `main` hands them.
+
+**The read path is a snapshot, not a query, and that is structural.** Besides
+every request for a form, the per-form `frame-ancestors` is chosen *above the
+mux*, by `page.FormFrameAncestors`, on every request the embed surface takes
+including the one for the stylesheet. A database round trip there would make
+storage a precondition of answering anything at all, and would make an
+unreachable database present as a page nobody may frame rather than as an
+error. So the catalogue holds a map it replaces wholesale on each write, reads
+take no context and cannot fail for I/O, and a writer is a person editing a
+handful of documents. Only definitions that have passed `Check` are in it,
+which is what lets every reader keep assuming a `Form` it is handed has had its
+patterns compiled.
+
+**Draft and live, which is the only new concept.** A new form is created
+unpublished: not in the snapshot, 404 on the embed surface, and therefore
+allowed to be half-finished — it has to be, because a form with no fields fails
+`Check` and a builder you cannot save an unfinished form in is a builder you
+cannot start using. Publishing runs `Check` and refuses with every problem at
+once, which is the list the page shows. After that each save is checked again,
+so a live form cannot be edited into an unusable state: the change is refused
+and the form keeps serving what it served. The same edit on a draft is allowed
+and the problem it creates appears in the to-do list instead. That pair is the
+whole bargain, and either half alone reads as the other being a bug.
+
+It also decides a small thing about the UI: the *add a question* form asks for
+a dropdown's options in the same request, because an option-less dropdown is
+exactly the change a live form refuses, and asking for them on the next screen
+would make adding one to a live form impossible.
+
+**Editing a live form re-renders every tab open against it,** because every
+save changes the fingerprint and a submission grant is signed over it. That is
+the mechanism working, not a cost of using it — it is what stops a tab opened
+at the old price being charged a number nobody agreed to — and the builder says
+so beside the button.
+
+**There is no JavaScript, and nothing was worked around.** `page.AdminPolicy`
+has no `script-src` at all and says adding one should feel like a decision, so
+the builder is a list with buttons beside it and a page per thing. What a drag
+handle does is reorder a list, which two buttons do as well and also do on a
+phone, with a keyboard, and in a screen reader. What is genuinely lost is a live
+preview, and the replacement is better than the thing lost: the builder links
+to the form's own public page, rendered by `embedapp` from this definition. A
+preview is a second renderer that can disagree with the first. This one cannot,
+because it *is* the first.
+
+A repeating group of inputs is the other thing a script usually buys. Options,
+condition values, embedding origins and extra notify addresses are all
+textareas, one per line, with `value | what people read` where the two differ.
+That needs no round trip per row and can be pasted into.
+
+**Two gates, because there are two questions.** Everything under
+`/forms/{slug}/edit` is `RequireFormRole(admin)`, the same gate as the people
+page: deciding what a form asks and what it charges is not for whoever counts
+the lunches. Making a form cannot be a per-form question — the form does not
+exist yet and no grant on it can — so `/build` and `/build/new` are behind a
+new `mid.RequireSiteAdmin`, which asks `accessbus.Allowed` the same question
+with the form left out. It is the same authority `Allowed` already falls back
+to, not a second one.
+
+That is also why the builder's listing is at `/build` rather than folded into
+`/forms`: that page is built from the catalogue of forms being *served*, and a
+draft is by definition not in it. A consequence worth naming is that a draft
+cannot be handed to anybody, since `peopleapp` resolves a form through the
+served catalogue — access is given once there is something to give access to.
+
+**Two things cannot be renamed, and both for the same reason.** A field's name
+is the HTML name, the CSV column heading and the key in every submission
+already collected; an item's id is recorded on every order. Neither is read
+from the request on the save route, so a rename is not something the builder
+can do by accident.
+
+**Delete is allowed only for a form that has never been published.** Not "not
+live right now" — *never*. Submissions record the slug of the form they were
+made against and are read back through that definition, which is where the
+columns and their meanings come from, so deleting a form that has taken even
+one submission leaves rows nobody can interpret. A form that has been live is
+taken down instead, which is the thing anybody actually needs. What the rule
+does cover is the common mistake: a form created with the wrong name, which by
+construction cannot have taken a submission because it was never served. The
+alternative design — asking the submission domain for a count — would have made
+`formbus` depend on `submissionbus`, which already depends on it.
+
+**A definition is stored as one JSON column.** It is a document: read whole,
+written whole, and nothing queries inside one. Normalising fields, options and
+items into four tables buys an index nobody reads and costs four joins on every
+read and a migration each time the definition grows an attribute — which for a
+form builder is the thing most likely to keep happening. The wire shape is its
+own type with explicit names, the same bargain `formtoml` makes, and it
+deliberately carries neither an id (the primary key) nor a version (derived by
+`Stamp`). An unknown key is refused rather than ignored: the case is a rollback
+reading a newer document, and a rule that quietly does not apply is worse than
+one definition that visibly stops being served. `formbus.refresh` logs it and
+drops that one form; every other form keeps working.
+
+**Two failures are treated differently at startup, on purpose.** A store that
+cannot be read at all is fatal, because a service that starts with an empty
+catalogue looks exactly like one whose forms were all deleted. A single stored
+definition that no longer passes `Check` — a release that tightened a rule — is
+dropped and logged, because refusing to start would take down every other form
+and, on a host where the only way in is a browser, the page somebody would fix
+it from.
+
+**Dates are the one place this had to be careful.** `formtoml.parseInstant`
+makes a file write the UTC offset out in full, which is right for a file and is
+a hostile thing to ask of somebody picking a date in a browser. A
+`datetime-local` input sends a wall-clock time with no offset — precisely the
+ambiguity that comment is about. So the zone is *named* rather than guessed:
+the value is read with `time.ParseInLocation` in the zone this service runs in,
+which resolves the offset correctly across a daylight-saving change, and the
+page says which zone that is beside the input. What is stored is an instant,
+exactly as it is from a file.
+
+**One new setting, and it is optional.** `server.embed_base_url` is what lets
+the builder show the two lines somebody pastes into their website and the link
+to the real form. Unlike `admin_base_url` it is not required: that one goes
+into an email nobody can sign in without, and this one makes one page more
+useful. Requiring it would mean an installation predating the setting refuses
+to start. Without it the builder names the setting rather than printing a
+snippet with a guessed host, which would fail silently on somebody else's page.
+
 ## 10. Dependencies
 
 A dependency needs a comment naming the standard-library answer that was
@@ -1611,7 +1744,8 @@ means mail.
 After the feast:
 
 12. **`formapp`**, the visual builder — the thing that makes this repository
-    reusable rather than one-form-specific.
+    reusable rather than one-form-specific. Built; see "The visual builder, as
+    built" above.
 13. **The in-page Payment Element**, behind the CSP work of 7.2 and the
     `allow="payment"` testing it needs.
 

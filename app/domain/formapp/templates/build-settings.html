@@ -1,0 +1,167 @@
+{{define "title"}}Settings for {{.FormID}}{{end}}
+
+{{define "masthead"}}<a href="/forms/{{.FormID}}/edit">Back to the form</a>{{end}}
+
+{{define "content"}}
+<h1>Settings</h1>
+
+<p class="crumb"><span class="ref">{{.FormID}}</span></p>
+
+{{if .Problem}}<p class="problem">{{.Problem}}</p>{{end}}
+
+{{if .Problems}}
+<div class="problems">
+<ul>
+{{range .Problems}}<li>{{.}}</li>{{end}}
+</ul>
+</div>
+{{end}}
+
+<form method="post" action="/forms/{{.FormID}}/edit/settings">
+
+  <div class="field">
+    <label for="title">Title</label>
+    <input type="text" id="title" name="title" value="{{.Title}}"
+           autocomplete="off" required maxlength="200">
+  </div>
+
+  <div class="field">
+    <label for="intro">Introduction</label>
+    <p class="help">A sentence or two above the first question. Optional.</p>
+    <textarea id="intro" name="intro" rows="3">{{.Intro}}</textarea>
+  </div>
+
+  <h2>When it takes answers</h2>
+
+  <p class="help">Times are {{.Zone}}, the zone this service runs in. Leave a
+  box empty for "already open" or "never closes".</p>
+
+  <div class="field">
+    <label for="opens_at">It opens</label>
+    <input type="datetime-local" id="opens_at" name="opens_at" value="{{.OpensAt}}">
+  </div>
+
+  <div class="field">
+    <label for="closes_at">It closes</label>
+    <input type="datetime-local" id="closes_at" name="closes_at" value="{{.ClosesAt}}">
+  </div>
+
+  <div class="field">
+    <label for="closed_note">What it says when it is closed</label>
+    <p class="help">Where to write instead, or when it opens again. Empty gets
+    a general sentence.</p>
+    <textarea id="closed_note" name="closed_note" rows="2">{{.ClosedNote}}</textarea>
+  </div>
+
+  <h2>Where it can be used</h2>
+
+  <div class="field">
+    <label for="origins">Sites that may embed it</label>
+    <p class="help">One per line, like <code>https://www.example.org</code>.
+    An empty list means <em>no site may embed this form</em> &mdash; it still
+    works when opened directly, and the installation's own list is used
+    instead. That is the safe default and is not a mistake.</p>
+    <textarea id="origins" name="origins" rows="3">{{.Origins}}</textarea>
+  </div>
+
+  <div class="field">
+    <label for="confirmation">What it says after somebody submits it</label>
+    <textarea id="confirmation" name="confirmation" rows="3">{{.Confirmation}}</textarea>
+  </div>
+
+  <h2>Money</h2>
+
+  {{if .Sells}}
+  <p class="help">This form sells something, so these apply. Prices themselves
+  are set on each thing for sale, never here.</p>
+  {{else}}
+  <p class="help">This form sells nothing, so most of this does nothing until
+  it does. The currency is {{.Currency}}.</p>
+  {{end}}
+
+  <div class="field">
+    <label for="return_url">Where a buyer lands after paying</label>
+    <p class="help">The page on your own website that this form is embedded
+    on, so that the confirmation appears where they started. A form that sells
+    something cannot be published without one.</p>
+    <input type="url" id="return_url" name="return_url" value="{{.ReturnURL}}"
+           autocomplete="off" maxlength="500">
+  </div>
+
+  <div class="field">
+    <label for="min_per_order">The smallest order</label>
+    <p class="help">Counting everything in it together. Empty means no
+    minimum. This is what refuses an order of nothing on a form where an order
+    of nothing is wrong.</p>
+    <input type="text" id="min_per_order" name="min_per_order" value="{{.MinPerOrder}}"
+           autocomplete="off" inputmode="numeric" maxlength="6">
+  </div>
+
+  <div class="field">
+    <label for="max_per_order">The largest order</label>
+    <input type="text" id="max_per_order" name="max_per_order" value="{{.MaxPerOrder}}"
+           autocomplete="off" inputmode="numeric" maxlength="6">
+  </div>
+
+  <div class="field">
+    <label for="min_total">The smallest total</label>
+    <p class="help">Like <code>12.00</code>. A floor makes this form a poor
+    instrument for somebody testing stolen cards.</p>
+    <input type="text" id="min_total" name="min_total" value="{{.MinTotal}}"
+           autocomplete="off" inputmode="decimal" maxlength="12">
+  </div>
+
+  <div class="field">
+    <label for="max_total">The largest total</label>
+    <p class="help">A ceiling turns a runaway quantity into a refusal rather
+    than a charge.</p>
+    <input type="text" id="max_total" name="max_total" value="{{.MaxTotal}}"
+           autocomplete="off" inputmode="decimal" maxlength="12">
+  </div>
+
+  <p class="choice">
+    <input type="checkbox" id="payment_required" name="payment_required" value="yes"
+           {{if .PaymentRequired}}checked{{end}}>
+    <label for="payment_required">Refuse a submission that comes to nothing</label>
+  </p>
+
+  <div class="field">
+    <label for="payment_note">What to tell somebody who submits it empty</label>
+    <p class="help">Required if you tick the box above, and it has to name what
+    is on the page: "Choose at least one lunch ticket, or enter a donation for
+    the Shrine" tells somebody what to do; "this form requires a payment" does
+    not.</p>
+    <textarea id="payment_note" name="payment_note" rows="2">{{.PaymentNote}}</textarea>
+  </div>
+
+  <h2>Email and limits</h2>
+
+  <div class="field">
+    <label for="notify">Also email these addresses about each submission</label>
+    <p class="help">One per line. Everybody with access to this form is emailed
+    anyway; this is for addresses that are not accounts, like an office
+    mailbox.</p>
+    <textarea id="notify" name="notify" rows="3">{{.Notify}}</textarea>
+  </div>
+
+  <div class="field">
+    <label for="daily_cap">The most submissions in a day</label>
+    <p class="help">An abuse control rather than a stock level: it bounds a
+    day's worth of damage from something automated, so the number to write is
+    far above any plausible real day rather than near it. Empty means no
+    limit.</p>
+    <input type="text" id="daily_cap" name="daily_cap" value="{{.DailyCap}}"
+           autocomplete="off" inputmode="numeric" maxlength="7">
+  </div>
+
+  <button type="submit">Save the settings</button>
+</form>
+
+{{if .Live}}
+<p class="footnote">This form is on the web. A change that would stop it
+working is refused rather than saved, and nothing here takes effect until it
+is.</p>
+{{end}}
+
+<p><a href="/forms/{{.FormID}}/edit">Back to the form</a></p>
+{{end}}

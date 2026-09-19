@@ -1,0 +1,170 @@
+{{define "title"}}{{.Label}} on {{.FormID}}{{end}}
+
+{{define "masthead"}}<a href="/forms/{{.FormID}}/edit">Back to the form</a>{{end}}
+
+{{define "content"}}
+<h1>{{if .Label}}{{.Label}}{{else}}{{.Name}}{{end}}</h1>
+
+<p class="crumb"><span class="ref">{{.FormID}}</span> &middot;
+<span class="ref">{{.Name}}</span></p>
+
+{{if .Problem}}<p class="problem">{{.Problem}}</p>{{end}}
+
+{{if .Problems}}
+<div class="problems">
+<ul>
+{{range .Problems}}<li>{{.}}</li>{{end}}
+</ul>
+</div>
+{{end}}
+
+<form method="post" action="/forms/{{.FormID}}/edit/fields/{{.Name}}">
+
+  <div class="field">
+    <label for="label">What it asks</label>
+    <input type="text" id="label" name="label" value="{{.Label}}"
+           autocomplete="off" required maxlength="200">
+  </div>
+
+  <div class="field">
+    <label for="kind">What sort of answer</label>
+    <select id="kind" name="kind" required>
+      {{range .Kinds}}
+      <option value="{{.Value}}" {{if .Selected}}selected{{end}}>{{.Label}}</option>
+      {{end}}
+    </select>
+  </div>
+
+  <p class="choice">
+    <input type="checkbox" id="required" name="required" value="yes"
+           {{if .Required}}checked{{end}}>
+    <label for="required">It has to be answered</label>
+  </p>
+
+  <div class="field">
+    <label for="help">A sentence under it</label>
+    <textarea id="help" name="help" rows="2">{{.Help}}</textarea>
+  </div>
+
+  <div class="field">
+    <label for="placeholder">Faint text inside the box</label>
+    <p class="help">Not a substitute for the question: it disappears as soon as
+    somebody types.</p>
+    <input type="text" id="placeholder" name="placeholder" value="{{.Placeholder}}"
+           autocomplete="off" maxlength="200">
+  </div>
+
+  <div class="field">
+    <label for="autocomplete">What the browser may fill in</label>
+    <p class="help">An HTML autocomplete token, like <code>given-name</code>,
+    <code>email</code> or <code>tel</code>. Optional, and worth setting on
+    anything somebody's browser already knows.</p>
+    <input type="text" id="autocomplete" name="autocomplete" value="{{.Autocomplete}}"
+           autocomplete="off" maxlength="60">
+  </div>
+
+  {{/* Every kind's own settings are here at once, each headed by whether the
+       selected kind uses it. With no script there is nothing to reveal a
+       section when the dropdown changes, and a page that says "this does
+       nothing for this kind" is more honest than one that hides it. */}}
+
+  <h2>Its choices {{if not .HasOptions}}<span class="aside">&mdash; not used by this kind</span>{{end}}</h2>
+
+  <div class="field">
+    <label for="options">One per line</label>
+    <p class="help">For a dropdown, buttons or tick boxes. Write
+    <code>value | what people read</code> if the two should differ; otherwise
+    just write the choice. The value is what is stored and downloaded, so
+    renaming what people read does not rewrite the answers already
+    collected.</p>
+    <textarea id="options" name="options" rows="6">{{.Options}}</textarea>
+  </div>
+
+  <h2>How long the answer may be {{if not .Textual}}<span class="aside">&mdash; not used by this kind</span>{{end}}</h2>
+
+  <div class="field">
+    <label for="min_length">At least this many characters</label>
+    <input type="text" id="min_length" name="min_length" value="{{.MinLen}}"
+           autocomplete="off" inputmode="numeric" maxlength="6">
+  </div>
+
+  <div class="field">
+    <label for="max_length">At most this many</label>
+    <input type="text" id="max_length" name="max_length" value="{{.MaxLen}}"
+           autocomplete="off" inputmode="numeric" maxlength="6">
+  </div>
+
+  <h2>What it may contain {{if not .Bounded}}<span class="aside">&mdash; not used by this kind</span>{{end}}</h2>
+
+  <p class="help">
+  {{if .Money}}An amount, like <code>5.00</code>.
+  {{else}}A whole number: how many, or how many boxes may be ticked.{{end}}
+  Leave a box empty for no limit at that end &mdash; which is not the same as a
+  limit of nothing.</p>
+
+  <div class="field">
+    <label for="min">Smallest</label>
+    <input type="text" id="min" name="min" value="{{.Min}}"
+           autocomplete="off" inputmode="decimal" maxlength="12">
+  </div>
+
+  <div class="field">
+    <label for="max">Largest</label>
+    <input type="text" id="max" name="max" value="{{.Max}}"
+           autocomplete="off" inputmode="decimal" maxlength="12">
+  </div>
+
+  <h2>A set format {{if not .Textual}}<span class="aside">&mdash; not used by this kind</span>{{end}}</h2>
+
+  <div class="field">
+    <label for="pattern">The pattern the answer must match</label>
+    <p class="help">A regular expression, matched in full, and checked here as
+    well as in the browser. Keep it to character classes, quantifiers and
+    alternation &mdash; <code>[0-9]{5}</code> for a ZIP code. Anything cleverer
+    works on one side only.</p>
+    <input type="text" id="pattern" name="pattern" value="{{.Pattern}}"
+           autocomplete="off" maxlength="200">
+  </div>
+
+  <div class="field">
+    <label for="pattern_note">What to tell somebody whose answer does not match</label>
+    <p class="help">Required if there is a pattern. "Use five digits, like
+    78745" tells somebody what to type; "does not match the required format"
+    tells them nothing.</p>
+    <input type="text" id="pattern_note" name="pattern_note" value="{{.PatternNote}}"
+           autocomplete="off" maxlength="200">
+  </div>
+
+  <h2>When it is shown</h2>
+
+  {{if .Earlier}}
+  <p class="help">This question can be hidden until an earlier one is answered
+  a particular way. Only the questions above it are offered: that is what makes
+  it possible to work out what is showing in one pass down the page.</p>
+
+  <div class="field">
+    <label for="show_if_field">Show it only when this question</label>
+    <select id="show_if_field" name="show_if_field">
+      <option value="">always show it</option>
+      {{range .Earlier}}
+      <option value="{{.}}" {{if eq . $.ShowIfField}}selected{{end}}>{{.}}</option>
+      {{end}}
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="show_if_is">&hellip; is one of these</label>
+    <p class="help">One value per line. These are the stored values, the left
+    side of the bar in a choice list, not what people read.</p>
+    <textarea id="show_if_is" name="show_if_is" rows="3">{{.ShowIfIs}}</textarea>
+  </div>
+  {{else}}
+  <p class="help">This is the first question on the form, so there is nothing
+  above it for its visibility to depend on.</p>
+  {{end}}
+
+  <button type="submit">Save this question</button>
+</form>
+
+<p><a href="/forms/{{.FormID}}/edit">Back to the form</a></p>
+{{end}}

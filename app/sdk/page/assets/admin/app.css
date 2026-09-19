@@ -376,3 +376,103 @@ form.inline {
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+/* --- the form builder ----------------------------------------------------
+
+   Added with app/domain/formapp. This surface has no script-src at all, so a
+   builder here is a list of things with buttons beside them and a page per
+   thing -- which is why what follows is a handful of form controls the pages
+   above never needed rather than anything resembling a canvas. */
+
+input[type="url"],
+input[type="datetime-local"],
+select,
+textarea {
+  width: 100%;
+  padding: 0.55rem 0.6rem;
+  font: inherit;
+  color: inherit;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+textarea {
+  /* A list one per line, and a monospaced box for it: the bar separating a
+     stored value from its label only lines up if the characters do. */
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.95rem;
+  resize: vertical;
+}
+
+select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* A disabled reorder button. It stays in the row rather than disappearing at
+   the ends of the list, so the two buttons do not move under the pointer as
+   something travels up the table. */
+button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* The two reorder buttons share a cell and should not be pushed onto separate
+   lines by a narrow column. */
+.nowrap { white-space: nowrap; }
+
+/* Everything formbus.Check has to say about a definition, in one block. On a
+   draft it reads as what is left to do and on a live form as why a change was
+   refused, and it is the same list either way -- so it looks the same either
+   way rather than borrowing .problem, which is about something having gone
+   wrong. */
+.problems {
+  margin: 0 0 1.25rem;
+  padding: 0.75rem 0.9rem 0.75rem 1rem;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--wrong);
+  border-radius: 4px;
+  background: var(--tint);
+}
+
+.problems p { margin: 0 0 0.4rem; font-weight: 600; }
+
+.problems ul { margin: 0; padding-left: 1.1rem; }
+
+.problems li { margin: 0 0 0.2rem; }
+
+/* The two lines somebody pastes into their own website. Selectable, wrapping
+   rather than scrolling, and visibly a thing to copy rather than a thing to
+   read. */
+.snippet {
+  margin: 0 0 1rem;
+  padding: 0.75rem 0.9rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: var(--tint);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+/* A field's own rules, and the "not used by this kind" note beside a heading.
+   Quieter than the thing it describes, and never the only way something is
+   said. */
+.aside {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 400;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+  padding: 0.05rem 0.25rem;
+  background: var(--tint);
+  border-radius: 3px;
+}
+
+h3 { font-size: 1rem; margin: 1.5rem 0 0.5rem; }

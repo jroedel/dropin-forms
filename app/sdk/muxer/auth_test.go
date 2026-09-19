@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
+	"github.com/jroedel/dropin-forms/app/domain/formapp"
 	"github.com/jroedel/dropin-forms/app/domain/notifyapp"
 	"github.com/jroedel/dropin-forms/app/domain/peopleapp"
 	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
@@ -23,6 +24,8 @@ import (
 	"github.com/jroedel/dropin-forms/app/sdk/page"
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/access/stores/accessdb"
+	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
+	"github.com/jroedel/dropin-forms/business/domain/form/stores/formdb"
 	"github.com/jroedel/dropin-forms/business/domain/notify/notifybus"
 	"github.com/jroedel/dropin-forms/business/domain/notify/stores/notifydb"
 	"github.com/jroedel/dropin-forms/business/domain/submission/stores/submissiondb"
@@ -51,6 +54,12 @@ type harness struct {
 	// signs the links that page accepts.
 	notify  *notifybus.Business
 	muteKey notifybus.MuteKey
+
+	// catalogue is the form domain over both stores, so that a test can make
+	// a draft without going through the builder's own pages -- and so that
+	// every other test on this harness reads its forms the way production
+	// does, through the catalogue rather than straight out of the file store.
+	catalogue *formbus.Business
 }
 
 func newAdmin(t *testing.T, bootstrap string) harness {
@@ -78,6 +87,9 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 	if err := notifydb.Init(t.Context(), db); err != nil {
 		t.Fatalf("notifydb.Init: %v", err)
 	}
+	if err := formdb.Init(t.Context(), db); err != nil {
+		t.Fatalf("formdb.Init: %v", err)
+	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	users := userbus.NewBusiness(log, userdb.NewStore(db))
@@ -86,9 +98,15 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 	sent := &mail.Recorder{}
 
 	renderer, err := page.NewRenderer(log, page.AdminChrome(),
-		authapp.Templates, submissionapp.Templates, notifyapp.Templates, peopleapp.Templates)
+		authapp.Templates, submissionapp.Templates, notifyapp.Templates, peopleapp.Templates,
+		formapp.Templates)
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
+	}
+
+	catalogue, err := formbus.NewBusiness(log, formdb.NewStore(db), definitions)
+	if err != nil {
+		t.Fatalf("formbus.NewBusiness: %v", err)
 	}
 
 	muteKey, err := notifybus.ParseMuteKey("a-test-secret-long-enough-to-be-a-key")
@@ -127,6 +145,9 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 	for table, columns := range notifydb.Expected {
 		expected[table] = columns
 	}
+	for table, columns := range formdb.Expected {
+		expected[table] = columns
+	}
 
 	h, err := muxer.Admin(muxer.Config{
 		Log:          log,
@@ -135,7 +156,9 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 		Users:        users,
 		Access:       access,
 		Submissions:  submissions,
-		Forms:        definitions,
+		Forms:        catalogue,
+		Builder:      catalogue,
+		EmbedBaseURL: "https://f.forms.test",
 		Mail:         sent,
 		Render:       renderer,
 		Notify:       notifier,
@@ -146,7 +169,10 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 		t.Fatalf("muxer.Admin: %v", err)
 	}
 
-	return harness{h: h, users: users, access: access, sent: sent, notify: notifier, muteKey: muteKey}
+	return harness{
+		h: h, users: users, access: access, sent: sent,
+		notify: notifier, muteKey: muteKey, catalogue: catalogue,
+	}
 }
 
 func (a harness) get(t *testing.T, target string, cookie string) *httptest.ResponseRecorder {
@@ -410,6 +436,9 @@ func newAdminWithBrokenMail(t *testing.T) harness {
 	}
 	if err := notifydb.Init(t.Context(), db); err != nil {
 		t.Fatalf("notifydb.Init: %v", err)
+	}
+	if err := formdb.Init(t.Context(), db); err != nil {
+		t.Fatalf("formdb.Init: %v", err)
 	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))

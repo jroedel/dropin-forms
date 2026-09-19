@@ -11,13 +11,19 @@
 <tbody>
 {{range .Forms}}
 <tr>
-<th scope="row"><a href="/forms/{{.ID}}/submissions">{{.Title}}</a></th>
+<th scope="row"><a href="/forms/{{.ID}}/submissions">{{.Title}}</a>
+{{/* The two things admin on a form is the authority to do, under the name of
+     the form rather than hidden behind the word "admin" in the role column.
+     Both pages are otherwise reachable only by typing the address, and there
+     are two of them now, which is one more than a single overloaded link can
+     carry. A form that ships in this release answers the edit link with a
+     page saying it is changed by a deploy -- that sentence has to live
+     somewhere, and this app has no way to know which forms are which. */}}
+{{if eq .Role "admin"}}<br><span class="aside"><a href="/forms/{{.ID}}/edit">edit</a> &middot; <a href="/forms/{{.ID}}/people">people</a></span>{{end}}
+</th>
 <td class="figure">{{.Count}}</td>
 <td>{{if .Open}}open{{else}}closed{{end}}</td>
-{{/* The role is a link when it is one that can do something here: admin on a
-     form is the authority to decide who else may read it, and the page that
-     does that is otherwise reachable only by typing the address. */}}
-<td>{{if eq .Role "admin"}}<a href="/forms/{{.ID}}/people">{{.Role}}</a>{{else}}{{.Role}}{{end}}</td>
+<td>{{.Role}}</td>
 {{if $.Email}}
 {{/* The one column on this page that is about the reader rather than about
      the form, which is why it says "you" either way round. */}}
@@ -33,5 +39,9 @@
      rather than look broken. */}}
 <p>You do not have access to any forms yet. Whoever administers this service
 can give you access to one.</p>
+{{end}}
+
+{{if .SiteAdmin}}
+<p><a href="/build">Build a form</a></p>
 {{end}}
 {{end}}

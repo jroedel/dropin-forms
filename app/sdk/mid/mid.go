@@ -10,7 +10,13 @@
 //	Authenticate     establishes who is asking, and refuses nobody
 //	  Require        refuses a request with no account behind it
 //	    RequireFormRole  refuses an account with no grant on this form
+//	    RequireSiteAdmin refuses an account that does not hold the service
 //	      the app
+//
+// The last two are alternatives rather than a pair: a route names a form in
+// its path and takes the first, or it does not and takes the second. Only the
+// routes that create a form are in the second case, because a form that does
+// not exist yet has no grant anybody could hold.
 //
 // [Authenticate] never refuses, which is what lets the sign-in page live in
 // the same chain as everything it protects. [Require] comes next, so a route
@@ -264,6 +270,59 @@ func RequireFormRole(log *slog.Logger, auth Authorizer, want accessbus.Role) web
 				log.Info("refused for want of a grant",
 					"request_id", requestID, "user_id", u.ID, "form", form.String(), "want", want)
 				http.Error(w, "you are signed in as "+u.Email.String()+", which does not have access to this form.", http.StatusForbidden)
+
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequireSiteAdmin refuses a signed-in account that does not administer the
+// whole service.
+//
+// It exists for exactly one shape of route: the one that creates a form. Every
+// other gated route in this service names a form in its path and asks
+// [RequireFormRole] whether this account holds a role on that form, but a form
+// that does not exist yet has no grant anybody could hold -- so the question
+// has to be the other one, and the site-wide grant is the only answer to it.
+//
+// accessbus.Allowed already consults the site-wide grant as a fallback for
+// every form, so this is the same read with the form left out rather than a
+// second authority. The refusals match RequireFormRole's, minus the 404: there
+// is no slug here to be wrong about.
+func RequireSiteAdmin(log *slog.Logger, auth Authorizer, want accessbus.Role) web.Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestID := web.RequestIDFrom(r.Context())
+
+			u, ok := UserFrom(r.Context())
+			if !ok {
+				log.Error("a route behind RequireSiteAdmin is not behind Require",
+					"request_id", requestID, "path", r.URL.Path)
+				http.Error(w, "you need to be signed in to do that.", http.StatusForbidden)
+
+				return
+			}
+
+			// The zero slug is the site-wide grant's own form, which is what
+			// accessbus.Grant.SiteWide reports on. Asking Allowed about it is
+			// asking whether this account holds the service rather than any
+			// one form.
+			allowed, err := auth.Allowed(r.Context(), u.ID, types.Slug{}, want)
+			if err != nil {
+				log.Error("the site-wide grant could not be checked",
+					"request_id", requestID, "user_id", u.ID, "error", err)
+				http.Error(w, "something went wrong at our end. Please try again shortly.", http.StatusInternalServerError)
+
+				return
+			}
+
+			if !allowed {
+				log.Info("refused for want of a site-wide grant",
+					"request_id", requestID, "user_id", u.ID, "want", want)
+				http.Error(w, "you are signed in as "+u.Email.String()+", which does not administer this service. Whoever does can make a form for you, or give you the run of the place.", http.StatusForbidden)
 
 				return
 			}

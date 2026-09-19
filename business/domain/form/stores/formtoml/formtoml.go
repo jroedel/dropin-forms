@@ -32,7 +32,12 @@ import (
 )
 
 // ErrNotFound is returned for a slug no definition claims.
-var ErrNotFound = errors.New("no such form")
+//
+// It is formbus.ErrNotFound rather than a value of this package's own, because
+// there are two stores now and a caller asking "is this form missing" should
+// not have to know which one answered. Every existing errors.Is against this
+// name keeps working, which is why the name stays.
+var ErrNotFound = formbus.ErrNotFound
 
 // Store holds every definition read at startup. It is immutable after Load and
 // therefore safe to read from any number of request goroutines with no lock.

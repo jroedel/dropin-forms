@@ -26,6 +26,13 @@ admin_addr = "127.0.0.1:8411"
 # sending a single request, and whoever receives the mail cannot tell.
 admin_base_url = "https://forms.schoenstatt.link"
 
+# The public surface's own origin. Optional, and only the form builder reads
+# it: it is what lets the builder show the two lines somebody pastes into their
+# website, and the link that opens the real form. Without it the builder says
+# to set this instead of printing a snippet that names a guessed host -- which
+# would fail silently on somebody else's page.
+embed_base_url = "https://f.schoenstatt.link"
+
 # How long in-flight requests get after a stop signal. Long enough for a
 # submission to finish writing, short enough that a restart is not a wait.
 shutdown_grace = "15s"

@@ -14,12 +14,15 @@ import (
 	"fmt"
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
+	"github.com/jroedel/dropin-forms/app/domain/formapp"
 	"github.com/jroedel/dropin-forms/app/domain/notifyapp"
 	"github.com/jroedel/dropin-forms/app/domain/peopleapp"
 	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/access/stores/accessdb"
+	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
+	"github.com/jroedel/dropin-forms/business/domain/form/stores/formdb"
 	"github.com/jroedel/dropin-forms/business/domain/form/stores/formtoml"
 	"github.com/jroedel/dropin-forms/business/domain/notify/notifybus"
 	"github.com/jroedel/dropin-forms/business/domain/notify/stores/notifydb"
@@ -87,6 +90,7 @@ func run() error {
 		fmt.Printf("  embed          %s\n", cfg.Server.EmbedAddr)
 		fmt.Printf("  admin          %s\n", cfg.Server.AdminAddr)
 		fmt.Printf("  admin base url %s\n", cfg.Server.AdminBaseURL)
+		fmt.Printf("  embed base url %s\n", either(cfg.Server.EmbedBaseURL != "", cfg.Server.EmbedBaseURL, "not set: the builder cannot show the paste snippet"))
 		fmt.Printf("  database       %s\n", cfg.DB.Path)
 		fmt.Printf("  embed origins  %d\n", len(cfg.Embed.allowed))
 		fmt.Printf("  mail relay     %s\n", either(cfg.Mail.Host != "", "configured", "none: mail will not be sent"))
@@ -155,6 +159,14 @@ func run() error {
 		return err
 	}
 
+	// The definitions authored in a browser. No ordering constraint of its
+	// own: a form references nothing, and the grants that reference a form do
+	// so by slug rather than by key, because the other half of the catalogue
+	// is files.
+	if err := formdb.Init(ctx, db); err != nil {
+		return err
+	}
+
 	// The schema is checked once at startup as well as on every health
 	// request. Failing here means the process never begins serving, which is
 	// what should happen when a binary and a database disagree -- the deploy
@@ -166,7 +178,7 @@ func run() error {
 	expected := sqldb.Expected{}
 	for _, part := range []sqldb.Expected{
 		sqldb.Infrastructure, userdb.Expected, accessdb.Expected, submissiondb.Expected,
-		paydb.Expected, notifydb.Expected,
+		paydb.Expected, notifydb.Expected, formdb.Expected,
 	} {
 		for table, columns := range part {
 			if _, clash := expected[table]; clash {
@@ -189,9 +201,20 @@ func run() error {
 	// missing file -- only for a definition that does not pass Check, which is
 	// a build-time mistake caught here at the last possible moment rather
 	// than on the first request for that form.
-	definitions, err := formtoml.Load(forms.FS)
+	builtIn, err := formtoml.Load(forms.FS)
 	if err != nil {
 		return fmt.Errorf("the form definitions are not usable: %w", err)
+	}
+
+	// The catalogue over both stores, and the one thing every other part of
+	// this service reads a form through. It answers the same ByID and All the
+	// file store did, from a snapshot it rebuilds whenever the builder writes
+	// -- formbus.Business is explicit about why the read path must not be a
+	// query, and the short version is that the per-form CSP is chosen above
+	// the mux on every request this service takes.
+	definitions, err := formbus.NewBusiness(log, formdb.NewStore(db), builtIn)
+	if err != nil {
+		return err
 	}
 
 	sender, howMail, err := newSender(log, cfg)
@@ -235,7 +258,8 @@ func run() error {
 	}
 
 	adminPages, err := page.NewRenderer(log, page.AdminChrome(),
-		authapp.Templates, submissionapp.Templates, notifyapp.Templates, peopleapp.Templates)
+		authapp.Templates, submissionapp.Templates, notifyapp.Templates, peopleapp.Templates,
+		formapp.Templates)
 	if err != nil {
 		return err
 	}
@@ -254,6 +278,8 @@ func run() error {
 		Access:       access,
 		Submissions:  submissions,
 		Forms:        definitions,
+		Builder:      definitions,
+		EmbedBaseURL: cfg.Server.EmbedBaseURL,
 		Mail:         sender,
 		Render:       adminPages,
 		AdminBaseURL: cfg.Server.AdminBaseURL,
@@ -300,6 +326,12 @@ func run() error {
 		"embed", cfg.Server.EmbedAddr,
 		"admin", cfg.Server.AdminAddr,
 		"admin_base_url", cfg.Server.AdminBaseURL,
+
+		// Whether the builder can show somebody the two lines they paste into
+		// their website. Not a failure when it is absent, and worth a word
+		// because the symptom otherwise is a page that quietly omits the one
+		// thing somebody came to it for.
+		"embed_base_url", either(cfg.Server.EmbedBaseURL != "", cfg.Server.EmbedBaseURL, "not set: the builder cannot show the paste snippet"),
 		"db", cfg.DB.Path,
 		"embed_allowed_origins", len(cfg.Embed.allowed),
 		"mail", howMail,

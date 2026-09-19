@@ -1,0 +1,37 @@
+{{define "title"}}New form{{end}}
+
+{{define "masthead"}}<a href="/build">Build</a>{{end}}
+
+{{define "content"}}
+<h1>New form</h1>
+
+{{if .Problem}}<p class="problem">{{.Problem}}</p>{{end}}
+
+<p class="lede">Two answers now; everything else is decided on the next page,
+where you add the questions.</p>
+
+<form method="post" action="/build/new">
+  <div class="field">
+    <label for="slug">Its name in the web address</label>
+    <p class="help">Lowercase letters, digits and hyphens, like
+    <code>feast-lunch-2026</code>. This is the one thing that cannot be changed
+    afterwards: it goes into the line you paste onto your website, so changing
+    it would break every page the form is already on.</p>
+    <input type="text" id="slug" name="slug" value="{{.Slug}}"
+           autocomplete="off" required maxlength="60"
+           pattern="[a-z0-9]([a-z0-9-]*[a-z0-9])?">
+  </div>
+
+  <div class="field">
+    <label for="title">Its title</label>
+    <p class="help">The heading above the form. This can be changed at any
+    time.</p>
+    <input type="text" id="title" name="title" value="{{.Title}}"
+           autocomplete="off" required maxlength="200">
+  </div>
+
+  <button type="submit">Create it</button>
+</form>
+
+<p><a href="/build">Back to the list</a></p>
+{{end}}
