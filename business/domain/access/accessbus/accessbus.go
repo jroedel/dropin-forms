@@ -63,15 +63,35 @@ const (
 	// This is the role for whoever is counting lunches.
 	RoleResults Role = "results"
 
-	// RoleAdmin edits the form and manages who else may see it, and includes
+	// RoleDoor marks an order collected at the will-call table, and includes
 	// everything RoleResults can do.
+	//
+	// It exists because the two authorities either side of it are both wrong
+	// for somebody working a table on their own phone. RoleResults changes
+	// nothing, which is the boundary the roles were drawn on and is worth
+	// keeping -- "the reading role can now also write one field" is a change
+	// nobody can see six months later. RoleAdmin is too much: since the
+	// builder shipped it means editing the form and setting the ticket price,
+	// and the morning the tickets are sold is the worst moment for two
+	// volunteers to hold that.
+	//
+	// So it is the narrowest thing that does the job: read this form's
+	// submissions, and record that somebody was handed their tokens.
+	RoleDoor Role = "door"
+
+	// RoleAdmin edits the form and manages who else may see it, and includes
+	// everything RoleDoor and RoleResults can do.
 	RoleAdmin Role = "admin"
 )
 
 // roles is every Role, weakest first. The order is the implication order, and
 // [Role.Includes] reads it -- so adding a role means putting it in the right
 // place here rather than editing a comparison.
-var roles = []Role{RoleResults, RoleAdmin}
+//
+// RoleDoor went in the middle rather than on the end, which is the whole of
+// what adding it took: whoever works the table can read the list they are
+// checking off, and an administrator can work the table.
+var roles = []Role{RoleResults, RoleDoor, RoleAdmin}
 
 // The errors this package returns.
 var (

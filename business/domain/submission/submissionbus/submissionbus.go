@@ -77,6 +77,12 @@ var (
 	// ErrNotAStatus is a status value this binary does not recognise.
 	ErrNotAStatus = errors.New("not a submission status")
 
+	// ErrNotCollectable is an order that cannot be handed over, because it has
+	// not been paid for. It is not a fault in the request: the volunteer
+	// tapped a real button on a real order, and the answer is that this one
+	// owes money, which is a sentence for a person rather than an error.
+	ErrNotCollectable = errors.New("that order has not been paid for")
+
 	// ErrDailyCap is a form that has taken as many submissions today as its
 	// author said it should. Not a fault in the submission: the person who
 	// meets it filled everything in correctly and is being turned away by a
@@ -139,6 +145,24 @@ type Submission struct {
 // Paid reports whether there is money to collect.
 func (s Submission) Paid() bool { return s.Answers.Total > 0 }
 
+// Collection is an order whose tokens were handed over at the will-call table.
+//
+// Its own type and its own row rather than a field on [Submission], because a
+// submission is immutable apart from its status -- see the package comment --
+// and this is not a payment status. It is a fact about a morning: who stood at
+// the table, and when.
+type Collection struct {
+	SubmissionID types.ID
+	Form         types.Slug
+	CollectedAt  time.Time
+
+	// CollectedBy is the account that recorded it. It is the reason this is a
+	// row rather than a flag: the alternative to giving each volunteer an
+	// account was one shared between them, which loses exactly this, on the
+	// one surface where knowing who handed over what is the point.
+	CollectedBy types.ID
+}
+
 // New is what the app layer supplies to accept one.
 type New struct {
 	Answers  formbus.Answers
@@ -181,6 +205,22 @@ type Storer interface {
 	// PruneNonces forgets spent nonces older than the grants that carried
 	// them could possibly be. On a timer, never per request.
 	PruneNonces(ctx context.Context, before time.Time) error
+
+	// Collect records a collection, reporting false when there already was
+	// one -- and returning the row that won either way, so the caller can say
+	// who got there first.
+	//
+	// The bool rather than an error is the shape Accept uses above, for the
+	// same reason: two volunteers tapping the same order from two phones is an
+	// outcome, not a fault.
+	Collect(ctx context.Context, c Collection) (Collection, bool, error)
+
+	// Uncollect removes one.
+	Uncollect(ctx context.Context, id types.ID) error
+
+	// CollectionsForForm reads every collection on a form, keyed by
+	// submission, in one query.
+	CollectionsForForm(ctx context.Context, form types.Slug) (map[types.ID]Collection, error)
 }
 
 // Business is the set of operations on submissions.
@@ -384,4 +424,84 @@ func (b *Business) PruneNonces(ctx context.Context, now time.Time) error {
 	}
 
 	return nil
+}
+
+// Collect records that an order's tokens were handed over.
+//
+// # Only a settled order
+//
+// An order that still owes money is refused with [ErrNotCollectable], and that
+// refusal is the rule this method exists for. The will-call table hands over
+// one token per ticket bought, and "bought" means Stripe said so -- a pending
+// order is somebody who reached the checkout page and closed it. Handing that
+// person a plate is the mistake the list is there to prevent, and it is not one
+// the volunteer can be expected to catch while a queue waits.
+//
+// [Status.Settled] is the existing word for this and is reused rather than
+// restated: a form that sells nothing produces StatusReceived, which is as
+// final as StatusPaid, and a definition like that should still be collectable
+// if anybody ever runs a free sign-up through the same table.
+//
+// # Collecting twice
+//
+// Not an error. The second caller is told which of them recorded it and when,
+// and the returned bool says whether this call was the one that wrote. Two
+// volunteers working one queue will tap the same order, and a page that
+// answered that with a failure would be a page they learn to ignore.
+func (b *Business) Collect(ctx context.Context, now time.Time, id, by types.ID) (Collection, bool, error) {
+	s, err := b.store.ByID(ctx, id)
+	if err != nil {
+		return Collection{}, false, fmt.Errorf("reading the submission: %w", err)
+	}
+
+	if !s.Status.Settled() {
+		return Collection{}, false, fmt.Errorf("%w: %s is %s", ErrNotCollectable, id, s.Status)
+	}
+
+	c, wrote, err := b.store.Collect(ctx, Collection{
+		SubmissionID: s.ID,
+		Form:         s.Form,
+		CollectedAt:  now.UTC(),
+		CollectedBy:  by,
+	})
+	if err != nil {
+		return Collection{}, false, fmt.Errorf("recording the collection: %w", err)
+	}
+
+	if wrote {
+		b.log.Info("order collected",
+			"submission_id", id.String(), "form", s.Form.String(), "by", by.String())
+	}
+
+	return c, wrote, nil
+}
+
+// Uncollect takes the mark off again.
+//
+// It exists because the mis-tap is certain: a phone, a queue, a list of names
+// that look alike. Undoing it has to be one button and not a conversation with
+// whoever administers the service.
+//
+// Deliberately not restricted to whoever marked it. The two people working the
+// table are working one queue, and a correction that only its author could make
+// would be a correction that waits for them to come back from the car park.
+// Who marked it is still recorded, and the page shows it.
+func (b *Business) Uncollect(ctx context.Context, id types.ID) error {
+	if err := b.store.Uncollect(ctx, id); err != nil {
+		return fmt.Errorf("removing the collection: %w", err)
+	}
+
+	b.log.Info("collection undone", "submission_id", id.String())
+
+	return nil
+}
+
+// Collected is every collection on a form, keyed by submission.
+func (b *Business) Collected(ctx context.Context, form types.Slug) (map[types.ID]Collection, error) {
+	out, err := b.store.CollectionsForForm(ctx, form)
+	if err != nil {
+		return nil, fmt.Errorf("reading the collections on %s: %w", form, err)
+	}
+
+	return out, nil
 }

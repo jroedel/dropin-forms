@@ -25,6 +25,7 @@ var now = time.Date(2026, 9, 20, 15, 0, 0, 0, time.UTC)
 type memStore struct {
 	subs   map[types.ID]submissionbus.Submission
 	nonces map[string]time.Time
+	handed map[types.ID]submissionbus.Collection
 
 	// counted is how many times the day's submissions have been counted, so
 	// that a test can assert an uncapped form does not pay for the query.
@@ -37,6 +38,7 @@ func newMemStore() *memStore {
 	return &memStore{
 		subs:   map[types.ID]submissionbus.Submission{},
 		nonces: map[string]time.Time{},
+		handed: map[types.ID]submissionbus.Collection{},
 	}
 }
 
@@ -526,4 +528,183 @@ func TestNoCapMeansNoCounting(t *testing.T) {
 	if store.counted != 0 {
 		t.Errorf("the day's submissions were counted %d times for a form with no cap", store.counted)
 	}
+}
+
+// The will-call table's three operations, on the same fake. Collect is
+// insert-if-absent, which is the property the real store gets from a primary
+// key and this one has to spell out.
+
+func (m *memStore) Collect(_ context.Context, c submissionbus.Collection) (submissionbus.Collection, bool, error) {
+	if m.fail != nil {
+		return submissionbus.Collection{}, false, m.fail
+	}
+
+	if won, already := m.handed[c.SubmissionID]; already {
+		return won, false, nil
+	}
+
+	m.handed[c.SubmissionID] = c
+
+	return c, true, nil
+}
+
+func (m *memStore) Uncollect(_ context.Context, id types.ID) error {
+	if m.fail != nil {
+		return m.fail
+	}
+
+	delete(m.handed, id)
+
+	return nil
+}
+
+func (m *memStore) CollectionsForForm(_ context.Context, form types.Slug) (map[types.ID]submissionbus.Collection, error) {
+	if m.fail != nil {
+		return nil, m.fail
+	}
+
+	out := map[types.ID]submissionbus.Collection{}
+
+	for id, c := range m.handed {
+		if c.Form == form {
+			out[id] = c
+		}
+	}
+
+	return out, nil
+}
+
+// The will-call table's rules. Three of them, and the first is the one the
+// page exists to enforce.
+
+// An order that still owes money gets no tokens. The volunteer cannot be
+// expected to notice while a queue waits, so the refusal is the domain's.
+func TestAnUnpaidOrderCannotBeCollected(t *testing.T) {
+	b, store := newBusiness()
+
+	pending := seed(t, store, submissionbus.StatusPending)
+
+	_, _, err := b.Collect(t.Context(), now, pending, types.NewID())
+	if !errors.Is(err, submissionbus.ErrNotCollectable) {
+		t.Errorf("collecting a pending order = %v, want ErrNotCollectable", err)
+	}
+
+	handed, err := b.Collected(t.Context(), mustSlug(t, "supper-2026"))
+	if err != nil {
+		t.Fatalf("Collected: %v", err)
+	}
+
+	if len(handed) != 0 {
+		t.Errorf("a refused collection was recorded anyway: %v", handed)
+	}
+}
+
+// Paid, and received on a form that charges nothing, are both collectable.
+// Settled is the existing word for "final" and is reused rather than restated.
+func TestASettledOrderCanBeCollected(t *testing.T) {
+	for _, status := range []submissionbus.Status{submissionbus.StatusPaid, submissionbus.StatusReceived} {
+		t.Run(status.String(), func(t *testing.T) {
+			b, store := newBusiness()
+
+			id := seed(t, store, status)
+			by := types.NewID()
+
+			c, wrote, err := b.Collect(t.Context(), now, id, by)
+			if err != nil {
+				t.Fatalf("Collect: %v", err)
+			}
+
+			if !wrote {
+				t.Error("the first collection reported that somebody else got there first")
+			}
+
+			if c.CollectedBy != by || !c.CollectedAt.Equal(now.UTC()) {
+				t.Errorf("collection = %+v, want it recorded against %s at %v", c, by, now.UTC())
+			}
+		})
+	}
+}
+
+// Two volunteers tapping the same order is the ordinary case on a table worked
+// by two people. The second is told who got there first rather than shown a
+// failure, and nothing is overwritten.
+func TestCollectingTwiceReportsWhoGotThereFirst(t *testing.T) {
+	b, store := newBusiness()
+
+	id := seed(t, store, submissionbus.StatusPaid)
+
+	first := types.NewID()
+	second := types.NewID()
+
+	if _, wrote, err := b.Collect(t.Context(), now, id, first); err != nil || !wrote {
+		t.Fatalf("the first collection: wrote %v, err %v", wrote, err)
+	}
+
+	later := now.Add(3 * time.Minute)
+
+	c, wrote, err := b.Collect(t.Context(), later, id, second)
+	if err != nil {
+		t.Fatalf("the second collection: %v", err)
+	}
+
+	if wrote {
+		t.Error("the second collection overwrote the first")
+	}
+
+	if c.CollectedBy != first {
+		t.Errorf("collected by %s, want the one who got there first, %s", c.CollectedBy, first)
+	}
+
+	if !c.CollectedAt.Equal(now.UTC()) {
+		t.Errorf("collected at %v, want the first time, %v", c.CollectedAt, now.UTC())
+	}
+}
+
+// Undoing is not restricted to whoever marked it: the two people working the
+// table are working one queue, and a correction only its author could make is
+// one that waits for them to come back.
+func TestAnybodyAtTheTableCanUndo(t *testing.T) {
+	b, store := newBusiness()
+
+	id := seed(t, store, submissionbus.StatusPaid)
+
+	if _, _, err := b.Collect(t.Context(), now, id, types.NewID()); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+
+	if err := b.Uncollect(t.Context(), id); err != nil {
+		t.Fatalf("Uncollect: %v", err)
+	}
+
+	handed, err := b.Collected(t.Context(), mustSlug(t, "supper-2026"))
+	if err != nil {
+		t.Fatalf("Collected: %v", err)
+	}
+
+	if len(handed) != 0 {
+		t.Errorf("the collection is still there: %v", handed)
+	}
+
+	// And it can be handed over again afterwards, which is the point of
+	// undoing rather than of a separate "wrongly collected" state.
+	if _, wrote, err := b.Collect(t.Context(), now, id, types.NewID()); err != nil || !wrote {
+		t.Errorf("collecting again after an undo: wrote %v, err %v", wrote, err)
+	}
+}
+
+// seed puts one submission in the store at a given status and returns its id.
+func seed(t *testing.T, store *memStore, status submissionbus.Status) types.ID {
+	t.Helper()
+
+	id := types.NewID()
+
+	store.subs[id] = submissionbus.Submission{
+		ID:        id,
+		Form:      mustSlug(t, "supper-2026"),
+		Status:    status,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	return id
 }

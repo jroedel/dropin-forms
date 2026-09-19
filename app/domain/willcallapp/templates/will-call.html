@@ -1,0 +1,106 @@
+{{define "title"}}Will-call: {{.Title}}{{end}}
+
+{{define "head"}}
+{{/* The refresh, and the reason this page needs no script. It carries the
+     current search so that reloading does not silently clear the filter, and
+     it is absent entirely when somebody has paused it to type. */}}
+{{if .Live}}<meta http-equiv="refresh" content="{{.Refresh}};url={{.RefreshURL}}">{{end}}
+{{end}}
+
+{{define "masthead"}}<a href="/forms">Forms</a>{{end}}
+
+{{define "content"}}
+<h1>Will-call</h1>
+
+<p class="crumb">{{.Title}}</p>
+
+{{if .Done}}<p class="notice">{{.Done}}</p>{{end}}
+{{if .Problem}}<p class="problem">{{.Problem}}</p>{{end}}
+
+<div class="summary-cards">
+<p><strong>{{.Waiting}}</strong> still to come</p>
+<p><strong>{{.Tokens}}</strong> tokens to hand out</p>
+<p><strong>{{.Collected}}</strong> collected</p>
+</div>
+
+<form method="get" action="/forms/{{.FormID}}/will-call" class="search">
+  <label for="q">Find somebody</label>
+  <input type="search" id="q" name="q" value="{{.Query}}"
+         autocomplete="off" placeholder="a name, or part of one">
+  {{/* The pause carries through the search, so pausing does not also clear
+       what somebody has typed. */}}
+  {{if not .Live}}<input type="hidden" name="live" value="off">{{end}}
+  <button type="submit">Search</button>
+</form>
+
+<p class="aside">
+{{if .Live}}
+Updating every {{.Refresh}} seconds. <a href="{{.ToggleURL}}">Pause it</a> while you type.
+{{else}}
+Paused, so this list may be out of date. <a href="{{.ToggleURL}}">Start updating again</a>.
+{{end}}
+</p>
+
+{{if .Filtered}}
+{{/* Said out loud, because a volunteer who cannot find a name needs to know
+     the list is filtered rather than conclude the order is not there. */}}
+<p class="notice">Showing {{.Showing}} of {{.Waiting}} waiting and {{.Collected}} collected.
+<a href="/forms/{{.FormID}}/will-call{{if not .Live}}?live=off{{end}}">Show everybody</a></p>
+{{end}}
+
+{{if .Any}}
+<table class="listing will-call">
+<thead>
+<tr>
+<th scope="col">Who</th>
+<th scope="col">Tokens</th>
+<th scope="col"><span class="visually-hidden">Hand over</span></th>
+</tr>
+</thead>
+<tbody>
+{{range .Orders}}
+<tr {{if .Collected}}class="done"{{end}}>
+<th scope="row">
+{{.Who}}
+<br><span class="aside">{{.Email}}</span>
+<br><span class="aside">paid {{.Total}} at {{.When}}</span>
+{{if .Collected}}<br><span class="aside">handed over by {{.By}} at {{.At}}</span>{{end}}
+</th>
+<td>
+{{.Bought}}
+{{if .Tokens}}<br><span class="tally">{{.Tokens}}</span>{{end}}
+</td>
+<td>
+{{/* The search and the pause travel with the button, so handing somebody
+     their tokens does not throw away the filter the volunteer is working
+     through. */}}
+{{if .Collected}}
+<form method="post" action="/forms/{{$.FormID}}/will-call/{{.ID}}/undo" class="inline">
+  <input type="hidden" name="q" value="{{$.Query}}">
+  {{if not $.Live}}<input type="hidden" name="live" value="off">{{end}}
+  <button type="submit" class="quiet">Undo</button>
+</form>
+{{else}}
+<form method="post" action="/forms/{{$.FormID}}/will-call/{{.ID}}/collect" class="inline">
+  <input type="hidden" name="q" value="{{$.Query}}">
+  {{if not $.Live}}<input type="hidden" name="live" value="off">{{end}}
+  <button type="submit">Hand over</button>
+</form>
+{{end}}
+</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else if .Query}}
+<p>Nobody matching “{{.Query}}”.
+<a href="/forms/{{.FormID}}/will-call{{if not .Live}}?live=off{{end}}">Show everybody</a></p>
+{{else}}
+<p>Nothing has been paid for on this form yet. Orders appear here as soon as
+they are paid, without this page being reloaded by hand.</p>
+{{end}}
+
+<p class="footnote">Only paid orders are here. Somebody whose payment did not
+go through can pay at the table, and they appear within {{.Refresh}}
+seconds.</p>
+{{end}}

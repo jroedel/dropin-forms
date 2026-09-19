@@ -165,6 +165,13 @@ type indexRow struct {
 	Count int
 	Open  bool
 
+	// Door says whether this account may work this form's will-call table, so
+	// that the row can offer it. Computed here rather than compared in the
+	// template, because "door or anything above it" is accessbus.Includes's
+	// question and a string comparison in markup is the second place it would
+	// be answered.
+	Door bool
+
 	// Emailed says whether this account hears about submissions to this form.
 	// Shown because "am I getting these" is a question somebody asks while
 	// looking at the list, and because the answer is the one thing on the page
@@ -270,6 +277,7 @@ func (a app) index(w http.ResponseWriter, r *http.Request) {
 			ID:      f.ID.String(),
 			Title:   f.Title,
 			Role:    role.String(),
+			Door:    role.Includes(accessbus.RoleDoor),
 			Emailed: !quiet[f.ID],
 			Count:   len(subs),
 			Open:    f.Open(now),

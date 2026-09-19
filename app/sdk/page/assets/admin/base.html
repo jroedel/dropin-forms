@@ -6,6 +6,12 @@
 <title>{{block "title" .Data}}Schoenstatt Austin forms{{end}}</title>
 <link rel="stylesheet" href="{{.Stylesheet}}">
 <link rel="icon" href="data:,">
+{{/* A page may add to the head. Exactly one does: the will-call table, which
+     reloads itself with <meta http-equiv="refresh"> because this surface has
+     no script-src and a list that stopped updating is wrong within a minute.
+     Kept as a block rather than a field on the shell so that the layout does
+     not grow a setting for every page that wants one line. */}}
+{{block "head" .Data}}{{end}}
 </head>
 <body>
 <header class="masthead">

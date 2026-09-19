@@ -80,6 +80,7 @@ import (
 	"github.com/jroedel/dropin-forms/app/domain/paymentapp"
 	"github.com/jroedel/dropin-forms/app/domain/peopleapp"
 	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
+	"github.com/jroedel/dropin-forms/app/domain/willcallapp"
 	"github.com/jroedel/dropin-forms/app/sdk/health"
 	"github.com/jroedel/dropin-forms/app/sdk/mid"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
@@ -125,6 +126,16 @@ type Config struct {
 	// surface renders them and the admin surface names their fields as
 	// columns.
 	Forms submissionapp.Forms
+
+	// Table is what the will-call page changes: the same submissions
+	// submissionapp reads, plus the three operations of the door. A separate
+	// field from Submissions, and deliberately the wider interface of the two,
+	// so that the read-only surface cannot acquire a write by being handed the
+	// wrong value.
+	//
+	// Optional: without it the will-call routes are not mounted, which is
+	// right for an installation that has no table to work.
+	Table willcallapp.Orders
 
 	// Builder is the write half of the form domain, and the one dependency
 	// here that only one app has. Optional: without it the service serves
@@ -418,6 +429,25 @@ func Admin(cfg Config) (http.Handler, error) {
 	}
 
 	peopleapp.Routes(mux, pc, guard, admins)
+
+	// The will-call table, behind the door role -- the middle of the three,
+	// which reads this form's submissions and marks one collected and can do
+	// nothing else. accessbus.RoleDoor says why neither neighbour would do:
+	// results cannot write, and admin has meant setting the ticket price ever
+	// since the builder shipped.
+	//
+	// Mounted only when there is somewhere to record a collection.
+	if cfg.Table != nil {
+		door := mid.RequireFormRole(cfg.Log, cfg.Access, accessbus.RoleDoor)
+
+		willcallapp.Routes(mux, willcallapp.Config{
+			Log:      cfg.Log,
+			Forms:    cfg.Forms,
+			Orders:   cfg.Table,
+			Accounts: cfg.Users,
+			Render:   cfg.Render,
+		}, guard, door)
+	}
 
 	// The builder, behind the same per-form admin gate as the people page for
 	// everything that names a form, and behind a site-wide one for the routes

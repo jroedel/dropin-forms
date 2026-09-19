@@ -582,3 +582,176 @@ func TestUnpaidFindsOrdersInsideTheWindowOnly(t *testing.T) {
 		t.Errorf("Unpaid returned them out of order: %v, %v", got[0].CreatedAt, got[1].CreatedAt)
 	}
 }
+
+// The collections table. What is worth asserting here rather than in the
+// business layer is the once-only property, because it is a primary key doing
+// the work rather than a check anybody performs.
+
+// Two volunteers tapping the same order from two phones. One row is written
+// and the one that lost is told who won -- the same shape as a replayed grant.
+func TestOnlyOneCollectionIsEverRecorded(t *testing.T) {
+	_, store := open(t)
+
+	sub := sample(t)
+	if _, err := store.Accept(t.Context(), sub, "a-nonce"); err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+
+	first := types.NewID()
+	second := types.NewID()
+
+	won, wrote, err := store.Collect(t.Context(), submissionbus.Collection{
+		SubmissionID: sub.ID, Form: sub.Form, CollectedAt: now, CollectedBy: first,
+	})
+	if err != nil || !wrote {
+		t.Fatalf("the first collection: wrote %v, err %v", wrote, err)
+	}
+
+	if won.CollectedBy != first {
+		t.Errorf("the first collection was recorded against %s, want %s", won.CollectedBy, first)
+	}
+
+	later := now.Add(2 * time.Minute)
+
+	won, wrote, err = store.Collect(t.Context(), submissionbus.Collection{
+		SubmissionID: sub.ID, Form: sub.Form, CollectedAt: later, CollectedBy: second,
+	})
+	if err != nil {
+		t.Fatalf("the second collection: %v", err)
+	}
+
+	if wrote {
+		t.Error("the second collection wrote a row")
+	}
+
+	if won.CollectedBy != first || !won.CollectedAt.Equal(now.UTC()) {
+		t.Errorf("the losing caller was told %+v, want the first collection back", won)
+	}
+}
+
+// The same thing under real concurrency, the way the spent-grant test does it:
+// one submission, many goroutines, exactly one winner.
+func TestConcurrentCollectionsProduceOneWinner(t *testing.T) {
+	_, store := open(t)
+
+	sub := sample(t)
+	if _, err := store.Accept(t.Context(), sub, "a-nonce"); err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+
+	const hands = 8
+
+	var (
+		wg     sync.WaitGroup
+		mu     sync.Mutex
+		wins   int
+		errors []error
+	)
+
+	for range hands {
+		wg.Go(func() {
+			_, wrote, err := store.Collect(t.Context(), submissionbus.Collection{
+				SubmissionID: sub.ID, Form: sub.Form, CollectedAt: now, CollectedBy: types.NewID(),
+			})
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			if err != nil {
+				errors = append(errors, err)
+
+				return
+			}
+
+			if wrote {
+				wins++
+			}
+		})
+	}
+
+	wg.Wait()
+
+	if len(errors) > 0 {
+		t.Fatalf("%d of %d collections failed: %v", len(errors), hands, errors)
+	}
+
+	if wins != 1 {
+		t.Errorf("%d of %d collections reported writing the row, want exactly 1", wins, hands)
+	}
+}
+
+func TestCollectionsAreReadBackByForm(t *testing.T) {
+	_, store := open(t)
+
+	mine := sample(t)
+	if _, err := store.Accept(t.Context(), mine, "nonce-one"); err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+
+	other := sample(t)
+	other.Form = mustSlug(t, "supper-2026")
+	other.Answers.FormID = other.Form
+
+	if _, err := store.Accept(t.Context(), other, "nonce-two"); err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+
+	by := types.NewID()
+
+	for _, sub := range []submissionbus.Submission{mine, other} {
+		if _, _, err := store.Collect(t.Context(), submissionbus.Collection{
+			SubmissionID: sub.ID, Form: sub.Form, CollectedAt: now, CollectedBy: by,
+		}); err != nil {
+			t.Fatalf("Collect: %v", err)
+		}
+	}
+
+	handed, err := store.CollectionsForForm(t.Context(), mine.Form)
+	if err != nil {
+		t.Fatalf("CollectionsForForm: %v", err)
+	}
+
+	if len(handed) != 1 {
+		t.Fatalf("read back %d collections for one form, want 1", len(handed))
+	}
+
+	c, ok := handed[mine.ID]
+	if !ok {
+		t.Fatalf("the collection is not keyed by its submission: %v", handed)
+	}
+
+	if c.CollectedBy != by || !c.CollectedAt.Equal(now.UTC()) {
+		t.Errorf("collection = %+v, want it against %s at %v", c, by, now.UTC())
+	}
+}
+
+func TestUncollectLetsAnOrderBeHandedOverAgain(t *testing.T) {
+	_, store := open(t)
+
+	sub := sample(t)
+	if _, err := store.Accept(t.Context(), sub, "a-nonce"); err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+
+	c := submissionbus.Collection{
+		SubmissionID: sub.ID, Form: sub.Form, CollectedAt: now, CollectedBy: types.NewID(),
+	}
+
+	if _, _, err := store.Collect(t.Context(), c); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+
+	if err := store.Uncollect(t.Context(), sub.ID); err != nil {
+		t.Fatalf("Uncollect: %v", err)
+	}
+
+	if _, wrote, err := store.Collect(t.Context(), c); err != nil || !wrote {
+		t.Errorf("collecting after an undo: wrote %v, err %v", wrote, err)
+	}
+
+	// Removing nothing is not an error, for the reason the method's comment
+	// gives: the caller wanted the mark gone and it is gone.
+	if err := store.Uncollect(t.Context(), types.NewID()); err != nil {
+		t.Errorf("Uncollect on an order nobody collected = %v, want nil", err)
+	}
+}
