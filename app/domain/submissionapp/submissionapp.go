@@ -142,6 +142,16 @@ type indexView struct {
 	// Email says whether this installation can record a notification
 	// preference at all, and therefore whether the column means anything.
 	Email bool
+
+	// SiteAdmin marks a reader who administers the whole service, which is the
+	// only account that can make a form. The link to the builder is shown to
+	// them alone -- offering it to everybody would be offering a page that
+	// answers 403, and a link that refuses you is worse than no link.
+	//
+	// It is not this app's business to know what the builder is, and it does
+	// not: this is a fact about the reader's grants, which this handler
+	// already has in its hand, and the template spends it on one anchor.
+	SiteAdmin bool
 }
 
 type indexRow struct {
@@ -216,6 +226,8 @@ func (a app) index(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 
 	var view indexView
+
+	view.SiteAdmin = site.Includes(accessbus.RoleAdmin)
 
 	// Which forms this account has turned email off for, in one call before
 	// the loop. A failure is not fatal to the page: the list's job is the

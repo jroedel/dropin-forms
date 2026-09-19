@@ -1,0 +1,260 @@
+{{define "title"}}Building {{if .Title}}{{.Title}}{{else}}{{.FormID}}{{end}}{{end}}
+
+{{define "masthead"}}<a href="/build">Build</a>{{end}}
+
+{{define "content"}}
+<h1>{{if .Title}}{{.Title}}{{else}}{{.FormID}}{{end}}</h1>
+
+<p class="crumb"><span class="ref">{{.FormID}}</span> &middot;
+{{if .Live}}live{{else}}not on the web{{end}} &middot;
+version <span class="ref">{{.Version}}</span> &middot;
+changed {{.Updated}}</p>
+
+{{if .Done}}<p class="notice">{{.Done}}</p>{{end}}
+{{if .Problem}}<p class="problem">{{.Problem}}</p>{{end}}
+
+{{if .Problems}}
+{{/* The same list whether it is a draft's to-do list or a refused change's
+     reasons. It is the same list: every way formbus.Check says this
+     definition could not be served. */}}
+<div class="problems">
+<p>{{if .Live}}What is wrong with the change{{else}}Before this can go on the web{{end}}:</p>
+<ul>
+{{range .Problems}}<li>{{.}}</li>{{end}}
+</ul>
+</div>
+{{end}}
+
+{{if .Live}}
+{{if .Snippet}}
+<h2>Paste this into your website</h2>
+<p class="help">Two lines, in a code block on the page the form belongs on.
+They do not change when you edit the form.</p>
+<pre class="snippet">{{.Snippet}}</pre>
+<p><a href="{{.Preview}}" rel="noreferrer">Open the form itself</a> &mdash; this
+is the real page, rendered from this definition, not a preview of it.</p>
+{{else}}
+<p class="help">To show the two lines you paste into your website, and a link
+to the form itself, set <code>server.embed_base_url</code> in the service's
+configuration file.</p>
+{{end}}
+{{end}}
+
+<h2>Questions</h2>
+
+{{if .Any}}
+<table class="listing">
+<thead>
+<tr>
+<th scope="col">Question</th>
+<th scope="col">Kind</th>
+<th scope="col"><span class="visually-hidden">Order</span></th>
+<th scope="col"><span class="visually-hidden">Remove</span></th>
+</tr>
+</thead>
+<tbody>
+{{range .Fields}}
+<tr>
+<th scope="row">
+<a href="/forms/{{$.FormID}}/edit/fields/{{.Name}}">{{.Label}}</a>
+{{if .Required}} <span class="ref">required</span>{{end}}
+<br><span class="ref">{{.Name}}</span>
+{{if .Detail}}<br><span class="aside">{{.Detail}}</span>{{end}}
+{{if .ShownWhen}}<br><span class="aside">{{.ShownWhen}}</span>{{end}}
+</th>
+<td>{{.Kind}}</td>
+<td class="nowrap">
+<form method="post" action="/forms/{{$.FormID}}/edit/fields/{{.Name}}/move" class="inline">
+  <input type="hidden" name="to" value="up">
+  <button type="submit" class="quiet" {{if .First}}disabled{{end}}
+          aria-label="Move {{.Label}} up">&uarr;</button>
+</form>
+<form method="post" action="/forms/{{$.FormID}}/edit/fields/{{.Name}}/move" class="inline">
+  <input type="hidden" name="to" value="down">
+  <button type="submit" class="quiet" {{if .Last}}disabled{{end}}
+          aria-label="Move {{.Label}} down">&darr;</button>
+</form>
+</td>
+<td>
+<form method="post" action="/forms/{{$.FormID}}/edit/fields/{{.Name}}/remove" class="inline">
+  <button type="submit" class="quiet">Remove</button>
+</form>
+</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p>This form asks nothing yet. Add its first question below.</p>
+{{end}}
+
+<h3>Add a question</h3>
+
+<form method="post" action="/forms/{{.FormID}}/edit/fields">
+  <div class="field">
+    <label for="name">Its name</label>
+    <p class="help">Lowercase letters, digits and underscores, like
+    <code>full_name</code>. It is the heading of this question's column when
+    you download the submissions, and it cannot be changed afterwards.</p>
+    <input type="text" id="name" name="name" autocomplete="off" required
+           maxlength="40" pattern="[a-z][a-z0-9_]*">
+  </div>
+
+  <div class="field">
+    <label for="label">What it asks</label>
+    <input type="text" id="label" name="label" autocomplete="off" required
+           maxlength="200">
+  </div>
+
+  <div class="field">
+    <label for="kind">What sort of answer</label>
+    <select id="kind" name="kind" required>
+      {{range .Kinds}}<option value="{{.Value}}">{{.Label}}</option>{{end}}
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="options">Its choices</label>
+    <p class="help">One per line, and only for a dropdown, buttons or tick
+    boxes. Write <code>value | what people read</code> if the two should
+    differ; otherwise just write the choice.</p>
+    <textarea id="options" name="options" rows="4"></textarea>
+  </div>
+
+  <p class="choice">
+    <input type="checkbox" id="required" name="required" value="yes">
+    <label for="required">It has to be answered</label>
+  </p>
+
+  <button type="submit">Add it</button>
+</form>
+
+<h2>Things it sells</h2>
+
+{{if .Items}}
+<table class="listing">
+<thead>
+<tr>
+<th scope="col">Thing</th>
+<th scope="col">Price</th>
+<th scope="col">Most</th>
+<th scope="col"><span class="visually-hidden">Order</span></th>
+<th scope="col"><span class="visually-hidden">Remove</span></th>
+</tr>
+</thead>
+<tbody>
+{{range .Items}}
+<tr>
+<th scope="row">
+<a href="/forms/{{$.FormID}}/edit/items/{{.ID}}">{{.Label}}</a>
+<br><span class="ref">{{.ID}}</span>
+{{if .Note}}<br><span class="aside">{{.Note}}</span>{{end}}
+</th>
+<td class="figure">{{.Price}}</td>
+<td class="figure">{{if .Max}}{{.Max}}{{else}}<span class="absent">&mdash;</span>{{end}}</td>
+<td class="nowrap">
+<form method="post" action="/forms/{{$.FormID}}/edit/items/{{.ID}}/move" class="inline">
+  <input type="hidden" name="to" value="up">
+  <button type="submit" class="quiet" {{if .First}}disabled{{end}}
+          aria-label="Move {{.Label}} up">&uarr;</button>
+</form>
+<form method="post" action="/forms/{{$.FormID}}/edit/items/{{.ID}}/move" class="inline">
+  <input type="hidden" name="to" value="down">
+  <button type="submit" class="quiet" {{if .Last}}disabled{{end}}
+          aria-label="Move {{.Label}} down">&darr;</button>
+</form>
+</td>
+<td>
+<form method="post" action="/forms/{{$.FormID}}/edit/items/{{.ID}}/remove" class="inline">
+  <button type="submit" class="quiet">Remove</button>
+</form>
+</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p>This form sells nothing. A form that sells nothing takes no payment, which
+is right for a survey or a sign-up sheet.</p>
+{{end}}
+
+<h3>Add something for sale</h3>
+
+<form method="post" action="/forms/{{.FormID}}/edit/items">
+  <div class="field">
+    <label for="item-id">Its name</label>
+    <p class="help">Lowercase letters, digits and underscores, like
+    <code>adult_ticket</code>. It is recorded on every order and cannot be
+    changed afterwards.</p>
+    <input type="text" id="item-id" name="id" autocomplete="off" required
+           maxlength="40" pattern="[a-z][a-z0-9_]*">
+  </div>
+
+  <div class="field">
+    <label for="item-label">What people read</label>
+    <input type="text" id="item-label" name="label" autocomplete="off" required
+           maxlength="200">
+  </div>
+
+  <div class="field">
+    <label for="item-price">Its price</label>
+    <p class="help">Like <code>12.00</code>. Write <code>0.00</code> if it
+    really is free &mdash; an item with no price at all is far more often a
+    forgotten line.</p>
+    <input type="text" id="item-price" name="price" autocomplete="off" required
+           inputmode="decimal" maxlength="12">
+  </div>
+
+  <button type="submit">Add it</button>
+</form>
+
+<h2>Settings</h2>
+
+<table class="detail">
+<tbody>
+{{range .Settings}}
+<tr>
+<th scope="row">{{.Label}}</th>
+<td>{{if .Unset}}<span class="absent">{{.Value}}</span>{{else}}{{.Value}}{{end}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+
+<p><a href="/forms/{{.FormID}}/edit/settings">Change the settings</a></p>
+
+<h2>{{if .Live}}It is on the web{{else}}Putting it on the web{{end}}</h2>
+
+{{if .Live}}
+<p>Every change you make here takes effect at once. Anybody who had the form
+half filled in gets a fresh copy of it rather than the old one &mdash; which is
+what stops somebody being charged a price you have just changed.</p>
+
+<form method="post" action="/forms/{{.FormID}}/edit/state">
+  <input type="hidden" name="state" value="draft">
+  <button type="submit" class="quiet">Take it off the web</button>
+</form>
+{{else}}
+<p>While it is off the web the page it is embedded on shows nothing, and you
+can leave it half finished for as long as you like.</p>
+
+<form method="post" action="/forms/{{.FormID}}/edit/state">
+  <input type="hidden" name="state" value="live">
+  <button type="submit">Publish it</button>
+</form>
+{{end}}
+
+{{if .Deletable}}
+<h2>Delete it</h2>
+<p class="help">This form has never been on the web, so nothing has been
+submitted to it and there is nothing to lose. Once it has been published it can
+only be taken down, never deleted: what was submitted can only be read through
+the definition that names its columns.</p>
+
+<form method="post" action="/forms/{{.FormID}}/edit/delete">
+  <button type="submit" class="quiet">Delete this form</button>
+</form>
+{{end}}
+
+<p><a href="/forms">Back to the forms</a></p>
+{{end}}

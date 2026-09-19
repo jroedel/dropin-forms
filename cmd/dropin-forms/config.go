@@ -28,6 +28,21 @@ type config struct {
 		// cannot tell.
 		AdminBaseURL string `toml:"admin_base_url"`
 
+		// EmbedBaseURL is the public surface's own origin. The builder shows
+		// it in the two lines somebody pastes into their website, and in the
+		// link that opens the real form.
+		//
+		// Optional, unlike admin_base_url, and the asymmetry is deliberate.
+		// The admin one goes into an email nobody can send without it, so a
+		// service that started without it would be a service nobody can sign
+		// in to. This one only makes one page of the builder more useful, and
+		// requiring it would mean an installation that predates the setting
+		// refuses to start -- trading a working deploy for a convenience.
+		// Without it the builder says which setting to add, which is better
+		// than a snippet naming a guessed host: that fails silently, on
+		// somebody else's website.
+		EmbedBaseURL string `toml:"embed_base_url"`
+
 		ShutdownGrace  string `toml:"shutdown_grace"`
 		shutdownGraceD time.Duration
 	} `toml:"server"`
@@ -190,6 +205,18 @@ func loadConfig(path string) (config, error) {
 		// Re-serialised from the parsed value rather than kept as written,
 		// for the same reason the frame-ancestors list is.
 		cfg.Server.AdminBaseURL = o.String()
+	}
+
+	// Held to the same standard as the admin one when it is there at all,
+	// because it ends up in markup pasted onto somebody else's website and a
+	// wrong one fails silently there.
+	if base := strings.TrimSuffix(cfg.Server.EmbedBaseURL, "/"); base != "" {
+		o, err := types.ParseOrigin(base)
+		if err != nil {
+			return config{}, fmt.Errorf("%s has a bad server.embed_base_url: %w", path, err)
+		}
+
+		cfg.Server.EmbedBaseURL = o.String()
 	}
 
 	// Every form page carries a grant, so a missing key is not a degraded

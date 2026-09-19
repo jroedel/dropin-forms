@@ -1,0 +1,61 @@
+{{define "title"}}{{.Label}} on {{.FormID}}{{end}}
+
+{{define "masthead"}}<a href="/forms/{{.FormID}}/edit">Back to the form</a>{{end}}
+
+{{define "content"}}
+<h1>{{if .Label}}{{.Label}}{{else}}{{.ID}}{{end}}</h1>
+
+<p class="crumb"><span class="ref">{{.FormID}}</span> &middot;
+<span class="ref">{{.ID}}</span></p>
+
+{{if .Problem}}<p class="problem">{{.Problem}}</p>{{end}}
+
+{{if .Problems}}
+<div class="problems">
+<ul>
+{{range .Problems}}<li>{{.}}</li>{{end}}
+</ul>
+</div>
+{{end}}
+
+<form method="post" action="/forms/{{.FormID}}/edit/items/{{.ID}}">
+
+  <div class="field">
+    <label for="label">What people read</label>
+    <input type="text" id="label" name="label" value="{{.Label}}"
+           autocomplete="off" required maxlength="200">
+  </div>
+
+  <div class="field">
+    <label for="note">A sentence under it</label>
+    <textarea id="note" name="note" rows="2">{{.Note}}</textarea>
+  </div>
+
+  <div class="field">
+    <label for="price">Its price {{if .Symbol}}({{.Symbol}}){{end}}</label>
+    <p class="help">Like <code>12.00</code>. This is the only place this price
+    exists: the browser never sends one, and every total is worked out here
+    from what was chosen.</p>
+    <input type="text" id="price" name="price" value="{{.Price}}"
+           autocomplete="off" required inputmode="decimal" maxlength="12">
+  </div>
+
+  <div class="field">
+    <label for="max">The most of this one thing in an order</label>
+    <p class="help">Empty means no limit of its own, and the form's own largest
+    order still applies.</p>
+    <input type="text" id="max" name="max" value="{{.Max}}"
+           autocomplete="off" inputmode="numeric" maxlength="6">
+  </div>
+
+  <button type="submit">Save it</button>
+</form>
+
+{{if .Live}}
+<p class="footnote">This form is on the web. Changing a price takes effect at
+once, and anybody with the form half filled in gets a fresh copy of it rather
+than being charged the old price.</p>
+{{end}}
+
+<p><a href="/forms/{{.FormID}}/edit">Back to the form</a></p>
+{{end}}
