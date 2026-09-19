@@ -222,3 +222,68 @@ func TestTheSchemaMatchesWhatIsExpected(t *testing.T) {
 		t.Fatalf("CheckSchema: %v", err)
 	}
 }
+
+// The ledger of what the office has been told, which is what stops an unpaid
+// order -- a thing that stays unpaid forever -- being reported every hour.
+
+func TestAnUnpaidNoticeIsClaimedOnce(t *testing.T) {
+	_, store := open(t)
+
+	id := types.NewID()
+
+	first, err := store.ClaimUnpaidNotice(t.Context(), id, now)
+	if err != nil {
+		t.Fatalf("ClaimUnpaidNotice: %v", err)
+	}
+	if !first {
+		t.Fatal("the first claim was refused")
+	}
+
+	// The second is the one that matters: a read followed by a write is two
+	// statements a restart can land between, and this is one.
+	again, err := store.ClaimUnpaidNotice(t.Context(), id, now.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("the second ClaimUnpaidNotice: %v", err)
+	}
+	if again {
+		t.Error("the same order was claimed twice")
+	}
+
+	// A different order is unaffected.
+	other, err := store.ClaimUnpaidNotice(t.Context(), types.NewID(), now)
+	if err != nil {
+		t.Fatalf("ClaimUnpaidNotice for another order: %v", err)
+	}
+	if !other {
+		t.Error("claiming one order refused another")
+	}
+}
+
+func TestForgettingANoticeLetsItBeReportedAgain(t *testing.T) {
+	_, store := open(t)
+
+	id := types.NewID()
+
+	if _, err := store.ClaimUnpaidNotice(t.Context(), id, now); err != nil {
+		t.Fatalf("ClaimUnpaidNotice: %v", err)
+	}
+
+	// Younger than the cutoff: kept, because forgetting a notice while the
+	// order it names is still inside the window the sweep looks at would be
+	// the same as sending the message again.
+	if err := store.ForgetUnpaidNotices(t.Context(), now.Add(-time.Hour)); err != nil {
+		t.Fatalf("ForgetUnpaidNotices: %v", err)
+	}
+
+	if claimed, _ := store.ClaimUnpaidNotice(t.Context(), id, now); claimed {
+		t.Fatal("a notice newer than the cutoff was forgotten")
+	}
+
+	if err := store.ForgetUnpaidNotices(t.Context(), now.Add(time.Hour)); err != nil {
+		t.Fatalf("ForgetUnpaidNotices: %v", err)
+	}
+
+	if claimed, _ := store.ClaimUnpaidNotice(t.Context(), id, now); !claimed {
+		t.Error("a notice older than the cutoff was kept")
+	}
+}

@@ -37,11 +37,51 @@ func (f forms) ByID(types.Slug) (formbus.Form, error) { return f.form, f.err }
 type submissions struct {
 	sub submissionbus.Submission
 	err error
+
+	// unpaid is what the sweep finds, and unpaidErr is the store failing. Kept
+	// apart from sub above because the two paths into this package read
+	// different things: one is a lookup by identifier and the other is a scan.
+	unpaid    []submissionbus.Submission
+	unpaidErr error
 }
 
 func (s submissions) ByID(context.Context, types.ID) (submissionbus.Submission, error) {
 	return s.sub, s.err
 }
+
+func (s submissions) Unpaid(context.Context, time.Time, time.Duration) ([]submissionbus.Submission, error) {
+	return s.unpaid, s.unpaidErr
+}
+
+// reports is notifybus.Reports in a map: which orders have been claimed, and
+// how many times each claim was attempted.
+type reports struct {
+	claimed map[types.ID]bool
+	tries   map[types.ID]int
+	err     error
+}
+
+func newReports() *reports {
+	return &reports{claimed: map[types.ID]bool{}, tries: map[types.ID]int{}}
+}
+
+func (r *reports) ClaimUnpaidNotice(_ context.Context, id types.ID, _ time.Time) (bool, error) {
+	r.tries[id]++
+
+	if r.err != nil {
+		return false, r.err
+	}
+
+	if r.claimed[id] {
+		return false, nil
+	}
+
+	r.claimed[id] = true
+
+	return true, nil
+}
+
+func (r *reports) ForgetUnpaidNotices(context.Context, time.Time) error { return r.err }
 
 type grants struct {
 	list []accessbus.Grant
@@ -924,5 +964,172 @@ func TestSetMutedGoesBothWays(t *testing.T) {
 	}
 	if len(forms) != 1 || forms[0] != f.ID {
 		t.Errorf("MutedForms = %v, want just %s", forms, f.ID)
+	}
+}
+
+// --- orders that were started and never paid for --------------------------------
+
+// The gap this closes: Stripe sends no webhook for a checkout somebody simply
+// closed, so before this an abandoned order sat in the management app and
+// waited to be noticed by somebody who thought to look.
+
+func TestTheOfficeHearsAboutOrdersThatWereNeverPaidFor(t *testing.T) {
+	f := lunch(t)
+
+	one := order(t, f, types.Money(2400), submissionbus.StatusPending)
+	two := order(t, f, types.Money(1200), submissionbus.StatusPending)
+
+	h := newHarness(t, notifybus.Config{
+		Forms:       forms{form: f},
+		Submissions: submissions{unpaid: []submissionbus.Submission{one, two}},
+		Reports:     newReports(),
+		Office:      "office@schoenstatt.test",
+	})
+
+	h.b.ReportUnpaid(t.Context(), when)
+
+	// One message listing both, rather than one per order. An abandoned order
+	// is worth knowing about and is not worth an email of its own.
+	if got := len(h.sent.Sent); got != 1 {
+		t.Fatalf("%d messages sent, want one: %v", got, h.to())
+	}
+
+	m := h.messageTo(t, "office@schoenstatt.test")
+
+	switch {
+	case !strings.Contains(m.Subject, "two orders"):
+		t.Errorf("the subject does not say how many: %q", m.Subject)
+	case !strings.Contains(m.Subject, f.Title):
+		t.Errorf("the subject does not name the form: %q", m.Subject)
+	case !strings.Contains(m.Text, "Maria O'Neill"):
+		t.Errorf("the message does not say who:\n%s", m.Text)
+	case !strings.Contains(m.Text, "Nothing has been charged"):
+		t.Errorf("the message does not say that nothing was charged:\n%s", m.Text)
+	}
+
+	// Never the submitter. They did not pay, they may have meant not to, and
+	// chasing them is not this service's business.
+	for _, address := range h.to() {
+		if address == "maria@example.org" {
+			t.Error("the person who abandoned an order was emailed about it")
+		}
+	}
+}
+
+// The property the ledger exists for. An unpaid order stays unpaid forever, so
+// without a record of what has been said the office would hear about the same
+// one every hour until they gave up on these messages entirely.
+func TestAnUnpaidOrderIsReportedOnceAndNotAgain(t *testing.T) {
+	f := lunch(t)
+	sub := order(t, f, types.Money(2400), submissionbus.StatusPending)
+
+	h := newHarness(t, notifybus.Config{
+		Forms:       forms{form: f},
+		Submissions: submissions{unpaid: []submissionbus.Submission{sub}},
+		Reports:     newReports(),
+		Office:      "office@schoenstatt.test",
+	})
+
+	for range 3 {
+		h.b.ReportUnpaid(t.Context(), when)
+	}
+
+	if got := len(h.sent.Sent); got != 1 {
+		t.Fatalf("%d messages after three sweeps, want 1: %v", got, h.to())
+	}
+}
+
+// Claiming before knowing there is anybody to tell would spend the one notice
+// an order gets on a service with an empty notification list -- and the day
+// somebody was finally given the form, they would hear nothing about any of it.
+func TestNothingIsClaimedWhenThereIsNobodyToTell(t *testing.T) {
+	f := lunch(t)
+	sub := order(t, f, types.Money(2400), submissionbus.StatusPending)
+
+	ledger := newReports()
+
+	h := newHarness(t, notifybus.Config{
+		Forms:       forms{form: f},
+		Submissions: submissions{unpaid: []submissionbus.Submission{sub}},
+		Reports:     ledger,
+
+		// No Office, no grants, and the definition's own notify list is empty.
+	})
+
+	h.b.ReportUnpaid(t.Context(), when)
+
+	if ledger.claimed[sub.ID] {
+		t.Error("the order was marked as reported although nobody was told")
+	}
+
+	// And it is loud, because a service that takes orders nobody hears about
+	// is the failure this whole step exists to fix.
+	if !strings.Contains(h.lines.String(), "nobody to tell") {
+		t.Errorf("nothing in the log says there was nobody to tell:\n%s", h.lines)
+	}
+}
+
+func TestASweepWithNothingToReportSaysNothing(t *testing.T) {
+	f := lunch(t)
+
+	h := newHarness(t, notifybus.Config{
+		Forms:       forms{form: f},
+		Submissions: submissions{},
+		Reports:     newReports(),
+		Office:      "office@schoenstatt.test",
+	})
+
+	h.b.ReportUnpaid(t.Context(), when)
+
+	if got := len(h.sent.Sent); got != 0 {
+		t.Fatalf("%d messages sent for nothing: %v", got, h.to())
+	}
+}
+
+// Without somewhere to record what has been said, the sweep does nothing at
+// all. A sweep with no memory mails the office about the same orders every
+// hour, which is worse than the silence it was meant to fix.
+func TestWithoutALedgerNothingIsSwept(t *testing.T) {
+	f := lunch(t)
+	sub := order(t, f, types.Money(2400), submissionbus.StatusPending)
+
+	h := newHarness(t, notifybus.Config{
+		Forms:       forms{form: f},
+		Submissions: submissions{unpaid: []submissionbus.Submission{sub}},
+		Office:      "office@schoenstatt.test",
+	})
+
+	h.b.ReportUnpaid(t.Context(), when)
+
+	if got := len(h.sent.Sent); got != 0 {
+		t.Fatalf("%d messages sent with no ledger: %v", got, h.to())
+	}
+}
+
+// Somebody who turned this form off does not hear about its unpaid orders
+// either. It is the same list of recipients as every other notification, which
+// is the point of building it in one place.
+func TestAMutedReaderIsNotToldAboutUnpaidOrders(t *testing.T) {
+	f := lunch(t)
+	sub := order(t, f, types.Money(2400), submissionbus.StatusPending)
+
+	reader := userbus.User{ID: types.NewID(), Email: mustEmail(t, "reader@schoenstatt.test"), Enabled: true}
+
+	off := newMutes()
+	off.off[key(reader.ID, f.ID)] = true
+
+	h := newHarness(t, notifybus.Config{
+		Forms:       forms{form: f},
+		Submissions: submissions{unpaid: []submissionbus.Submission{sub}},
+		Reports:     newReports(),
+		Grants:      grants{list: []accessbus.Grant{{UserID: reader.ID, Form: f.ID, Role: accessbus.RoleResults}}},
+		Accounts:    accounts{users: map[types.ID]userbus.User{reader.ID: reader}},
+		Mutes:       off,
+	})
+
+	h.b.ReportUnpaid(t.Context(), when)
+
+	if got := len(h.sent.Sent); got != 0 {
+		t.Fatalf("a muted reader was told about unpaid orders: %v", h.to())
 	}
 }

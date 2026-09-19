@@ -83,6 +83,27 @@ func (m *memStore) ByForm(_ context.Context, form types.Slug) ([]submissionbus.S
 	return out, nil
 }
 
+func (m *memStore) Unpaid(_ context.Context, from, before time.Time) ([]submissionbus.Submission, error) {
+	if m.fail != nil {
+		return nil, m.fail
+	}
+
+	var out []submissionbus.Submission
+	for _, s := range m.subs {
+		if s.Status != submissionbus.StatusPending {
+			continue
+		}
+
+		if s.CreatedAt.Before(from) || !s.CreatedAt.Before(before) {
+			continue
+		}
+
+		out = append(out, s)
+	}
+
+	return out, nil
+}
+
 func (m *memStore) CountSince(_ context.Context, form types.Slug, since time.Time) (int, error) {
 	m.counted++
 

@@ -171,6 +171,10 @@ type Storer interface {
 	// which is what a daily cap is measured against.
 	CountSince(ctx context.Context, form types.Slug, since time.Time) (int, error)
 
+	// Unpaid lists submissions still waiting for money that were made in the
+	// window [from, before), oldest first.
+	Unpaid(ctx context.Context, from, before time.Time) ([]Submission, error)
+
 	// SetStatus moves a submission forward, recording Stripe's reference.
 	SetStatus(ctx context.Context, id types.ID, to Status, ref string, at time.Time) error
 
@@ -300,6 +304,31 @@ func (b *Business) ByForm(ctx context.Context, form types.Slug) ([]Submission, e
 	out, err := b.store.ByForm(ctx, form)
 	if err != nil {
 		return nil, fmt.Errorf("listing the submissions: %w", err)
+	}
+
+	return out, nil
+}
+
+// unpaidWindow is how far back [Business.Unpaid] will ever look.
+//
+// A floor rather than a policy about how long an order stays interesting. What
+// it protects against is the day somebody restores a database without the
+// record of which unpaid orders have already been reported: without a bound,
+// the next sweep would mail the office about every order anybody has ever
+// abandoned, which is the kind of message that gets notifications switched off
+// for good.
+const unpaidWindow = 30 * 24 * time.Hour
+
+// Unpaid lists submissions that were started and never paid for, oldest first.
+//
+// grace is how long an order is given before it counts: somebody handed a
+// payment page four minutes ago is typing a card number, not gone. What the
+// number should be is a judgement about people rather than about storage,
+// which is why it is an argument and not a constant here.
+func (b *Business) Unpaid(ctx context.Context, now time.Time, grace time.Duration) ([]Submission, error) {
+	out, err := b.store.Unpaid(ctx, now.Add(-unpaidWindow), now.Add(-grace))
+	if err != nil {
+		return nil, fmt.Errorf("listing the unpaid submissions: %w", err)
 	}
 
 	return out, nil

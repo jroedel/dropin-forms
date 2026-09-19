@@ -225,6 +225,44 @@ func (s *Store) ByForm(ctx context.Context, form types.Slug) ([]submissionbus.Su
 	return out, nil
 }
 
+// Unpaid lists submissions still waiting for money, oldest first, within a
+// window.
+//
+// Two bounds rather than one. The upper is the grace period -- an order placed
+// four minutes ago is somebody typing a card number, not an abandoned one. The
+// lower is a floor under how far back this ever looks, so that a service whose
+// record of what it has already reported is lost cannot mail the office about
+// every order anybody ever abandoned.
+//
+// Oldest first, because the list goes into a message somebody reads top to
+// bottom and the one most likely to matter is the one that has been waiting
+// longest.
+func (s *Store) Unpaid(ctx context.Context, from, before time.Time) ([]submissionbus.Submission, error) {
+	const q = selectColumns + ` WHERE status = ? AND created_at >= ? AND created_at < ? ORDER BY created_at, id`
+
+	rows, err := s.db.QueryContext(ctx, q, submissionbus.StatusPending.String(), msOf(from), msOf(before))
+	if err != nil {
+		return nil, fmt.Errorf("querying the unpaid submissions: %w", err)
+	}
+	defer rows.Close()
+
+	var out []submissionbus.Submission
+	for rows.Next() {
+		sub, err := scan(rows)
+		if err != nil {
+			return nil, fmt.Errorf("reading an unpaid submission: %w", err)
+		}
+
+		out = append(out, sub)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading the unpaid submissions: %w", err)
+	}
+
+	return out, nil
+}
+
 // SetStatus moves a submission forward.
 func (s *Store) SetStatus(ctx context.Context, id types.ID, to submissionbus.Status, ref string, at time.Time) error {
 	const q = `UPDATE submissions SET status = ?, payment_ref = ?, updated_at = ? WHERE id = ?`

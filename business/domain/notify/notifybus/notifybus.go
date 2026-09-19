@@ -28,11 +28,19 @@
 // recipient by design, because a list of addresses on one envelope is how
 // everybody learns who else is on it.
 //
-// Nothing is sent for a pending submission. Somebody who has just been handed
-// a payment page has not finished, and an email saying "we have your order"
-// arriving while they are still typing their card number would either read as
-// a receipt or as a reason to stop. The office sees pending rows in the
-// management app, which is where a half-finished order belongs.
+// Nothing is sent at the time for a pending submission. Somebody who has just
+// been handed a payment page has not finished, and an email saying "we have
+// your order" arriving while they are still typing their card number would
+// either read as a receipt or as a reason to stop.
+//
+// But an order that stays pending is one nobody hears about at all, and that
+// was a real gap rather than a considered silence: Stripe sends no webhook for
+// a checkout somebody simply closed, so an abandoned order sat in the
+// management app and waited to be noticed. [Business.ReportUnpaid] closes it,
+// on a timer rather than on a request -- one message to the office listing
+// what has been sitting unpaid, each order reported once. The submitter is
+// told nothing, ever: they did not pay, they may have meant not to, and
+// chasing them is not this service's business.
 package notifybus
 
 import (
@@ -79,6 +87,11 @@ type Forms interface {
 // callers saying the same thing.
 type Submissions interface {
 	ByID(ctx context.Context, id types.ID) (submissionbus.Submission, error)
+
+	// Unpaid is every order started at least grace ago and still waiting for
+	// money, oldest first. What counts as long enough is passed in rather than
+	// decided there, because it is a judgement about people.
+	Unpaid(ctx context.Context, now time.Time, grace time.Duration) ([]submissionbus.Submission, error)
 }
 
 // Grants answers who may read a form's submissions, which is most of who
@@ -107,6 +120,19 @@ type Mutes interface {
 	Unmute(ctx context.Context, userID types.ID, form types.Slug) error
 }
 
+// Reports is the record of which unpaid orders the office has already been
+// told about.
+//
+// It exists for one reason: without it the hourly sweep would report the same
+// abandoned order every hour until somebody deleted it, and there is nothing
+// to delete -- an unpaid order stays unpaid forever. The claim is a single
+// statement rather than a read and a write, so a restart between the two
+// cannot turn one message into a message an hour.
+type Reports interface {
+	ClaimUnpaidNotice(ctx context.Context, id types.ID, at time.Time) (bool, error)
+	ForgetUnpaidNotices(ctx context.Context, before time.Time) error
+}
+
 // Config is what this package needs.
 type Config struct {
 	Log         *slog.Logger
@@ -121,6 +147,13 @@ type Config struct {
 	// before there was anything to turn off, and the page that offers the
 	// choice is simply not mounted.
 	Mutes Mutes
+
+	// Reports is where it is written down that an unpaid order has been
+	// reported. Optional, and without it the sweep does nothing at all --
+	// which is the right degradation: a sweep with no memory would mail the
+	// office about the same orders every hour, and that is worse than the
+	// silence it was meant to fix.
+	Reports Reports
 
 	// MuteKey signs the unsubscribe link in each notification. A zero key
 	// leaves the link out and the message otherwise unchanged -- the
@@ -237,6 +270,162 @@ func (b *Business) tell(ctx context.Context, id types.ID, paid bool) {
 		b.cfg.Log.Warn("a submission was recorded and nobody was notified; check mail.notify, the form's notify list, and who holds results on it",
 			"submission_id", sub.ID.String(), "form", sub.Form.String())
 	}
+}
+
+// unpaidGrace is how long an order is given before the office is told it was
+// started and not paid for.
+//
+// An hour. Somebody handed a payment page four minutes ago is typing a card
+// number; somebody who was going to finish has finished. Longer would be safer
+// against reporting an order that is about to be paid, and the cost of that
+// mistake is small -- a message saying an order is unpaid, followed by the
+// ordinary one saying it was paid, which reads as an update rather than as a
+// contradiction. The cost in the other direction is a broken payment step
+// nobody notices until somebody thinks to look at the list.
+const unpaidGrace = time.Hour
+
+// noticeRetention is how long the record of a reported order is kept.
+//
+// Longer than the window submissionbus.Unpaid looks back over, and that
+// relationship is the whole of the number: forget a notice while the order it
+// names is still inside that window and the next sweep reports it again.
+const noticeRetention = 90 * 24 * time.Hour
+
+// sweepBudget bounds one pass of ReportUnpaid.
+//
+// Wider than sendBudget because nobody is waiting: this runs on a timer rather
+// than inside a request, and the thing it must not do is outlive the process
+// it belongs to. It still has a bound, because a relay that accepts
+// connections and never answers would otherwise leave this goroutine wedged
+// until shutdown, and the next tick would start a second one.
+const sweepBudget = 2 * time.Minute
+
+// ReportUnpaid tells the office about orders that were started and never paid
+// for.
+//
+// Called on a timer. Nothing returns an error, for the reason the rest of this
+// package does not: there is no caller that should behave differently because
+// a message did not go out, and a failure is a loud log line.
+//
+// Each order is reported once and then never again, which is what the claim in
+// [Reports] is for. Note the order of operations below -- recipients, then the
+// claim, then the send. Claiming before knowing there is anybody to tell would
+// silently spend the one notice an order gets on a service with an empty
+// notification list, and the day somebody was finally added they would hear
+// nothing about any of it.
+func (b *Business) ReportUnpaid(ctx context.Context, now time.Time) {
+	if b.cfg.Reports == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sweepBudget)
+	defer cancel()
+
+	subs, err := b.cfg.Submissions.Unpaid(ctx, now, unpaidGrace)
+	if err != nil {
+		b.cfg.Log.Error("the unpaid orders could not be listed, so nobody was told about them", "error", err)
+
+		return
+	}
+
+	if len(subs) == 0 {
+		return
+	}
+
+	// Grouped by form, because the message is per form: it names the form in
+	// its subject, it links into that form's submissions, and the people it
+	// goes to are that form's. Insertion order is kept so the whole sweep
+	// stays oldest-first.
+	byForm := map[types.Slug][]submissionbus.Submission{}
+	var forms []types.Slug
+
+	for _, sub := range subs {
+		if _, seen := byForm[sub.Form]; !seen {
+			forms = append(forms, sub.Form)
+		}
+
+		byForm[sub.Form] = append(byForm[sub.Form], sub)
+	}
+
+	for _, slug := range forms {
+		b.reportForm(ctx, now, slug, byForm[slug])
+	}
+}
+
+// reportForm is one form's unpaid orders, in one message per recipient.
+func (b *Business) reportForm(ctx context.Context, now time.Time, slug types.Slug, subs []submissionbus.Submission) {
+	f, err := b.cfg.Forms.ByID(slug)
+	if err != nil {
+		// A form renamed away with orders still pending against it. Logged
+		// once per sweep rather than claimed and dropped, so that restoring
+		// the definition also restores the notice.
+		b.cfg.Log.Error("unpaid orders could not be reported, because their form could not be read",
+			"form", slug.String(), "unpaid", len(subs), "error", err)
+
+		return
+	}
+
+	office := b.office(ctx, f)
+	if len(office) == 0 {
+		b.cfg.Log.Warn("orders were started and not paid for, and there is nobody to tell; check mail.notify, the form's notify list, and who holds results on it",
+			"form", slug.String(), "unpaid", len(subs))
+
+		return
+	}
+
+	// Claimed one at a time, keeping only the ones this sweep is the first to
+	// see. A claim that fails is skipped rather than fatal: the alternative is
+	// one unreadable row stopping the whole report.
+	fresh := make([]submissionbus.Submission, 0, len(subs))
+
+	for _, sub := range subs {
+		mine, err := b.cfg.Reports.ClaimUnpaidNotice(ctx, sub.ID, now)
+		if err != nil {
+			b.cfg.Log.Error("an unpaid order could not be claimed for reporting",
+				"submission_id", sub.ID.String(), "form", slug.String(), "error", err)
+
+			continue
+		}
+
+		if mine {
+			fresh = append(fresh, sub)
+		}
+	}
+
+	if len(fresh) == 0 {
+		return
+	}
+
+	for _, to := range office {
+		m := b.forUnpaid(f, fresh, to)
+		m.To = to.address
+
+		if err := b.cfg.Mail.Send(ctx, m); err != nil {
+			b.cfg.Log.Error("a report of unpaid orders could not be sent",
+				"form", slug.String(), "unpaid", len(fresh), "error", err)
+
+			continue
+		}
+	}
+
+	b.cfg.Log.Info("unpaid orders reported",
+		"form", slug.String(), "unpaid", len(fresh), "recipients", len(office))
+}
+
+// ForgetReports drops the record of orders reported long enough ago that
+// nothing will look at them again.
+//
+// On a timer, beside the other prunes, and never per request.
+func (b *Business) ForgetReports(ctx context.Context, now time.Time) error {
+	if b.cfg.Reports == nil {
+		return nil
+	}
+
+	if err := b.cfg.Reports.ForgetUnpaidNotices(ctx, now.Add(-noticeRetention)); err != nil {
+		return fmt.Errorf("forgetting the reported orders: %w", err)
+	}
+
+	return nil
 }
 
 // send is one message, and a failure is a log line.
