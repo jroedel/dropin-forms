@@ -203,6 +203,13 @@ out=$(render "$off")
 denies "no keys at all writes no [stripe] section, rather than an empty one" "$out" '[stripe]'
 says "and the rest of the config still renders" "$out" 'admin_base_url'
 
+# Both base URLs, from the two hostnames this file already carries. Asserted
+# because the builder's paste snippet is the whole output of that page, and a
+# missing setting there is not an error anywhere -- the page simply says to set
+# it, on a server where somebody has no way to.
+says "the admin base url comes from ADMIN_HOST" "$out" 'admin_base_url = "https://forms.example.test"'
+says "the embed base url comes from EMBED_HOST" "$out" 'embed_base_url = "https://f.example.test"'
+
 partly=$(fixture 'STRIPE_SECRET_KEY=sk_live_theconfiguredone')
 out=$(render "$partly")
 says "a key with no webhook secret is refused, not rendered" "$out" 'STRIPE_WEBHOOK_SECRET'
