@@ -74,6 +74,7 @@ import (
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
 	"github.com/jroedel/dropin-forms/app/domain/notifyapp"
 	"github.com/jroedel/dropin-forms/app/domain/paymentapp"
+	"github.com/jroedel/dropin-forms/app/domain/peopleapp"
 	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
 	"github.com/jroedel/dropin-forms/app/sdk/health"
 	"github.com/jroedel/dropin-forms/app/sdk/mid"
@@ -367,6 +368,38 @@ func Admin(cfg Config) (http.Handler, error) {
 	}
 
 	submissionapp.Routes(mux, sc, guard, results)
+
+	// Managing who can see a form is behind admin on that form rather than
+	// results, and that is the one difference between these two mounts. The
+	// person counting lunches holds results and never sees the people page;
+	// deciding who else may read the names and addresses on a form is the
+	// other role.
+	//
+	// A site-wide admin passes this gate for every form, because Allowed
+	// checks the form's own grant and then the site-wide one -- which is how
+	// the founding account, whose only grant is site-wide, can give anybody
+	// else their first form.
+	admins := mid.RequireFormRole(cfg.Log, cfg.Access, accessbus.RoleAdmin)
+
+	pc := peopleapp.Config{
+		Log:      cfg.Log,
+		Forms:    cfg.Forms,
+		Accounts: cfg.Users,
+		Grants:   cfg.Access,
+		Mail:     cfg.Mail,
+		Render:   cfg.Render,
+		BaseURL:  cfg.AdminBaseURL,
+	}
+
+	// Only when there is somewhere to record a preference, which is the same
+	// condition the unsubscribe page is mounted under. Without it the page
+	// says nothing about email, which is right: an installation that sends no
+	// notifications should not have a column claiming somebody is emailed.
+	if cfg.Notify != nil && cfg.Notify.CanUnsubscribe() {
+		pc.Notifications = cfg.Notify
+	}
+
+	peopleapp.Routes(mux, pc, guard, admins)
 
 	// The page that turns email about a form off and on, and the one route on
 	// this surface that is deliberately *outside* guard.

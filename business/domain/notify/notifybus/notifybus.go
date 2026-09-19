@@ -425,6 +425,31 @@ func (b *Business) MutedForms(ctx context.Context, userID types.ID) ([]types.Slu
 	return forms, nil
 }
 
+// MutedUsers lists the accounts that have turned email about one form off, so
+// that the page managing who can see a form can say who hears about it.
+//
+// The mirror of [Business.MutedForms], and one call for a whole page rather
+// than one per person, for the same reason [Business.mutedFor] is: a query per
+// row is how a page that is quick with two people is slow with forty.
+//
+// Unlike mutedFor this returns the error rather than swallowing it. That one
+// runs inside the request Stripe is waiting on, where the safe failure is to
+// tell everybody; this one only decorates a listing, where the safe failure is
+// to say nothing rather than to say something wrong about who is being
+// emailed.
+func (b *Business) MutedUsers(ctx context.Context, form types.Slug) ([]types.ID, error) {
+	if b.cfg.Mutes == nil {
+		return nil, nil
+	}
+
+	ids, err := b.cfg.Mutes.MutedForForm(ctx, form)
+	if err != nil {
+		return nil, fmt.Errorf("reading the notification preferences: %w", err)
+	}
+
+	return ids, nil
+}
+
 // SetMuted turns email about one form off or on for one account.
 //
 // Both directions through one method, because the page that offers it is one

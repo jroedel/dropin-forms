@@ -14,7 +14,10 @@
 <th scope="row"><a href="/forms/{{.ID}}/submissions">{{.Title}}</a></th>
 <td class="figure">{{.Count}}</td>
 <td>{{if .Open}}open{{else}}closed{{end}}</td>
-<td>{{.Role}}</td>
+{{/* The role is a link when it is one that can do something here: admin on a
+     form is the authority to decide who else may read it, and the page that
+     does that is otherwise reachable only by typing the address. */}}
+<td>{{if eq .Role "admin"}}<a href="/forms/{{.ID}}/people">{{.Role}}</a>{{else}}{{.Role}}{{end}}</td>
 {{if $.Email}}
 {{/* The one column on this page that is about the reader rather than about
      the form, which is why it says "you" either way round. */}}

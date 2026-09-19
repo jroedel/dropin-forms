@@ -209,6 +209,19 @@ func (b *Business) ByID(ctx context.Context, id types.ID) (User, error) {
 	return b.store.UserByID(ctx, id)
 }
 
+// ByEmail returns the account holding an address, or [ErrNotFound].
+//
+// This is the administrator's lookup -- "does this person already have an
+// account" -- and it is deliberately not the one a sign-in uses.
+// [Business.RequestSignIn] answers the same question and tells nobody, because
+// there the asker is a stranger and the answer is whether an address is worth
+// attacking. Here the asker is already signed in and holds admin on a form, so
+// the collision is information they are entitled to, in the same way
+// [ErrEmailTaken] is.
+func (b *Business) ByEmail(ctx context.Context, email types.Email) (User, error) {
+	return b.store.UserByEmail(ctx, email)
+}
+
 // All returns every account, for the administration screen.
 func (b *Business) All(ctx context.Context) ([]User, error) {
 	return b.store.Users(ctx)

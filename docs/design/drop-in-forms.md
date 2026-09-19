@@ -1449,6 +1449,67 @@ The forms list carries the state as a column, because "am I getting these" is a
 question asked while looking at that page, and it is the one thing on it that
 is about the reader rather than about the form.
 
+### Giving somebody access, as built
+
+The notification step made a promise the service could not keep. Submissions go
+to whoever holds `results` on a form, and there was no way to give anybody
+`results` on anything: `accessbus.Grant`, `accessbus.Revoke` and
+`userbus.Create` all existed and nothing exposed any of them. The founding
+account could read everything and could not share it, and the only route to a
+second person was hand-written SQL on the server. `app/domain/peopleapp` is
+that route in a browser.
+
+**It is behind `admin` on the form, not `results`.** This is the one place the
+two roles differ in practice, and the difference is the reason there are two:
+reading the numbers is not deciding who else may read the names, addresses and
+amounts beside them. Whoever is counting lunches holds `results` and never sees
+this page. A site-wide admin passes the gate for every form, which is what lets
+the founding account -- whose only grant is site-wide -- give anybody else their
+first form.
+
+**An account is created here or nowhere.** `userbus.RequestSignIn` deliberately
+returns nothing for an address it does not know, so a stranger cannot bring an
+account into existence by trying to sign in; and with the bootstrap route
+unmounted there is no other door. Every account after the first is somebody
+already administering a form typing an address.
+
+**The invitation is not a sign-in link.** The obvious message carries a link
+that signs the person in, and it would usually be dead on arrival: sign-in
+tokens last fifteen minutes, which is right for one somebody asked for thirty
+seconds ago and wrong for one sent to a volunteer who reads their email that
+evening. A dead link looks like a broken service rather than an expired
+credential. Minting a longer-lived token for this one case would be a second
+credential lifetime to reason about, sitting in a mailbox indefinitely. So the
+invitation names the sign-in page and the person asks for their own link, which
+is always fresh when they use it.
+
+**A send failure is reported here, unlike on the sign-in page.** There, saying
+"we could not email you" would say which addresses have accounts, so it is
+logged and nothing else. Here the reader is an administrator who has just typed
+the address themselves, so the page says the access was given and the message
+was not, and tells them what to pass on. The grant stands either way -- an
+access change undone because a relay was briefly down is worse than an email
+somebody has to send by hand.
+
+**Two rows have no remove button, for unrelated reasons.** Your own, because
+removing it locks you out of the page you are standing on and the way back is
+another administrator; that one is refused in the app layer, because "you" is a
+fact about the request rather than a business rule. A site-wide grant, because
+it is not this form's to take away -- and the route could not do it if it tried,
+since it only ever revokes a grant on the form named in the path. Site-wide
+access is what `accessbus` protects with `ErrLastAdmin`, and this page simply
+never asks.
+
+**Removing somebody leaves their account and their preferences alone.** The
+account may hold other forms, and deleting a person to take them off one lunch
+is a different act. The mute row stays too: somebody who switched these emails
+off and is later given the form back had a reason the first time.
+
+**The listing says who is actually being emailed**, in one query for the page
+rather than one per row, which is the same shape the notifier uses and for the
+same reason. Together with the unsubscribe page, that makes "why am I the only
+one getting these" a question with an answer somebody can look up.
+
 ## 10. Dependencies
 
 A dependency needs a comment naming the standard-library answer that was
@@ -1531,12 +1592,16 @@ means mail.
 9. **Rate limits and the abuse controls** of 7.6.
 10. **Notification and confirmation mail** — to the submitter, to an admin
     address, and to every `results` holder on the form.
+11. **`peopleapp`** — giving somebody a form in a browser. Not on the original
+    list, and it should have been: step 10 sends mail to every `results` holder
+    and nothing anywhere could make one. Discovered by asking how to add a
+    second person and finding the answer was SQL.
 
 After the feast:
 
-11. **`formapp`**, the visual builder — the thing that makes this repository
+12. **`formapp`**, the visual builder — the thing that makes this repository
     reusable rather than one-form-specific.
-12. **The in-page Payment Element**, behind the CSP work of 7.2 and the
+13. **The in-page Payment Element**, behind the CSP work of 7.2 and the
     `allow="payment"` testing it needs.
 
 Deferred deliberately: **recurring giving.** Stripe Subscriptions is a

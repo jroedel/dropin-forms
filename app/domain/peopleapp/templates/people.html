@@ -1,0 +1,97 @@
+{{define "title"}}Who can see {{.Form.Title}}{{end}}
+
+{{define "masthead"}}<a href="/forms">Forms</a>{{end}}
+
+{{define "content"}}
+<h1>Who can see {{.Form.Title}}</h1>
+
+{{if .Done}}<p class="notice">{{.Done}}</p>{{end}}
+{{if .Problem}}<p class="problem">{{.Problem}}</p>{{end}}
+
+{{if .Any}}
+<table class="listing">
+<thead>
+<tr>
+<th scope="col">Person</th>
+<th scope="col">Can</th>
+{{if .Email}}<th scope="col">Emailed</th>{{end}}
+<th scope="col">Since</th>
+<th scope="col"><span class="visually-hidden">Remove</span></th>
+</tr>
+</thead>
+<tbody>
+{{range .People}}
+<tr>
+<th scope="row">
+{{if .Name}}{{.Name}}<br><span class="ref">{{.Email}}</span>{{else}}{{.Email}}{{end}}
+{{if .You}} <span class="ref">(you)</span>{{end}}
+</th>
+<td>{{.Role}}{{if .SiteWide}} <span class="ref">site-wide</span>{{end}}</td>
+{{if $.Email}}<td>{{if .Emailed}}yes{{else}}no{{end}}</td>{{end}}
+<td>{{.Since}}</td>
+<td>
+{{/* No button on two kinds of row, and for different reasons. Your own,
+     because removing it locks you out of this page; a site-wide grant,
+     because it is not this form's to take away -- it is held over the whole
+     service and removing the last of it would leave nobody able to grant
+     anything. */}}
+{{if .You}}
+<span class="absent">&mdash;</span>
+{{else if .SiteWide}}
+<span class="absent">&mdash;</span>
+{{else}}
+<form method="post" action="/forms/{{$.FormID}}/people/revoke" class="inline">
+  <input type="hidden" name="user" value="{{.UserID}}">
+  <button type="submit" class="quiet">Remove</button>
+</form>
+{{end}}
+</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p>Nobody has been given access to this form yet.</p>
+{{end}}
+
+{{if .Email}}
+<p class="footnote">Everybody listed here is emailed about each submission
+unless they have turned that off for themselves, which they can do from the
+bottom of any one of those emails.</p>
+{{end}}
+
+<h2>Give somebody access</h2>
+
+<form method="post" action="/forms/{{.FormID}}/people">
+  <div class="field">
+    <label for="email">Their email address</label>
+    <p class="help">If they have no account yet, this creates one and tells
+    them how to sign in.</p>
+    <input type="email" id="email" name="email" value="{{.Address}}"
+           autocomplete="off" required maxlength="254">
+  </div>
+
+  <div class="field">
+    <label for="name">Their name</label>
+    <p class="help">Optional, and only so the list above reads as people
+    rather than as addresses.</p>
+    <input type="text" id="name" name="name" value="{{.Name}}"
+           autocomplete="off" maxlength="100">
+  </div>
+
+  <fieldset class="field">
+    <legend>What they may do</legend>
+    {{range $i, $r := .Roles}}
+    <p class="choice">
+      <input type="radio" id="role-{{$r.Value}}" name="role" value="{{$r.Value}}"
+             {{if eq $r.Value $.Role}}checked{{else if and (eq $.Role "") (eq $i 0)}}checked{{end}}>
+      <label for="role-{{$r.Value}}">{{$r.Label}}</label>
+    </p>
+    {{end}}
+  </fieldset>
+
+  <button type="submit">Give access</button>
+</form>
+
+<p><a href="/forms/{{.FormID}}/submissions">Back to the submissions</a></p>
+{{end}}

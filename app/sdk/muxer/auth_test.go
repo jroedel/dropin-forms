@@ -16,6 +16,7 @@ import (
 
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/domain/notifyapp"
+	"github.com/jroedel/dropin-forms/app/domain/peopleapp"
 	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
 	"github.com/jroedel/dropin-forms/app/sdk/mid"
 	"github.com/jroedel/dropin-forms/app/sdk/muxer"
@@ -85,7 +86,7 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 	sent := &mail.Recorder{}
 
 	renderer, err := page.NewRenderer(log, page.AdminChrome(),
-		authapp.Templates, submissionapp.Templates, notifyapp.Templates)
+		authapp.Templates, submissionapp.Templates, notifyapp.Templates, peopleapp.Templates)
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
 	}
