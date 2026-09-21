@@ -550,3 +550,123 @@ func TestASiteWideGrantCannotBeChangedFromAFormsPage(t *testing.T) {
 		t.Errorf("a site-wide row carries a role control:\n%s", body)
 	}
 }
+
+// A site-wide creator grant is not access to this form, and until this test
+// the page said it was.
+//
+// Every site-wide grant used to be accessbus.RoleAdmin, which really does
+// reach every form, so listing them all under "Who can see this" was true.
+// RoleCreator made it false: it may start a form and reach none, including
+// this one, and notifybus never writes to it -- so the row was wrong twice
+// over, once in the heading above it and once in the Emailed column beside it.
+func TestASiteWideCreatorIsNotListedOnAFormsPeoplePage(t *testing.T) {
+	a := newAdmin(t, "")
+	boss := formAdmin(t, a, "boss@schoenstatt.test")
+
+	maker, err := a.users.Create(t.Context(), time.Now(), userbus.NewUser{
+		Email: mustEmail(t, "maker@schoenstatt.test"),
+		Name:  "A Maker",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if _, err := a.access.Grant(t.Context(), time.Now(), types.ID{}, maker.ID, types.Slug{}, accessbus.RoleCreator); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+
+	w := a.get(t, peoplePage, sessionFor(t, a, boss))
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET %s = %d, want 200:\n%s", peoplePage, w.Code, w.Body)
+	}
+
+	// The table only. Below it is the dropdown of people who can be given
+	// access, where this account belongs and is asserted for separately.
+	table, _, ok := strings.Cut(w.Body.String(), "</table>")
+	if !ok {
+		t.Fatalf("the page has no table of people:\n%s", w.Body)
+	}
+
+	if strings.Contains(table, "maker@schoenstatt.test") {
+		t.Errorf("a site-wide creator is listed as somebody who can see this form:\n%s", table)
+	}
+
+	// The site-wide administrator two lines up is still listed, because that
+	// grant really does reach this form. Without this the test above passes
+	// by listing nobody.
+	if !strings.Contains(table, "boss@schoenstatt.test") {
+		t.Errorf("the form's own administrator is not listed:\n%s", table)
+	}
+}
+
+// Giving access to somebody who already has an account, without retyping
+// their address.
+//
+// The address field is what this page had, and for the common case -- the
+// dozen people in an office who keep being added to one another's forms -- it
+// is a chance to mistype an address that is already in the database. A typo
+// there does not fail: it makes a second account and mails an invitation
+// nobody reads.
+func TestSomebodyWithAnAccountCanBePickedRatherThanTyped(t *testing.T) {
+	a := newAdmin(t, "")
+	boss := formAdmin(t, a, "boss@schoenstatt.test")
+
+	helper, err := a.users.Create(t.Context(), time.Now(), userbus.NewUser{
+		Email: mustEmail(t, "helper@schoenstatt.test"),
+		Name:  "A Helper",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// One session, reused: signing in is rate limited, and three sign-ins for
+	// the same account inside one test is the limit doing its job.
+	cookie := sessionFor(t, a, boss)
+
+	listing := a.get(t, peoplePage, cookie)
+	if listing.Code != http.StatusOK {
+		t.Fatalf("GET %s = %d, want 200:\n%s", peoplePage, listing.Code, listing.Body)
+	}
+
+	if !strings.Contains(listing.Body.String(), helper.ID.String()) {
+		t.Errorf("an account with no access to this form is not offered to pick:\n%s", listing.Body)
+	}
+
+	w := a.post(t, peoplePage, url.Values{
+		"user": {helper.ID.String()},
+		"role": {"results"},
+	}, cookie)
+	if w.Code != http.StatusOK {
+		t.Fatalf("POST %s picking somebody = %d, want 200:\n%s", peoplePage, w.Code, w.Body)
+	}
+
+	if got := roleOn(t, a, helper); got != accessbus.RoleResults {
+		t.Errorf("after being picked, %s holds %q on the form, want results", helper.Email, got)
+	}
+
+	// And they are no longer offered, because they are on the list above now.
+	again := a.get(t, peoplePage, cookie)
+
+	_, below, ok := strings.Cut(again.Body.String(), "</table>")
+	if !ok {
+		t.Fatalf("the page has no table of people:\n%s", again.Body)
+	}
+
+	if strings.Contains(below, helper.ID.String()) {
+		t.Errorf("somebody who already has access is still offered to pick:\n%s", below)
+	}
+}
+
+// Neither picked nor typed is the one new way to submit this form wrong.
+func TestGivingAccessToNobodyIsRefused(t *testing.T) {
+	a := newAdmin(t, "")
+	boss := formAdmin(t, a, "boss@schoenstatt.test")
+
+	w := a.post(t, peoplePage, url.Values{
+		"role": {"results"},
+	}, sessionFor(t, a, boss))
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("POST %s with nobody named = %d, want 400:\n%s", peoplePage, w.Code, w.Body)
+	}
+}

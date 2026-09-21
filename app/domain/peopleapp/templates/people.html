@@ -47,7 +47,7 @@
 {{end}}
 </td>
 {{if $.Email}}<td>{{if .Emailed}}yes{{else}}no{{end}}</td>{{end}}
-<td>{{.Since}}</td>
+<td class="when">{{.Since}}</td>
 <td>
 {{/* No button on two kinds of row, and for different reasons. Your own,
      because removing it locks you out of this page; a site-wide grant,
@@ -85,18 +85,36 @@ row. Adding an address that already appears above does the same thing.</p>
 <h2>Give somebody access</h2>
 
 <form method="post" action="/forms/{{.FormID}}/people">
+{{/* The dropdown first, because it is the common case: almost everybody given
+     access to a form already has an account, and retyping an address that is
+     already in the database is an opportunity to mistype it -- which does not
+     fail, it quietly makes a second account and mails an invitation nobody is
+     reading. It is left out entirely when there is nobody to offer, rather
+     than rendered empty. */}}
+{{if .AnyKnown}}
   <div class="field">
-    <label for="email">Their email address</label>
+    <label for="user">Somebody who already uses this service</label>
+    <select id="user" name="user">
+      <option value="">Pick a name&hellip;</option>
+      {{range .Known}}<option value="{{.UserID}}" {{if .Selected}}selected{{end}}>{{.Label}}</option>{{end}}
+    </select>
+  </div>
+{{end}}
+
+  <div class="field">
+    <label for="email">{{if .AnyKnown}}Or the email address of somebody new{{else}}Their email address{{end}}</label>
     <p class="help">If they have no account yet, this creates one and tells
-    them how to sign in.</p>
+    them how to sign in.{{if .AnyKnown}} It is ignored if you picked a name
+    above.{{end}}</p>
     <input type="email" id="email" name="email" value="{{.Address}}"
-           autocomplete="off" required maxlength="254">
+           autocomplete="off" maxlength="254">
   </div>
 
   <div class="field">
     <label for="name">Their name</label>
-    <p class="help">Optional, and only so the list above reads as people
-    rather than as addresses.</p>
+    <p class="help">Optional, for a new address only, and only so the list
+    above reads as people rather than as addresses. Somebody who already has
+    an account is never renamed from here.</p>
     <input type="text" id="name" name="name" value="{{.Name}}"
            autocomplete="off" maxlength="100">
   </div>
