@@ -583,3 +583,17 @@ form.role button {
   padding: 0.35rem 0.6rem;
   font-size: 0.9rem;
 }
+
+/* The address under somebody's name is an address, not an opaque identifier,
+   and .ref's word-break: break-all was breaking it wherever the line ran out:
+   "ellenegaudet@gmail.c / om". Breaking only when it has to keeps the whole
+   address on one line in the width it usually has. */
+.listing th[scope="row"] .ref {
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+/* A date is three short words that read as one. In a column narrow enough to
+   wrap it, "21 Sep 2026" became three lines and set the height of every row
+   in the table. */
+.listing td.when { white-space: nowrap; }
