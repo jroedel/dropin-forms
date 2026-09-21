@@ -11,7 +11,11 @@
 <tbody>
 {{range .Forms}}
 <tr>
-<th scope="row"><a href="/forms/{{.ID}}/submissions">{{.Title}}</a>
+{{/* A draft is not being served, so its name is not a link to its
+     submissions -- there are none, and that page resolves the form through
+     the served catalogue and answers 404. The editor is the one thing that
+     works on a draft, and it is the one thing this row offers. */}}
+<th scope="row">{{if .Draft}}<a href="/forms/{{.ID}}/edit">{{.Title}}</a>{{else}}<a href="/forms/{{.ID}}/submissions">{{.Title}}</a>{{end}}
 {{/* The two things admin on a form is the authority to do, under the name of
      the form rather than hidden behind the word "admin" in the role column.
      Both pages are otherwise reachable only by typing the address, and there
@@ -22,15 +26,15 @@
 {{/* What this role can reach beyond the submissions, under the name of the
      form. The will-call table is offered from `door` upwards, which is the
      role that exists for it; editing and granting stay with `admin`. */}}
-{{if .Door}}<br><span class="aside"><a href="/forms/{{.ID}}/will-call">will-call</a>{{if eq .Role "admin"}} &middot; <a href="/forms/{{.ID}}/edit">edit</a> &middot; <a href="/forms/{{.ID}}/people">people</a>{{end}}</span>{{end}}
+{{if and .Door (not .Draft)}}<br><span class="aside"><a href="/forms/{{.ID}}/will-call">will-call</a>{{if eq .Role "admin"}} &middot; <a href="/forms/{{.ID}}/edit">edit</a> &middot; <a href="/forms/{{.ID}}/people">people</a>{{end}}</span>{{end}}
 </th>
-<td class="figure">{{.Count}}</td>
-<td>{{if .Open}}open{{else}}closed{{end}}</td>
+<td class="figure">{{if .Draft}}<span class="absent">&mdash;</span>{{else}}{{.Count}}{{end}}</td>
+<td>{{if .Draft}}draft{{else if .Open}}open{{else}}closed{{end}}</td>
 <td>{{.Role}}</td>
 {{if $.Email}}
 {{/* The one column on this page that is about the reader rather than about
      the form, which is why it says "you" either way round. */}}
-<td><a href="/notifications/{{.ID}}">{{if .Emailed}}on{{else}}off{{end}}</a></td>
+<td>{{if .Draft}}<span class="absent">&mdash;</span>{{else}}<a href="/notifications/{{.ID}}">{{if .Emailed}}on{{else}}off{{end}}</a>{{end}}</td>
 {{end}}
 </tr>
 {{end}}
@@ -40,11 +44,36 @@
 {{/* Not an error. An account with no grants is what a second person looks
      like before somebody gives them access, and the page should say so
      rather than look broken. */}}
+{{if .CanCreate}}
+{{/* Except for the account that may start one, which is not waiting on
+     anybody: telling somebody holding a creator grant that they must ask an
+     administrator for access is both wrong and the end of the road, since the
+     link below is the only thing on this service that grant reaches. A form
+     they have started is on the list above from the moment it exists, even
+     unpublished, so reaching this sentence means they really have none. */}}
+<p>You have not started a form yet, and no one has given you access to
+anybody else's.</p>
+{{else}}
 <p>You do not have access to any forms yet. Whoever administers this service
 can give you access to one.</p>
 {{end}}
+{{end}}
 
+{{/* A different link per authority rather than one link for everybody.
+     /build is the whole picture -- every draft and every released form -- and
+     refuses anybody who is not a site-wide administrator. /build/new is the
+     one page a creator grant exists for. Offering a reader only the one their
+     grant actually reaches is the same rule the rest of this page follows. */}}
 {{if .SiteAdmin}}
 <p><a href="/build">Build a form</a></p>
+{{/* And the other thing a site-wide administrator does, which until now was
+     reachable only by going to /build first and finding the link there.
+     Inviting somebody to build forms of their own is not a step of building
+     one, so a reader looking for it had no reason to go looking behind a page
+     named for a different task. It is offered here to the same reader /build
+     is, since RequireSiteAdmin is what the page itself sits behind. */}}
+<p><a href="/site/people">Who runs this service</a></p>
+{{else if .CanCreate}}
+<p><a class="go" href="/build/new">Start a new form</a></p>
 {{end}}
 {{end}}

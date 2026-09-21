@@ -43,6 +43,27 @@ func siteBoss(t *testing.T, a harness, address string) userbus.User {
 	return u
 }
 
+// formCreator holds nothing but the site-wide RoleCreator grant: it may start
+// a form of its own and nothing else, which is the narrower thing siteBoss's
+// RoleAdmin also happens to include.
+func formCreator(t *testing.T, a harness, address string) userbus.User {
+	t.Helper()
+
+	u, err := a.users.Create(t.Context(), time.Now(), userbus.NewUser{
+		Email: mustEmail(t, address),
+		Name:  "A Volunteer",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if _, err := a.access.Grant(t.Context(), time.Now(), types.ID{}, u.ID, types.Slug{}, accessbus.RoleCreator); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+
+	return u
+}
+
 // made creates a form through the builder's own route, which is also the
 // assertion that the route works.
 func made(t *testing.T, a harness, cookie, slug, title string) {
@@ -79,6 +100,43 @@ func TestOnlyASiteAdministratorReachesTheBuilderIndex(t *testing.T) {
 	w := a.get(t, buildPage, "")
 	if w.Code != http.StatusSeeOther || !strings.HasPrefix(w.Header().Get("Location"), "/signin") {
 		t.Errorf("signed out GET %s = %d to %q, want a redirect to /signin", buildPage, w.Code, w.Header().Get("Location"))
+	}
+}
+
+// accessbus.RoleCreator may start a form of its own -- reaching /build/new and
+// having it succeed is the narrow thing this grant is for -- but it is not
+// the site-wide administrator that RoleAdmin makes somebody: it must not see
+// the whole-picture listing, and having made one form must not put another
+// administrator's form within reach.
+func TestARoleCreatorCanMakeAFormButNotAdministerTheService(t *testing.T) {
+	a := newAdmin(t, "")
+
+	whole := siteBoss(t, a, "site@schoenstatt.test")
+	made(t, a, sessionFor(t, a, whole), "raffle-2026", "Someone else's raffle")
+
+	volunteer := formCreator(t, a, "volunteer@schoenstatt.test")
+	cookie := sessionFor(t, a, volunteer)
+
+	// The whole-picture listing is still the stricter, site-wide gate.
+	if w := a.get(t, buildPage, cookie); w.Code != http.StatusForbidden {
+		t.Errorf("a form-creator GET %s = %d, want 403:\n%s", buildPage, w.Code, w.Body)
+	}
+
+	// But making one succeeds, and lands on that form's own editor -- which
+	// only works because formapp.create makes the creator its administrator
+	// the moment it exists. RoleCreator alone includes no form permission.
+	made(t, a, cookie, "bake-sale-2026", "Bake sale")
+
+	if w := a.get(t, "/forms/bake-sale-2026/edit", cookie); w.Code != http.StatusOK {
+		t.Errorf("the creator GET their own form's editor = %d, want 200:\n%s", w.Code, w.Body)
+	}
+
+	// Somebody else's form, made before the volunteer ever signed in, is not
+	// reachable just because both are administered by somebody: RoleCreator
+	// carries no access of its own to anything, present or future, but the
+	// one form it was used to start.
+	if w := a.get(t, "/forms/raffle-2026/edit", cookie); w.Code != http.StatusForbidden {
+		t.Errorf("the creator GET somebody else's form = %d, want 403:\n%s", w.Code, w.Body)
 	}
 }
 

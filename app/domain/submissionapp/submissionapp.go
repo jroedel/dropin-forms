@@ -83,6 +83,20 @@ type Grants interface {
 	ForUser(ctx context.Context, userID types.ID) ([]accessbus.Grant, error)
 }
 
+// Drafts is every authored definition, published or not, which is a different
+// question from [Forms] and the reason both are here. Forms is the catalogue
+// being served, and a draft is by definition not in it.
+//
+// This app has no business editing one and does not: it lists the drafts the
+// reader administers so that somebody who started a form yesterday can find
+// it again. Before this, the only page that listed a draft was the builder's
+// own, behind the site-wide gate -- so an account holding nothing but
+// accessbus.RoleCreator could make a form, leave the page, and have no link
+// back to it anywhere on the service.
+type Drafts interface {
+	Drafts(ctx context.Context) ([]formbus.Stored, error)
+}
+
 // Notifications answers which forms an account has turned email off for, so
 // that the list can say which is which.
 //
@@ -106,6 +120,12 @@ type Config struct {
 	// preference: a column offering a choice that will not stick is worse than
 	// no column.
 	Notifications Notifications
+
+	// Drafts is optional, and mounted by the muxer only where the builder is.
+	// An installation serving forms from TOML alone has no drafts to list, and
+	// asking a store that is not there for them would be a page that fails for
+	// want of something nobody wanted.
+	Drafts Drafts
 }
 
 type app struct {
@@ -143,15 +163,28 @@ type indexView struct {
 	// preference at all, and therefore whether the column means anything.
 	Email bool
 
-	// SiteAdmin marks a reader who administers the whole service, which is the
-	// only account that can make a form. The link to the builder is shown to
-	// them alone -- offering it to everybody would be offering a page that
-	// answers 403, and a link that refuses you is worse than no link.
+	// SiteAdmin marks a reader who administers the whole service, and
+	// therefore the builder's whole-picture listing at /build. The link to it
+	// is shown to them alone -- offering it to everybody would be offering a
+	// page that answers 403, and a link that refuses you is worse than no
+	// link.
 	//
 	// It is not this app's business to know what the builder is, and it does
 	// not: this is a fact about the reader's grants, which this handler
 	// already has in its hand, and the template spends it on one anchor.
 	SiteAdmin bool
+
+	// CanCreate marks a reader who may start a form, which is a wider set than
+	// SiteAdmin: an account holding nothing but accessbus.RoleCreator may do
+	// that and nothing else.
+	//
+	// It is separate from SiteAdmin because the two lead to different pages --
+	// /build is the whole picture and refuses a creator, /build/new is the one
+	// thing a creator came for -- and because without it this landing page is
+	// the entire reason a RoleCreator grant is unusable: the account is told it
+	// has access to nothing at all, next to no way to reach the page its one
+	// grant exists for.
+	CanCreate bool
 }
 
 type indexRow struct {
@@ -177,6 +210,14 @@ type indexRow struct {
 	// looking at the list, and because the answer is the one thing on the page
 	// that is about them rather than about the form.
 	Emailed bool
+
+	// Draft marks a definition that is not being served, and it changes what
+	// the row may offer rather than only what it says. Every other page this
+	// row links to -- the submissions, the will-call table, the people --
+	// resolves the form through the served catalogue and answers 404 for a
+	// draft. The editor is the one link that works, so it is the only one a
+	// draft row carries.
+	Draft bool
 }
 
 func (v indexView) Any() bool { return len(v.Forms) > 0 }
@@ -236,6 +277,11 @@ func (a app) index(w http.ResponseWriter, r *http.Request) {
 
 	view.SiteAdmin = site.Includes(accessbus.RoleAdmin)
 
+	// The same rule the gate in front of /build/new applies, asked of the
+	// site-wide grant this handler has already read rather than by a second
+	// lookup. accessbus.Role.CreatesForms is where that rule lives.
+	view.CanCreate = site.CreatesForms()
+
 	// Which forms this account has turned email off for, in one call before
 	// the loop. A failure is not fatal to the page: the list's job is the
 	// submissions, and losing the email column is a worse page rather than a
@@ -284,7 +330,58 @@ func (a app) index(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	a.cfg.Render.Render(w, r, http.StatusOK, "forms", view)
+	a.cfg.Render.Render(w, r, http.StatusOK, "forms", a.withDrafts(r, view, named, site))
+}
+
+// withDrafts appends the unpublished definitions this account administers.
+//
+// Filtered by the grant and by admin specifically, which is narrower than the
+// rest of this page: a draft is not being served, so the only thing anybody
+// can usefully do with it is finish it, and that is the editor's gate. Listing
+// one to somebody holding results would be offering a row whose every link
+// refuses them.
+//
+// A failure is logged and the page is rendered without them, the same bargain
+// the notification column makes. This listing's job is the forms that are
+// live, and losing the drafts off the bottom of it is a worse page rather than
+// a broken one.
+func (a app) withDrafts(r *http.Request, view indexView, named map[types.Slug]accessbus.Role, site accessbus.Role) indexView {
+	if a.cfg.Drafts == nil {
+		return view
+	}
+
+	drafts, err := a.cfg.Drafts.Drafts(r.Context())
+	if err != nil {
+		a.cfg.Log.Error("the drafts could not be listed",
+			"request_id", web.RequestIDFrom(r.Context()), "error", err)
+
+		return view
+	}
+
+	for _, d := range drafts {
+		if d.Live {
+			// Already in the loop above, through the catalogue that serves it.
+			continue
+		}
+
+		role := named[d.Form.ID]
+		if site.Includes(accessbus.RoleAdmin) {
+			role = accessbus.RoleAdmin
+		}
+
+		if !role.Includes(accessbus.RoleAdmin) {
+			continue
+		}
+
+		view.Forms = append(view.Forms, indexRow{
+			ID:    d.Form.ID.String(),
+			Title: d.Form.Title,
+			Role:  role.String(),
+			Draft: true,
+		})
+	}
+
+	return view
 }
 
 // listView is one form's submissions.

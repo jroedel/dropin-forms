@@ -712,3 +712,133 @@ func TestRequireDecidesBeforeRequireFormRole(t *testing.T) {
 		t.Errorf("the grant was checked for a signed-out reader: %v", authz.asked)
 	}
 }
+
+// fakeCreator answers the one question RequireFormCreator asks, and records
+// who it was asked about.
+type fakeCreator struct {
+	can bool
+	err error
+
+	asked []types.ID
+}
+
+func (f *fakeCreator) CanCreateForms(_ context.Context, userID types.ID) (bool, error) {
+	f.asked = append(f.asked, userID)
+
+	return f.can, f.err
+}
+
+// creatorChain mounts the route the way the muxer mounts /build/new: behind
+// Require, behind Authenticate. The gate is tested through the chain for the
+// reason roleChain gives.
+func creatorChain(signedIn bool, can *fakeCreator, got *seen) http.Handler {
+	auth := &fakeAuth{err: userbus.ErrDenied}
+	if signedIn {
+		auth = &fakeAuth{user: userbus.User{
+			ID:      types.NewID(),
+			Email:   mustEmail("volunteer@example.org"),
+			Enabled: true,
+		}}
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /build/new", mid.Require(signInPath)(
+		mid.RequireFormCreator(discard(), can)(probe(got)),
+	))
+
+	return web.Wrap(mux, mid.Authenticate(discard(), auth))
+}
+
+func creatorRequest() *http.Request {
+	r := httptest.NewRequest(http.MethodGet, "/build/new", nil)
+	r.AddCookie(cookieFor(types.NewID().String() + ".averylongsecretvaluehere"))
+
+	return r
+}
+
+func TestRequireFormCreatorAdmitsAGrantHolder(t *testing.T) {
+	var got seen
+
+	can := &fakeCreator{can: true}
+
+	w := httptest.NewRecorder()
+	creatorChain(true, can, &got).ServeHTTP(w, creatorRequest())
+
+	if w.Code != http.StatusOK {
+		t.Errorf("a creator = %d, want 200:\n%s", w.Code, w.Body)
+	}
+
+	if !got.reached {
+		t.Error("the handler was not reached")
+	}
+
+	if len(can.asked) != 1 {
+		t.Errorf("the grant was checked %d times, want once", len(can.asked))
+	}
+}
+
+func TestRequireFormCreatorRefusesAnAccountWithoutTheGrant(t *testing.T) {
+	var got seen
+
+	w := httptest.NewRecorder()
+	creatorChain(true, &fakeCreator{can: false}, &got).ServeHTTP(w, creatorRequest())
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("an account with no grant = %d, want 403", w.Code)
+	}
+
+	if got.reached {
+		t.Error("the handler was reached by an account that may not create a form")
+	}
+
+	// Which account it refused, so that somebody signed in as the wrong one
+	// of their two addresses can see that is what happened.
+	if !strings.Contains(w.Body.String(), "volunteer@example.org") {
+		t.Errorf("the refusal does not name the account:\n%s", w.Body)
+	}
+}
+
+// The rule Allowed's own comment sets out, applied to the gate beside it: a
+// store that cannot be read is an error and never a refusal. A 403 here would
+// tell somebody they may not create a form when the truth is that nobody
+// could find out.
+func TestRequireFormCreatorAnswers500WhenTheGrantCannotBeRead(t *testing.T) {
+	var got seen
+
+	can := &fakeCreator{can: true, err: errors.New("the database is unreachable")}
+
+	w := httptest.NewRecorder()
+	creatorChain(true, can, &got).ServeHTTP(w, creatorRequest())
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("an unreadable store = %d, want 500", w.Code)
+	}
+
+	if got.reached {
+		t.Error("the handler was reached after the grant could not be read")
+	}
+}
+
+// Require decides first, so a signed-out visitor is sent to sign in rather
+// than told they may not create a form. A mounting that got this the wrong
+// way round would answer 403 to somebody who has done nothing but arrive.
+func TestRequireDecidesBeforeRequireFormCreator(t *testing.T) {
+	var got seen
+
+	can := &fakeCreator{can: true}
+
+	w := httptest.NewRecorder()
+	creatorChain(false, can, &got).ServeHTTP(w, creatorRequest())
+
+	if w.Code != http.StatusSeeOther {
+		t.Errorf("a signed-out visitor = %d, want 303", w.Code)
+	}
+
+	if len(can.asked) != 0 {
+		t.Error("the grant was checked for a visitor who is not signed in")
+	}
+
+	if got.reached {
+		t.Error("the handler was reached with nobody signed in")
+	}
+}

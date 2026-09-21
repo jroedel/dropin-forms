@@ -332,6 +332,56 @@ func RequireSiteAdmin(log *slog.Logger, auth Authorizer, want accessbus.Role) we
 	}
 }
 
+// FormCreator is the one thing [RequireFormCreator] needs.
+type FormCreator interface {
+	CanCreateForms(ctx context.Context, userID types.ID) (bool, error)
+}
+
+// RequireFormCreator refuses a signed-in account that may not make a new
+// form.
+//
+// It exists because [RequireSiteAdmin] answers a different question: whether
+// this account holds the service, which is more than "may it make a form".
+// accessbus.RoleCreator is a site-wide grant that says only the narrower
+// thing, and CanCreateForms is where that is decided -- see its comment for
+// why Allowed is not asked instead. The refusals otherwise match
+// RequireSiteAdmin's.
+func RequireFormCreator(log *slog.Logger, can FormCreator) web.Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestID := web.RequestIDFrom(r.Context())
+
+			u, ok := UserFrom(r.Context())
+			if !ok {
+				log.Error("a route behind RequireFormCreator is not behind Require",
+					"request_id", requestID, "path", r.URL.Path)
+				http.Error(w, "you need to be signed in to do that.", http.StatusForbidden)
+
+				return
+			}
+
+			allowed, err := can.CanCreateForms(r.Context(), u.ID)
+			if err != nil {
+				log.Error("the site-wide grant could not be checked",
+					"request_id", requestID, "user_id", u.ID, "error", err)
+				http.Error(w, "something went wrong at our end. Please try again shortly.", http.StatusInternalServerError)
+
+				return
+			}
+
+			if !allowed {
+				log.Info("refused for want of a form-creator grant",
+					"request_id", requestID, "user_id", u.ID)
+				http.Error(w, "you are signed in as "+u.Email.String()+", which may not create a new form. Whoever administers this service can give you that.", http.StatusForbidden)
+
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // SafeNext returns raw if it is somewhere on this site, and "" otherwise.
 //
 // This is the open-redirect guard, and it is a denylist of the shapes that

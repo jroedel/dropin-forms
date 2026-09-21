@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jroedel/dropin-forms/app/sdk/mid"
+	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/types"
 	"github.com/jroedel/dropin-forms/foundation/web"
@@ -146,7 +147,9 @@ func (a app) create(w http.ResponseWriter, r *http.Request) {
 	// that way until somebody read the error.
 	f := formbus.Form{ID: slug, Title: said.Title, Currency: defaultCurrency}
 
-	if _, err := a.cfg.Catalog.Create(r.Context(), time.Now(), me.ID, f); err != nil {
+	now := time.Now()
+
+	if _, err := a.cfg.Catalog.Create(r.Context(), now, me.ID, f); err != nil {
 		if errors.Is(err, formbus.ErrTaken) {
 			said.Problem = "There is already a form called " + slug.String() + ". Pick another name."
 			a.cfg.Render.Render(w, r, http.StatusConflict, "build-new", said)
@@ -157,6 +160,19 @@ func (a app) create(w http.ResponseWriter, r *http.Request) {
 		a.oops(w, r, "a form could not be created", err)
 
 		return
+	}
+
+	// Made an administrator of what was just made. A site-wide administrator
+	// does not need this -- their own grant already reaches every form -- but
+	// an account holding nothing but accessbus.RoleCreator does: that role
+	// includes no form permission at all, and without this grant the editor
+	// this redirect is about to send them to would refuse them. Failing to
+	// grant it is not failing to create the form, which already exists and is
+	// visible on /build to whoever can fix the grant by hand, so this is
+	// logged rather than turned into an error page.
+	if _, err := a.cfg.Grants.Grant(r.Context(), now, me.ID, me.ID, slug, accessbus.RoleAdmin); err != nil {
+		a.cfg.Log.Error("the form was created but its creator could not be made its administrator",
+			"request_id", web.RequestIDFrom(r.Context()), "form", slug.String(), "user_id", me.ID.String(), "error", err)
 	}
 
 	http.Redirect(w, r, "/forms/"+slug.String()+"/edit", http.StatusSeeOther)

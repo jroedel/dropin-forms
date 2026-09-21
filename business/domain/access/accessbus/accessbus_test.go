@@ -569,3 +569,281 @@ func TestGrantRecordsWhoDidIt(t *testing.T) {
 		t.Error("a grant on a named form reports itself as site-wide")
 	}
 }
+
+// RoleCreator is not a rung on the results/door/admin ladder, so holding it
+// must not look like holding any of them -- an account with nothing but this
+// grant should not be able to read a form's submissions by accident.
+func TestCreatorIncludesNothing(t *testing.T) {
+	for _, want := range accessbus.Roles() {
+		if accessbus.RoleCreator.Includes(want) {
+			t.Errorf("RoleCreator.Includes(%q) = true, want false", want)
+		}
+	}
+}
+
+// RoleCreator may only ever be granted site-wide: the form a form-specific
+// grant would name already exists, so "may create it" is nothing that grant
+// could mean.
+func TestCreatorCannotBeGrantedOnAForm(t *testing.T) {
+	b, _ := newBusiness()
+	lunch := mustSlug(t, "feast-lunch-2026")
+
+	if _, err := b.Grant(t.Context(), now, types.ID{}, types.NewID(), lunch, accessbus.RoleCreator); !errors.Is(err, accessbus.ErrNotARole) {
+		t.Errorf("Grant(creator, on a form) = %v, want ErrNotARole", err)
+	}
+
+	if _, err := b.Grant(t.Context(), now, types.ID{}, types.NewID(), types.Slug{}, accessbus.RoleCreator); err != nil {
+		t.Errorf("Grant(creator, site-wide): %v", err)
+	}
+}
+
+// Every per-form role a site-wide grant could already hold still works after
+// RoleCreator was added -- adding a role site-wide grants may hold must not
+// narrow what one already could.
+func TestEveryPerFormRoleIsStillValidSiteWide(t *testing.T) {
+	b, _ := newBusiness()
+
+	for _, r := range accessbus.Roles() {
+		if _, err := b.Grant(t.Context(), now, types.ID{}, types.NewID(), types.Slug{}, r); err != nil {
+			t.Errorf("Grant(%q, site-wide): %v", r, err)
+		}
+	}
+}
+
+func TestParseSiteRoleOffersCreatorAndAdminOnly(t *testing.T) {
+	for _, r := range accessbus.SiteRoles() {
+		got, err := accessbus.ParseSiteRole(r.String())
+		if err != nil {
+			t.Errorf("ParseSiteRole(%q): %v", r, err)
+		}
+		if got != r {
+			t.Errorf("ParseSiteRole(%q) = %q", r, got)
+		}
+	}
+
+	for _, s := range []string{"", "results", "door", "owner"} {
+		if _, err := accessbus.ParseSiteRole(s); !errors.Is(err, accessbus.ErrNotARole) {
+			t.Errorf("ParseSiteRole(%q) = %v, want ErrNotARole", s, err)
+		}
+	}
+}
+
+// CanCreateForms is the narrower question RoleCreator exists to answer, and it
+// is deliberately not the same lookup Allowed makes -- RoleCreator includes
+// nothing, so Allowed would say no even for the account the grant names.
+func TestCanCreateForms(t *testing.T) {
+	b, _ := newBusiness()
+
+	nobody := types.NewID()
+	if can, err := b.CanCreateForms(t.Context(), nobody); err != nil || can {
+		t.Errorf("CanCreateForms(nobody) = %v, %v, want false, nil", can, err)
+	}
+
+	creator := types.NewID()
+	if _, err := b.Grant(t.Context(), now, types.ID{}, creator, types.Slug{}, accessbus.RoleCreator); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+	if can, err := b.CanCreateForms(t.Context(), creator); err != nil || !can {
+		t.Errorf("CanCreateForms(creator) = %v, %v, want true, nil", can, err)
+	}
+
+	admin := types.NewID()
+	if _, err := b.Grant(t.Context(), now, types.ID{}, admin, types.Slug{}, accessbus.RoleAdmin); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+	if can, err := b.CanCreateForms(t.Context(), admin); err != nil || !can {
+		t.Errorf("CanCreateForms(admin) = %v, %v, want true, nil", can, err)
+	}
+
+	// A results holder, even site-wide, may not create a form.
+	reader := types.NewID()
+	if _, err := b.Grant(t.Context(), now, types.ID{}, reader, types.Slug{}, accessbus.RoleResults); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+	if can, err := b.CanCreateForms(t.Context(), reader); err != nil || can {
+		t.Errorf("CanCreateForms(site-wide reader) = %v, %v, want false, nil", can, err)
+	}
+
+	// Admin on a specific form is not the site-wide grant this asks about.
+	onOneForm := types.NewID()
+	if _, err := b.Grant(t.Context(), now, types.ID{}, onOneForm, mustSlug(t, "feast-lunch-2026"), accessbus.RoleAdmin); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+	if can, err := b.CanCreateForms(t.Context(), onOneForm); err != nil || can {
+		t.Errorf("CanCreateForms(form admin) = %v, %v, want false, nil", can, err)
+	}
+}
+
+// The role a row holds is a wider set than the role somebody may be typed
+// into the per-form people page, and storage parses against the wider one.
+// Without this a RoleCreator grant is writable and then unreadable: the write
+// succeeds, and every read of that row afterwards is an error, which a gate
+// correctly turns into a 500 rather than a refusal.
+func TestParseStoredRoleAcceptsEveryRoleARowMayHold(t *testing.T) {
+	for _, r := range append(accessbus.Roles(), accessbus.SiteRoles()...) {
+		got, err := accessbus.ParseStoredRole(r.String())
+		if err != nil {
+			t.Errorf("ParseStoredRole(%q): %v", r, err)
+		}
+		if got != r {
+			t.Errorf("ParseStoredRole(%q) = %q", r, got)
+		}
+	}
+
+	for _, s := range []string{"", "owner", "Creator", "admin "} {
+		if _, err := accessbus.ParseStoredRole(s); !errors.Is(err, accessbus.ErrNotARole) {
+			t.Errorf("ParseStoredRole(%q) = %v, want ErrNotARole", s, err)
+		}
+	}
+}
+
+// ParseRole stays narrow, which is the other half of the same bargain: the
+// per-form people page must not be able to hand out a role that no per-form
+// gate ever asks for.
+func TestParseRoleStillRefusesCreator(t *testing.T) {
+	if _, err := accessbus.ParseRole(accessbus.RoleCreator.String()); !errors.Is(err, accessbus.ErrNotARole) {
+		t.Errorf("ParseRole(creator) = %v, want ErrNotARole", err)
+	}
+
+	if slices.Contains(accessbus.Roles(), accessbus.RoleCreator) {
+		t.Error("Roles() offers creator, which the per-form people page would then put in its dropdown")
+	}
+}
+
+// CreatesForms is the rule in one place, and the gate in front of /build/new
+// and the landing page that links to it both read it. Spelled out here so
+// that moving a role between the two answers is a test failure rather than a
+// link that refuses whoever follows it.
+func TestWhichRolesCreateForms(t *testing.T) {
+	cases := map[accessbus.Role]bool{
+		accessbus.RoleCreator:   true,
+		accessbus.RoleAdmin:     true,
+		accessbus.RoleResults:   false,
+		accessbus.RoleDoor:      false,
+		accessbus.Role(""):      false,
+		accessbus.Role("owner"): false,
+	}
+
+	for r, want := range cases {
+		if got := r.CreatesForms(); got != want {
+			t.Errorf("Role(%q).CreatesForms() = %v, want %v", r, got, want)
+		}
+	}
+}
+
+// Demoting the last site-wide administrator leaves precisely the service
+// revoking them would: one nobody can grant anything on. Revoke has always
+// refused it, and now that there is a second site-wide role to demote
+// somebody to, Grant refuses it too.
+func TestTheLastSiteAdminCannotBeDemoted(t *testing.T) {
+	b, _ := newBusiness()
+
+	boss := types.NewID()
+	if _, err := b.Grant(t.Context(), now, types.ID{}, boss, types.Slug{}, accessbus.RoleAdmin); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+
+	if _, err := b.Grant(t.Context(), now, types.ID{}, boss, types.Slug{}, accessbus.RoleCreator); !errors.Is(err, accessbus.ErrLastAdmin) {
+		t.Errorf("demoting the only site administrator = %v, want ErrLastAdmin", err)
+	}
+
+	// And they are still what they were: a refused demotion must not be a
+	// half-done one.
+	if can, err := b.CanCreateForms(t.Context(), boss); err != nil || !can {
+		t.Errorf("after the refusal CanCreateForms = %v, %v, want true, nil", can, err)
+	}
+
+	// Re-granting the role they already hold is not a demotion and still
+	// works, which is how the audit line on the row gets refreshed.
+	if _, err := b.Grant(t.Context(), now, types.ID{}, boss, types.Slug{}, accessbus.RoleAdmin); err != nil {
+		t.Errorf("re-granting admin to the only administrator: %v", err)
+	}
+
+	// With a second administrator there is no last one, and the demotion goes
+	// through.
+	second := types.NewID()
+	if _, err := b.Grant(t.Context(), now, types.ID{}, second, types.Slug{}, accessbus.RoleAdmin); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+
+	if _, err := b.Grant(t.Context(), now, types.ID{}, boss, types.Slug{}, accessbus.RoleCreator); err != nil {
+		t.Errorf("demoting one of two administrators: %v", err)
+	}
+}
+
+// A creator is not an administrator for the purpose of the last-administrator
+// count. Somebody holding it can grant nothing, so counting them would be
+// counting a way back that does not exist.
+func TestACreatorDoesNotCountAsTheAdministratorLeftBehind(t *testing.T) {
+	b, _ := newBusiness()
+
+	boss := types.NewID()
+	if _, err := b.Grant(t.Context(), now, types.ID{}, boss, types.Slug{}, accessbus.RoleAdmin); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+
+	volunteer := types.NewID()
+	if _, err := b.Grant(t.Context(), now, types.ID{}, volunteer, types.Slug{}, accessbus.RoleCreator); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+
+	if err := b.Revoke(t.Context(), boss, types.Slug{}); !errors.Is(err, accessbus.ErrLastAdmin) {
+		t.Errorf("revoking the only administrator while a creator exists = %v, want ErrLastAdmin", err)
+	}
+
+	// Revoking the creator is never refused: nothing depends on them.
+	if err := b.Revoke(t.Context(), volunteer, types.Slug{}); err != nil {
+		t.Errorf("revoking a creator: %v", err)
+	}
+}
+
+// Taking away the site-wide grant takes away only that row. The forms a
+// creator has already made are theirs by a per-form grant, and those are a
+// separate decision somebody has to make separately.
+func TestRevokingSiteWideAccessLeavesTheFormsTheyAlreadyRun(t *testing.T) {
+	b, _ := newBusiness()
+
+	boss := types.NewID()
+	if _, err := b.Grant(t.Context(), now, types.ID{}, boss, types.Slug{}, accessbus.RoleAdmin); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+
+	volunteer := types.NewID()
+	if _, err := b.Grant(t.Context(), now, types.ID{}, volunteer, types.Slug{}, accessbus.RoleCreator); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+
+	theirs := mustSlug(t, "bake-sale-2026")
+	if _, err := b.Grant(t.Context(), now, volunteer, volunteer, theirs, accessbus.RoleAdmin); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+
+	if err := b.Revoke(t.Context(), volunteer, types.Slug{}); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+
+	if can, err := b.CanCreateForms(t.Context(), volunteer); err != nil || can {
+		t.Errorf("after revocation CanCreateForms = %v, %v, want false, nil", can, err)
+	}
+
+	if ok, err := b.Allowed(t.Context(), volunteer, theirs, accessbus.RoleAdmin); err != nil || !ok {
+		t.Errorf("after revocation they lost the form they made: Allowed = %v, %v, want true, nil", ok, err)
+	}
+}
+
+// An unreadable store is an error and never a refusal, the same rule Allowed
+// is held to -- a gate that reads a failure as "no" turns a database outage
+// into everybody being told they may not create a form.
+func TestCanCreateFormsReportsAFailingStore(t *testing.T) {
+	b, store := newBusiness()
+
+	store.fail = errors.New("the database is on fire")
+
+	can, err := b.CanCreateForms(t.Context(), types.NewID())
+	if err == nil {
+		t.Error("a failing store was not reported as an error")
+	}
+	if can {
+		t.Error("a failing store answered true")
+	}
+}

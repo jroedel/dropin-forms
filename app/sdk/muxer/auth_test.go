@@ -18,6 +18,7 @@ import (
 	"github.com/jroedel/dropin-forms/app/domain/formapp"
 	"github.com/jroedel/dropin-forms/app/domain/notifyapp"
 	"github.com/jroedel/dropin-forms/app/domain/peopleapp"
+	"github.com/jroedel/dropin-forms/app/domain/siteapp"
 	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
 	"github.com/jroedel/dropin-forms/app/domain/willcallapp"
 	"github.com/jroedel/dropin-forms/app/sdk/mid"
@@ -105,7 +106,7 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 
 	renderer, err := page.NewRenderer(log, page.AdminChrome(),
 		authapp.Templates, submissionapp.Templates, notifyapp.Templates, peopleapp.Templates,
-		formapp.Templates, willcallapp.Templates)
+		formapp.Templates, willcallapp.Templates, siteapp.Templates)
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
 	}
