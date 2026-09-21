@@ -10,24 +10,30 @@
 // # What guards each route
 //
 //	GET  /build                      Require, then RequireSiteAdmin(admin)
-//	GET  /build/new                  the same
+//	GET  /build/new                  Require, then RequireFormCreator
 //	POST /build/new                  the same
 //	everything under /forms/{slug}/edit
 //	                                 Require, then RequireFormRole(admin)
 //
-// Two gates because there are two questions. Editing a form is admin on that
-// form, the same gate peopleapp sits behind and for a recognisably similar
-// reason: deciding what a form asks and what it charges is not something
-// whoever counts the lunches should be able to do. But making a form cannot be
-// a per-form question, since the form does not exist yet and no grant on it
-// can, so that one is the site-wide grant.
+// Three gates for three questions. Editing a form is admin on that form, the
+// same gate peopleapp sits behind and for a recognisably similar reason:
+// deciding what a form asks and what it charges is not something whoever
+// counts the lunches should be able to do. Making a form cannot be a per-form
+// question, since the form does not exist yet and no grant on it can -- but it
+// is also not the same question as administering the whole service: a
+// site-wide administrator can obviously make a form, and so, more narrowly,
+// can an account holding nothing but accessbus.RoleCreator, which is the
+// grant that exists for exactly this and nothing else. RequireFormCreator is
+// where that is decided; see its comment for why RequireSiteAdmin will not do.
 //
-// Which is also why the builder's listing is at /build and behind the
-// site-wide gate rather than folded into the /forms page everybody sees. That
-// page is built from the catalogue of forms being served, and a draft is by
-// definition not in it. Somebody who administers one form reaches its editor
-// from the link beside it there; drafts and the New form button belong to
-// whoever administers the service, which is who makes them.
+// Which is also why the builder's listing at /build -- every draft and every
+// released form, the whole picture -- stays behind the stricter, site-wide
+// gate rather than the creator one. An account holding only RoleCreator is
+// building one form of its own, not administering the service, and should not
+// see the others. It reaches /build/new directly, and formapp.create grants
+// it admin on the form the moment that form exists, which is what makes the
+// editor at /forms/{slug}/edit reachable next; the same-named page for
+// everyone else is one it cannot open.
 //
 // A consequence worth naming: a draft cannot be handed to anybody, because
 // peopleapp resolves a form through the served catalogue and a draft is not in
@@ -84,6 +90,7 @@ import (
 
 	"github.com/jroedel/dropin-forms/app/sdk/mid"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
+	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/types"
 )
@@ -113,10 +120,26 @@ type Catalog interface {
 	Delete(ctx context.Context, slug types.Slug) error
 }
 
+// Grants is the one thing this app needs from the access domain: making the
+// person who has just created a form an administrator of it.
+//
+// A site-wide administrator does not strictly need this grant -- their
+// site-wide one already reaches every form -- but it is made anyway, without
+// checking which kind of account is creating, because the alternative is a
+// branch whose only purpose is skipping a harmless write. For an account
+// holding only RoleCreator this grant is the whole reason the new form is
+// reachable at all: RoleCreator is not on the results/door/admin ladder and
+// includes none of them, so without this the person who just made a form
+// could not open it.
+type Grants interface {
+	Grant(ctx context.Context, now time.Time, granter, userID types.ID, form types.Slug, role accessbus.Role) (accessbus.Grant, error)
+}
+
 // Config is what this app needs.
 type Config struct {
 	Log     *slog.Logger
 	Catalog Catalog
+	Grants  Grants
 	Render  *page.Renderer
 
 	// EmbedBaseURL is the public surface's own origin, and it is what turns
@@ -139,19 +162,21 @@ type app struct {
 
 // Routes mounts this app.
 //
-// guard is Require, admins is RequireFormRole(admin) and site is
-// RequireSiteAdmin(admin). All three are handed in by the muxer rather than
-// built here: a route's position in the chain is written down in one place and
-// is not a decision an app package gets to make.
-func Routes(mux *http.ServeMux, cfg Config, guard, admins, site func(http.Handler) http.Handler) {
+// guard is Require, admins is RequireFormRole(admin), site is
+// RequireSiteAdmin(admin) and creator is RequireFormCreator. All four are
+// handed in by the muxer rather than built here: a route's position in the
+// chain is written down in one place and is not a decision an app package
+// gets to make.
+func Routes(mux *http.ServeMux, cfg Config, guard, admins, site, creator func(http.Handler) http.Handler) {
 	a := app{cfg: cfg}
 
-	// Behind the site-wide gate, because there is no form yet to hold a role
-	// on. mid.RequireSiteAdmin says more about why that has to be a different
-	// gate rather than RequireFormRole with an empty slug.
+	// The whole-picture listing stays behind the stricter, site-wide gate --
+	// see the package comment for why an account holding only RoleCreator
+	// should not reach it. Making a form is the narrower question and is
+	// behind creator instead, which a site-wide administrator also satisfies.
 	mux.Handle("GET /build", guard(site(http.HandlerFunc(a.index))))
-	mux.Handle("GET /build/new", guard(site(http.HandlerFunc(a.newForm))))
-	mux.Handle("POST /build/new", guard(site(http.HandlerFunc(a.create))))
+	mux.Handle("GET /build/new", guard(creator(http.HandlerFunc(a.newForm))))
+	mux.Handle("POST /build/new", guard(creator(http.HandlerFunc(a.create))))
 
 	behind := func(h http.HandlerFunc) http.Handler {
 		return guard(admins(h))

@@ -203,6 +203,11 @@ type scanner interface {
 // arrive as a Role this one does not recognise, and while Role.Includes
 // refuses an unrecognised role, a permission decision resting on a value
 // nobody parsed is not one to leave standing.
+//
+// ParseStoredRole and not ParseRole, because the question here is "is this a
+// role at all" rather than "is this a role somebody may be given on one form".
+// The two differ by RoleCreator, which only a site-wide row holds, and asking
+// the narrower question of storage makes that row writable but unreadable.
 func scan(row scanner) (accessbus.Grant, error) {
 	var (
 		userID    string
@@ -221,7 +226,7 @@ func scan(row scanner) (accessbus.Grant, error) {
 		return accessbus.Grant{}, fmt.Errorf("the account identifier on a grant is unreadable: %w", err)
 	}
 
-	r, err := accessbus.ParseRole(role)
+	r, err := accessbus.ParseStoredRole(role)
 	if err != nil {
 		return accessbus.Grant{}, fmt.Errorf("the role on a grant is unreadable: %w", err)
 	}

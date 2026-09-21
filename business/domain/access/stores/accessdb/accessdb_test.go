@@ -3,7 +3,10 @@ package accessdb_test
 import (
 	"database/sql"
 	"errors"
+	"fmt"
+	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -320,5 +323,112 @@ func TestARoleThisBinaryCannotReadIsAnError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "role") {
 		t.Errorf("the error does not say what was wrong: %v", err)
+	}
+}
+
+// everyRole is every role either page offers, as a set: RoleAdmin appears in
+// both lists and each account below needs an address of its own.
+func everyRole() map[accessbus.Role]struct{} {
+	out := map[accessbus.Role]struct{}{}
+
+	for _, r := range append(accessbus.Roles(), accessbus.SiteRoles()...) {
+		out[r] = struct{}{}
+	}
+
+	return out
+}
+
+// Every role a grant may hold survives the round trip through SQL.
+//
+// This is here because the one that did not was RoleCreator, and the shape of
+// that failure is worth keeping a test against: scan parses each stored value
+// back through its own type, so a role the parser did not know was written
+// without complaint and then failed on every read afterwards. Nothing about
+// the write said anything was wrong, and the page that had just granted it
+// answered 500.
+//
+// Written as a loop over every role rather than as one case for creator, so
+// that the next site-only role is covered the day it is added.
+func TestEveryRoleSurvivesTheRoundTrip(t *testing.T) {
+	db, store := open(t)
+
+	// Deduplicated: RoleAdmin is both a per-form role and one a site-wide
+	// grant may be given from its own page, and each account here needs an
+	// address of its own.
+	for i, r := range slices.Sorted(maps.Keys(everyRole())) {
+		user := account(t, db, fmt.Sprintf("person-%d-%s@schoenstatt.test", i, r))
+
+		// Site-wide, which is the shape every site-only role is stored in and
+		// a shape every per-form role is allowed to take as well.
+		g := accessbus.Grant{
+			UserID:    user,
+			Role:      r,
+			GrantedBy: types.ID{},
+			GrantedAt: now,
+		}
+
+		if err := store.Upsert(t.Context(), g); err != nil {
+			t.Fatalf("Upsert(%q): %v", r, err)
+		}
+
+		back, err := store.ByUserAndForm(t.Context(), user, types.Slug{})
+		if err != nil {
+			t.Errorf("ByUserAndForm(%q): %v", r, err)
+
+			continue
+		}
+
+		if back.Role != r {
+			t.Errorf("stored %q and read back %q", r, back.Role)
+		}
+
+		if !back.SiteWide() {
+			t.Errorf("a site-wide %q grant did not come back site-wide", r)
+		}
+
+		// The listings read the same rows through the same scan, so a role
+		// that only one of them can parse is the same bug in a quieter place.
+		all, err := store.ByForm(t.Context(), types.Slug{})
+		if err != nil {
+			t.Errorf("ByForm after storing %q: %v", r, err)
+		}
+
+		found := false
+		for _, have := range all {
+			if have.UserID == user && have.Role == r {
+				found = true
+			}
+		}
+
+		if !found {
+			t.Errorf("a site-wide %q grant is missing from the listing of site-wide grants", r)
+		}
+
+		mine, err := store.ByUser(t.Context(), user)
+		if err != nil {
+			t.Errorf("ByUser after storing %q: %v", r, err)
+		}
+		if len(mine) != 1 {
+			t.Errorf("ByUser after storing %q returned %d grants, want 1", r, len(mine))
+		}
+	}
+}
+
+// A role this binary does not understand is still an error rather than a
+// Grant nobody parsed -- widening what storage accepts must not have widened
+// it to everything.
+func TestARoleFromANewerBinaryIsStillUnreadable(t *testing.T) {
+	db, store := open(t)
+
+	user := account(t, db, "future@schoenstatt.test")
+
+	if _, err := db.ExecContext(t.Context(),
+		`INSERT INTO grants (user_id, form_slug, role, granted_by, granted_at)
+		 VALUES (?, '', 'emperor', '', ?)`, user.String(), now.UnixMilli()); err != nil {
+		t.Fatalf("inserting a row by hand: %v", err)
+	}
+
+	if _, err := store.ByUserAndForm(t.Context(), user, types.Slug{}); !errors.Is(err, accessbus.ErrNotARole) {
+		t.Errorf("reading a role this binary does not know = %v, want ErrNotARole", err)
 	}
 }

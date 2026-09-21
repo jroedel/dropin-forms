@@ -82,16 +82,52 @@ const (
 	// RoleAdmin edits the form and manages who else may see it, and includes
 	// everything RoleDoor and RoleResults can do.
 	RoleAdmin Role = "admin"
+
+	// RoleCreator is site-wide only: it permits making a new form, and that is
+	// all. It is not a rung on the results/door/admin ladder and does not
+	// [Role.Includes] any of them -- an account holding only this grant sees
+	// nothing until somebody gives it a form specifically, including the one it
+	// just made, which formapp grants automatically at the moment of creation.
+	//
+	// It exists for the volunteer who runs their own event end to end and
+	// should not, on that account, be able to read or change anybody else's
+	// form. That is the whole difference between this and RoleAdmin held
+	// site-wide: the latter is every form, present and future, and this is
+	// "may start one" and nothing else.
+	RoleCreator Role = "creator"
 )
 
-// roles is every Role, weakest first. The order is the implication order, and
-// [Role.Includes] reads it -- so adding a role means putting it in the right
-// place here rather than editing a comparison.
+// roles is every per-form Role, weakest first. The order is the implication
+// order, and [Role.Includes] reads it -- so adding a role means putting it in
+// the right place here rather than editing a comparison.
 //
 // RoleDoor went in the middle rather than on the end, which is the whole of
 // what adding it took: whoever works the table can read the list they are
 // checking off, and an administrator can work the table.
+//
+// RoleCreator is deliberately not here. It is not a form permission -- it is
+// checked with the form left out entirely, by [Business.CanCreateForms] --
+// and a role that no [RequireFormRole] gate ever asks for must not appear in
+// the per-form people page's dropdown, where it would mean nothing.
 var roles = []Role{RoleResults, RoleDoor, RoleAdmin}
+
+// siteRoles is what the page that grants a site-wide role offers, weakest
+// first -- not every role [Business.Grant] will accept there, which is wider:
+// see its comment. RoleResults and RoleDoor held site-wide are a shape this
+// package has always allowed and some existing row may still use, but nothing
+// mints one that way today, so the page does not offer them.
+var siteRoles = []Role{RoleCreator, RoleAdmin}
+
+// allRoles is every Role this binary understands, the per-form ladder and the
+// site-only ones alike, in no particular order -- there is no implication
+// between the two groups to encode.
+//
+// It exists because "is this a role at all" and "is this a role somebody may
+// be given on one form" are different questions, and [ParseRole] answers the
+// second. Storage asks the first: a row holding RoleCreator is a row this
+// binary wrote, and reading it back through the per-form list would make the
+// site-wide grant unreadable the moment it was used.
+var allRoles = []Role{RoleResults, RoleDoor, RoleAdmin, RoleCreator}
 
 // The errors this package returns.
 var (
@@ -107,8 +143,10 @@ var (
 	ErrLastAdmin = errors.New("that is the last site-wide administrator")
 )
 
-// ParseRole reads a role name, and is the only way to get a Role from
-// anything a person or a database supplied.
+// ParseRole reads a role name somebody may be given on one form, and is the
+// only way to get such a Role from anything a person typed. A role a row may
+// hold is a wider set -- see [ParseStoredRole], which is what storage reads
+// with.
 func ParseRole(s string) (Role, error) {
 	if r := Role(s); slices.Contains(roles, r) {
 		return r, nil
@@ -117,8 +155,46 @@ func ParseRole(s string) (Role, error) {
 	return "", fmt.Errorf("%w: %q is not one of %v", ErrNotARole, s, roles)
 }
 
-// Roles returns every role, weakest first, for a page offering a choice.
+// Roles returns every per-form role, weakest first, for a page offering a
+// choice on one form. RoleCreator is never in it; see the comment on [roles].
 func Roles() []Role { return slices.Clone(roles) }
+
+// ParseSiteRole reads a role name typed into the page that grants site-wide
+// access, where RoleCreator is a real answer and RoleResults and RoleDoor are
+// not offered. It is narrower than what [Business.Grant] itself accepts for a
+// site-wide row; see that method's comment.
+func ParseSiteRole(s string) (Role, error) {
+	if r := Role(s); slices.Contains(siteRoles, r) {
+		return r, nil
+	}
+
+	return "", fmt.Errorf("%w: %q is not one of %v", ErrNotARole, s, siteRoles)
+}
+
+// SiteRoles returns every role a site-wide grant may hold, weakest first, for
+// the page that grants one.
+func SiteRoles() []Role { return slices.Clone(siteRoles) }
+
+// ParseStoredRole reads a role name that came from this service's own storage
+// rather than from a person, and accepts every role this binary understands.
+//
+// The storage layer needs this and not [ParseRole]: it parses each row back
+// through its own type instead of casting, and RoleCreator is a role only a
+// site-wide row may hold, so parsing storage against the per-form list would
+// make every site-wide creator grant unreadable -- written successfully, then
+// an error on the next read.
+//
+// It stays separate from ParseRole rather than replacing it because what a
+// person may type into the per-form people page is genuinely narrower than
+// what a row may hold, and collapsing the two would put RoleCreator in that
+// page's dropdown, where it means nothing.
+func ParseStoredRole(s string) (Role, error) {
+	if r := Role(s); slices.Contains(allRoles, r) {
+		return r, nil
+	}
+
+	return "", fmt.Errorf("%w: %q is not one of %v", ErrNotARole, s, allRoles)
+}
 
 // Includes reports whether holding r is enough to do what want requires.
 //
@@ -139,6 +215,20 @@ func (r Role) Includes(want Role) bool {
 
 	return held >= needed
 }
+
+// CreatesForms reports whether a site-wide grant of this role permits making
+// a new form.
+//
+// Here rather than spelled out at each of its callers, for the reason
+// [Role.Includes] is one method: the rule is "RoleCreator, or the RoleAdmin
+// that is more than it", and the two places that ask -- the gate in front of
+// /build/new and the landing page deciding whether to offer a link to it --
+// must not be able to drift into disagreeing about it. A page that offers a
+// link the gate then refuses is worse than no link.
+//
+// It deliberately does not go through [Role.Includes]: RoleCreator is not on
+// that ladder and includes nothing, on purpose.
+func (r Role) CreatesForms() bool { return r == RoleCreator || r == RoleAdmin }
 
 func (r Role) String() string { return string(r) }
 
@@ -231,6 +321,13 @@ func (b *Business) Allowed(ctx context.Context, userID types.ID, form types.Slug
 
 // Grant gives an account a role on a form, or changes the role it already has.
 //
+// It refuses to demote the last site-wide administrator, with [ErrLastAdmin],
+// for the reason [Revoke] refuses to remove them: a grant changed from admin
+// to anything narrower leaves exactly the same service behind, one nobody can
+// grant anything on. Revoke has guarded that since it was written; Grant could
+// not take somebody's administration away until there was a second site-wide
+// role to move them to, and now that there is, it guards it too.
+//
 // granter is recorded rather than checked. Whether the person doing this is
 // allowed to is a question about the request, and it is answered by the gate in
 // front of the route -- asking it twice, in two places, with two chances to
@@ -240,8 +337,39 @@ func (b *Business) Grant(ctx context.Context, now time.Time, granter, userID typ
 		return Grant{}, errors.New("a grant needs an account")
 	}
 
-	if _, err := ParseRole(role.String()); err != nil {
+	// Every per-form role remains valid site-wide, exactly as before --
+	// existing rows and callers rely on a site-wide grant being able to hold
+	// RoleResults or RoleDoor, not only RoleAdmin.
+	if _, err := ParseStoredRole(role.String()); err != nil {
 		return Grant{}, err
+	}
+
+	// RoleCreator is the one addition, and it is the one role that may only be
+	// site-wide: the form a form-specific grant would name already exists, so
+	// "may create it" is not a question that grant could ever answer.
+	if role == RoleCreator && !form.Zero() {
+		return Grant{}, fmt.Errorf("%w: %q may only be granted site-wide", ErrNotARole, role)
+	}
+
+	// Demoting the last site-wide administrator is the same act as revoking
+	// them -- afterwards nobody can grant anything -- so it is refused in the
+	// same way and with the same error. [Revoke]'s comment is the long version
+	// of why: the way back is a one-time bootstrap secret that has already
+	// been spent, and there is no CLI here to edit the row with.
+	//
+	// Only site-wide and only when the new role is not administration. A
+	// per-form grant is never the last of anything, and re-granting an
+	// administrator the role they already hold has to keep working -- that is
+	// how the audit line on it gets refreshed.
+	if form.Zero() && role != RoleAdmin {
+		last, err := b.lastSiteAdmin(ctx, userID)
+		if err != nil {
+			return Grant{}, err
+		}
+
+		if last {
+			return Grant{}, fmt.Errorf("%w, so changing it would leave nobody able to grant anything", ErrLastAdmin)
+		}
 	}
 
 	g := Grant{
@@ -387,4 +515,26 @@ func (b *Business) EnsureSiteAdmin(ctx context.Context, now time.Time, userID ty
 	}
 
 	return true, nil
+}
+
+// CanCreateForms reports whether this account may make a new form.
+//
+// This is [mid.RequireFormCreator]'s one question, and it is deliberately not
+// answered with Allowed: that method's question is "may this account do X to
+// this form", and RoleCreator does not [Role.Includes] anything, on purpose --
+// so asking Allowed(ctx, userID, types.Slug{}, RoleCreator) would say no even
+// for the account the grant was made for. What decides this is simpler than
+// implication: hold the site-wide grant, and hold either the role that is
+// exactly this or the one that is more, RoleAdmin.
+func (b *Business) CanCreateForms(ctx context.Context, userID types.ID) (bool, error) {
+	g, err := b.store.ByUserAndForm(ctx, userID, types.Slug{})
+
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("checking for a site-wide grant: %w", err)
+	}
+
+	return g.Role.CreatesForms(), nil
 }

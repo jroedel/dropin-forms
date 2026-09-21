@@ -1,0 +1,103 @@
+{{define "title"}}Who runs this service{{end}}
+
+{{define "masthead"}}<a href="/build">Build</a>{{end}}
+
+{{define "content"}}
+<h1>Who runs this service</h1>
+
+{{if .Done}}<p class="notice">{{.Done}}</p>{{end}}
+{{if .Problem}}<p class="problem">{{.Problem}}</p>{{end}}
+
+<p class="lede">This is site-wide access: every form, present and future, or
+just the ability to start a new one. Giving somebody access to a single form
+happens on that form's own people page instead.</p>
+
+{{if .Any}}
+<table class="listing">
+<thead>
+<tr>
+<th scope="col">Person</th>
+<th scope="col">Can</th>
+<th scope="col">Since</th>
+<th scope="col"><span class="visually-hidden">Remove</span></th>
+</tr>
+</thead>
+<tbody>
+{{range .People}}
+<tr>
+<th scope="row">
+{{if .Name}}{{.Name}}<br><span class="ref">{{.Email}}</span>{{else}}{{.Email}}{{end}}
+{{if .You}} <span class="ref">(you)</span>{{end}}
+</th>
+<td>
+{{if .Choices}}
+<form method="post" action="/site/people/role" class="inline role">
+  <input type="hidden" name="user" value="{{.UserID}}">
+  <label class="visually-hidden" for="role-{{.UserID}}">What {{if .Name}}{{.Name}}{{else}}{{.Email}}{{end}} may do</label>
+  <select id="role-{{.UserID}}" name="role">
+    {{range .Choices}}<option value="{{.Value}}" {{if .Selected}}selected{{end}}>{{.Value}}</option>{{end}}
+  </select>
+  <button type="submit" class="quiet">Save</button>
+</form>
+{{else}}
+{{.Role}}
+{{end}}
+</td>
+<td>{{.Since}}</td>
+<td>
+{{if .You}}
+<span class="absent">&mdash;</span>
+{{else}}
+<form method="post" action="/site/people/revoke" class="inline">
+  <input type="hidden" name="user" value="{{.UserID}}">
+  <button type="submit" class="quiet">Remove</button>
+</form>
+{{end}}
+</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p>Nobody holds a site-wide role yet.</p>
+{{end}}
+
+<p class="help">To change what somebody already has, use the dropdown on
+their row. Adding an address that already appears above does the same
+thing.</p>
+
+<h2>Give somebody site-wide access</h2>
+
+<form method="post" action="/site/people">
+  <div class="field">
+    <label for="email">Their email address</label>
+    <p class="help">If they have no account yet, this creates one and tells
+    them how to sign in.</p>
+    <input type="email" id="email" name="email" value="{{.Address}}"
+           autocomplete="off" required maxlength="254">
+  </div>
+
+  <div class="field">
+    <label for="name">Their name</label>
+    <p class="help">Optional, and only so the list above reads as people
+    rather than as addresses.</p>
+    <input type="text" id="name" name="name" value="{{.Name}}"
+           autocomplete="off" maxlength="100">
+  </div>
+
+  <fieldset class="field">
+    <legend>What they may do</legend>
+    {{range $i, $r := .Roles}}
+    <p class="choice">
+      <input type="radio" id="role-{{$r.Value}}" name="role" value="{{$r.Value}}"
+             {{if eq $r.Value $.Role}}checked{{else if and (eq $.Role "") (eq $i 0)}}checked{{end}}>
+      <label for="role-{{$r.Value}}">{{$r.Label}}</label>
+    </p>
+    {{end}}
+  </fieldset>
+
+  <button type="submit">Give access</button>
+</form>
+
+<p><a href="/build">Back to Build</a></p>
+{{end}}

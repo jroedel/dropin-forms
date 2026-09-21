@@ -79,6 +79,7 @@ import (
 	"github.com/jroedel/dropin-forms/app/domain/notifyapp"
 	"github.com/jroedel/dropin-forms/app/domain/paymentapp"
 	"github.com/jroedel/dropin-forms/app/domain/peopleapp"
+	"github.com/jroedel/dropin-forms/app/domain/siteapp"
 	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
 	"github.com/jroedel/dropin-forms/app/domain/willcallapp"
 	"github.com/jroedel/dropin-forms/app/sdk/health"
@@ -396,6 +397,20 @@ func Admin(cfg Config) (http.Handler, error) {
 		sc.Notifications = cfg.Notify
 	}
 
+	// The drafts an account administers, listed on the page it lands on after
+	// signing in. Only where the builder is mounted, because that is the only
+	// thing that makes a draft: an installation serving forms from TOML alone
+	// has none.
+	//
+	// It is the landing page and not the builder's own listing that grows
+	// this, because the builder's listing is the whole picture and stays
+	// behind the site-wide gate. An account holding nothing but
+	// accessbus.RoleCreator has to be able to find the form it started
+	// yesterday, and this is the page it already lands on.
+	if cfg.Builder != nil {
+		sc.Drafts = cfg.Builder
+	}
+
 	submissionapp.Routes(mux, sc, guard, results)
 
 	// Managing who can see a form is behind admin on that form rather than
@@ -461,12 +476,36 @@ func Admin(cfg Config) (http.Handler, error) {
 	if cfg.Builder != nil {
 		site := mid.RequireSiteAdmin(cfg.Log, cfg.Access, accessbus.RoleAdmin)
 
+		// The narrower gate for the routes that only need "may make a form",
+		// which accessbus.RoleCreator answers without also answering "does
+		// this account administer the whole service". See RequireFormCreator
+		// and formapp's package comment for why that is not the same gate as
+		// site above.
+		creator := mid.RequireFormCreator(cfg.Log, cfg.Access)
+
 		formapp.Routes(mux, formapp.Config{
 			Log:          cfg.Log,
 			Catalog:      cfg.Builder,
+			Grants:       cfg.Access,
 			Render:       cfg.Render,
 			EmbedBaseURL: cfg.EmbedBaseURL,
-		}, guard, admins, site)
+		}, guard, admins, site, creator)
+
+		// Who holds a site-wide role at all -- full administration or just the
+		// ability to start a form -- is managed here, behind the same
+		// full-administrator gate as /build's whole-picture listing. Mounted
+		// alongside the builder rather than unconditionally, because a
+		// site-wide grant that can never create a form and holds no other
+		// per-form grant reaches nothing, and a page for granting one would be
+		// offering a role with nothing behind it.
+		siteapp.Routes(mux, siteapp.Config{
+			Log:      cfg.Log,
+			Accounts: cfg.Users,
+			Grants:   cfg.Access,
+			Mail:     cfg.Mail,
+			Render:   cfg.Render,
+			BaseURL:  cfg.AdminBaseURL,
+		}, guard, site)
 	}
 
 	// The page that turns email about a form off and on, and the one route on
