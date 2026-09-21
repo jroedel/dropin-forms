@@ -89,6 +89,7 @@ type Accounts interface {
 	ByID(ctx context.Context, id types.ID) (userbus.User, error)
 	ByEmail(ctx context.Context, email types.Email) (userbus.User, error)
 	Create(ctx context.Context, now time.Time, nu userbus.NewUser) (userbus.User, error)
+	All(ctx context.Context) ([]userbus.User, error)
 }
 
 // Grants is what this app changes.
@@ -167,12 +168,40 @@ type listView struct {
 	Done    string
 	Problem string
 
-	// What was typed, so that a refused entry comes back filled in rather than
-	// blank. Nobody should have to retype an address because they picked the
-	// wrong role.
+	// Known is everybody with an account here who is not already on the list
+	// above, for the dropdown beside the address field. Empty when there is
+	// nobody left to offer, and the dropdown is then left out rather than
+	// rendered with nothing in it.
+	//
+	// The whole account list is small enough to put in a select: these are the
+	// people who run a parish office, not a mailing list. If that stops being
+	// true, this is the line to change, and the address field beside it keeps
+	// working in the meantime.
+	Known []knownView
+
+	// What was typed or picked, so that a refused entry comes back filled in
+	// rather than blank. Nobody should have to retype an address because they
+	// picked the wrong role.
 	Name    string
 	Address string
 	Role    string
+	Picked  string
+}
+
+// AnyKnown reports whether there is anybody to offer in the dropdown.
+func (v listView) AnyKnown() bool { return len(v.Known) > 0 }
+
+// knownView is one option in that dropdown: an account that exists and has no
+// access to this form yet.
+type knownView struct {
+	UserID string
+
+	// Label is what the option reads as -- the name and the address, or just
+	// the address for somebody who never gave a name. Both, because two
+	// volunteers called Maria are told apart by the address and nothing else.
+	Label string
+
+	Selected bool
 }
 
 type personView struct {
@@ -258,11 +287,13 @@ func (a app) add(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	picked := strings.TrimSpace(r.PostFormValue("user"))
 	typed := strings.TrimSpace(r.PostFormValue("email"))
 	name := strings.TrimSpace(r.PostFormValue("name"))
 
-	// What was typed goes back onto the page with every refusal below.
-	said := listView{Name: name, Address: typed, Role: r.PostFormValue("role")}
+	// What was typed or picked goes back onto the page with every refusal
+	// below.
+	said := listView{Name: name, Address: typed, Role: r.PostFormValue("role"), Picked: picked}
 
 	role, err := accessbus.ParseRole(r.PostFormValue("role"))
 	if err != nil {
@@ -272,35 +303,78 @@ func (a app) add(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	email, err := types.ParseEmail(typed)
-	if err != nil {
-		said.Problem = "That does not look like an email address. Check for a typo."
-		a.show(w, r, http.StatusBadRequest, f, said)
-
-		return
-	}
-
 	now := time.Now()
 
-	u, err := a.cfg.Accounts.ByEmail(r.Context(), email)
+	var u userbus.User
+
 	created := false
 
+	// Two ways in, and picking somebody wins over typing an address. They are
+	// not equals: the dropdown offers accounts that exist, so a name taken
+	// from it cannot be a typo, while an address typed alongside it is at best
+	// the same person spelled again and at worst a second account for them.
+	// The field below the dropdown says so.
 	switch {
-	case errors.Is(err, userbus.ErrNotFound):
-		// A name is not required, because the address is what identifies
-		// somebody and an invitation should not be blocked on knowing how they
-		// spell their surname.
-		u, err = a.cfg.Accounts.Create(r.Context(), now, userbus.NewUser{Email: email, Name: name})
+	case picked != "":
+		id, err := types.ParseID(picked)
 		if err != nil {
-			a.oops(w, r, "the account could not be created", err)
+			said.Problem = "We could not tell who that was. Please pick them again."
+			a.show(w, r, http.StatusBadRequest, f, said)
 
 			return
 		}
 
-		created = true
+		u, err = a.cfg.Accounts.ByID(r.Context(), id)
 
-	case err != nil:
-		a.oops(w, r, "the accounts could not be read", err)
+		switch {
+		case errors.Is(err, userbus.ErrNotFound):
+			// The account went away between the page being drawn and the form
+			// being sent, which is rare and is not the reader's fault.
+			said.Problem = "That person no longer has an account here. Reload the page and try again."
+			a.show(w, r, http.StatusConflict, f, said)
+
+			return
+
+		case err != nil:
+			a.oops(w, r, "the account could not be read", err)
+
+			return
+		}
+
+	case typed != "":
+		email, err := types.ParseEmail(typed)
+		if err != nil {
+			said.Problem = "That does not look like an email address. Check for a typo."
+			a.show(w, r, http.StatusBadRequest, f, said)
+
+			return
+		}
+
+		u, err = a.cfg.Accounts.ByEmail(r.Context(), email)
+
+		switch {
+		case errors.Is(err, userbus.ErrNotFound):
+			// A name is not required, because the address is what identifies
+			// somebody and an invitation should not be blocked on knowing how
+			// they spell their surname.
+			u, err = a.cfg.Accounts.Create(r.Context(), now, userbus.NewUser{Email: email, Name: name})
+			if err != nil {
+				a.oops(w, r, "the account could not be created", err)
+
+				return
+			}
+
+			created = true
+
+		case err != nil:
+			a.oops(w, r, "the accounts could not be read", err)
+
+			return
+		}
+
+	default:
+		said.Problem = "Pick somebody who already has an account, or type the email address of somebody new."
+		a.show(w, r, http.StatusBadRequest, f, said)
 
 		return
 	}
@@ -607,6 +681,18 @@ func (a app) show(w http.ResponseWriter, r *http.Request, status int, f formbus.
 	// rather than a mailing list, so this is a handful of primary-key reads;
 	// if a form ever has hundreds, this is the line to change.
 	for _, g := range grants {
+		// A site-wide grant that cannot read this form is not a person who can
+		// see this form, and listing one here said the opposite -- under a
+		// heading asking who can see it, in a table whose Emailed column then
+		// said "yes" about somebody notifybus never writes to. It was true
+		// while RoleAdmin was the only site-wide grant anybody could be given.
+		// accessbus.RoleCreator, which may make a form and reach none, made it
+		// false. The question asked is the one notifybus asks of the same
+		// list: does this role read the submissions.
+		if g.SiteWide() && !g.Role.Includes(accessbus.RoleResults) {
+			continue
+		}
+
 		u, err := a.cfg.Accounts.ByID(r.Context(), g.UserID)
 		if err != nil {
 			// A grant naming an account that is not there. Storage cascades
@@ -652,7 +738,65 @@ func (a app) show(w http.ResponseWriter, r *http.Request, status int, f formbus.
 		)
 	})
 
+	view.Known = a.known(r, view)
+
 	a.cfg.Render.Render(w, r, status, "people", view)
+}
+
+// known is everybody with an account who is not already on the list, for the
+// dropdown beside the address field.
+//
+// It exists because the only way to give access used to be typing an address,
+// and almost every time somebody does that here the person already has an
+// account -- the office is a dozen people who keep being added to one another's
+// forms. Typing an address that is already in the database is an opportunity
+// to mistype it, and a mistyped address silently makes a second account and
+// mails an invitation into the void.
+//
+// A failure costs the dropdown rather than the page. The address field below
+// it does everything this does, so a page without it is the page as it was
+// before, and that is a better answer than an error where the list should be.
+func (a app) known(r *http.Request, view listView) []knownView {
+	all, err := a.cfg.Accounts.All(r.Context())
+	if err != nil {
+		a.cfg.Log.Error("the accounts could not be listed, so the page offers no one to pick",
+			"request_id", web.RequestIDFrom(r.Context()), "error", err)
+
+		return nil
+	}
+
+	listed := make(map[string]bool, len(view.People))
+	for _, p := range view.People {
+		listed[p.UserID] = true
+	}
+
+	out := make([]knownView, 0, len(all))
+
+	for _, u := range all {
+		// Somebody already on the list is changed from their own row, and
+		// somebody disabled has left. Neither belongs in a list of people to
+		// add.
+		if listed[u.ID.String()] || !u.Enabled {
+			continue
+		}
+
+		label := u.Email.String()
+		if u.Name != "" {
+			label = u.Name + " (" + u.Email.String() + ")"
+		}
+
+		out = append(out, knownView{
+			UserID:   u.ID.String(),
+			Label:    label,
+			Selected: u.ID.String() == view.Picked,
+		})
+	}
+
+	slices.SortFunc(out, func(x, y knownView) int {
+		return cmp.Compare(strings.ToLower(x.Label), strings.ToLower(y.Label))
+	})
+
+	return out
 }
 
 // boolCmp orders false before true.
