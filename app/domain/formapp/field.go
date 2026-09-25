@@ -56,25 +56,30 @@ type fieldView struct {
 	// what guarantees there is no cycle to resolve.
 	Earlier []string
 
-	// What the selected kind actually uses, so the page can say which boxes
-	// are doing nothing rather than leaving somebody to guess.
-	HasOptions bool
-	Bounded    bool
-	Textual    bool
-	Money      bool
-
 	Problems []string
 	Problem  string
 }
 
-// kindChoice is one entry in the kind dropdown: the value the domain uses and
-// a sentence for a person. The sentence is here rather than on formbus.Kind
+// kindChoice is one entry in the kind dropdown: the value the domain uses,
+// a sentence for a person, and which of the page's settings that kind uses.
+//
+// The last four are what hide the settings a kind has no use for. They are
+// written onto each <option> as classes, and the stylesheet hides a section
+// when the option that is checked does not carry its class -- so the page
+// changes as the dropdown does, with no script, which the CSP forbids anyway.
+// Carrying them on every option rather than once for the saved kind is the
+// point: the selection that matters is the one on screen, not the one stored. The sentence is here rather than on formbus.Kind
 // because it is wording, and the business package should not be where a
 // wording change is made -- the same line peopleapp draws for a role.
 type kindChoice struct {
 	Value    string
 	Label    string
 	Selected bool
+
+	HasOptions bool
+	Bounded    bool
+	Textual    bool
+	Money      bool
 }
 
 // addField appends a field and goes to its page.
@@ -177,10 +182,6 @@ func fieldOf(s formbus.Stored, fld formbus.Field, at int) fieldView {
 		PatternNote:  fld.PatternNote,
 		Options:      writeOptions(fld.Options),
 		Kinds:        kindsFor(fld.Kind),
-		HasOptions:   fld.Kind.HasOptions(),
-		Bounded:      fld.Kind.Bounded(),
-		Textual:      fld.Kind.Textual(),
-		Money:        money,
 	}
 
 	if fld.ShowIf != nil {
@@ -233,9 +234,6 @@ func (a app) saveField(w http.ResponseWriter, r *http.Request) {
 		Help:         value(r, "help"),
 		Placeholder:  value(r, "placeholder"),
 		Autocomplete: value(r, "autocomplete"),
-		Pattern:      value(r, "pattern"),
-		PatternNote:  value(r, "pattern_note"),
-		Options:      parseOptions(r.PostFormValue("options")),
 	}
 
 	money := fld.Kind == formbus.KindAmount
@@ -250,17 +248,34 @@ func (a app) saveField(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 
-	fld.MinLen, err = parseCount("The shortest answer", value(r, "min_length"))
-	fail(err)
+	// Only the settings the chosen kind uses are read. The page hides the
+	// others, but a hidden box is still submitted, and Check refuses a setting
+	// the kind has no use for -- a pattern on a dropdown, say. Reading it
+	// anyway would refuse the save over a box nobody can see to clear. So
+	// changing a field's kind drops what the new kind cannot use, which is
+	// what the page already showed would happen.
+	if fld.Kind.HasOptions() {
+		fld.Options = parseOptions(r.PostFormValue("options"))
+	}
 
-	fld.MaxLen, err = parseCount("The longest answer", value(r, "max_length"))
-	fail(err)
+	if fld.Kind.Textual() {
+		fld.Pattern = value(r, "pattern")
+		fld.PatternNote = value(r, "pattern_note")
 
-	fld.Min, err = parseBound("The smallest value", value(r, "min"), money)
-	fail(err)
+		fld.MinLen, err = parseCount("The shortest answer", value(r, "min_length"))
+		fail(err)
 
-	fld.Max, err = parseBound("The largest value", value(r, "max"), money)
-	fail(err)
+		fld.MaxLen, err = parseCount("The longest answer", value(r, "max_length"))
+		fail(err)
+	}
+
+	if fld.Kind.Bounded() {
+		fld.Min, err = parseBound("The smallest value", value(r, "min"), money)
+		fail(err)
+
+		fld.Max, err = parseBound("The largest value", value(r, "max"), money)
+		fail(err)
+	}
 
 	if on := value(r, "show_if_field"); on != "" {
 		fld.ShowIf = &formbus.Condition{Field: on, Is: lines(r.PostFormValue("show_if_is"))}
@@ -466,6 +481,11 @@ func kindsFor(selected formbus.Kind) []kindChoice {
 			Value:    string(k),
 			Label:    describeKind(k),
 			Selected: k == selected,
+
+			HasOptions: k.HasOptions(),
+			Bounded:    k.Bounded(),
+			Textual:    k.Textual(),
+			Money:      k == formbus.KindAmount,
 		})
 	}
 

@@ -458,13 +458,26 @@ button:disabled {
   border-radius: 4px;
 }
 
-/* A field's own rules, and the "not used by this kind" note beside a heading.
-   Quieter than the thing it describes, and never the only way something is
-   said. */
+/* A field's own rules. Quieter than the thing it describes, and never the
+   only way something is said. */
 .aside {
   color: var(--muted);
   font-size: 0.85rem;
   font-weight: 400;
+}
+
+/* A question's page shows only the settings its kind uses. Each <option> in
+   the kind dropdown carries a class for every group of settings that kind
+   uses (formapp's kindChoice), and a group is hidden while the checked option
+   lacks its class -- so the page follows the dropdown with no script. Hidden
+   boxes are still submitted; saveField ignores the ones the kind cannot use.
+   Without :has() nothing here matches and every group shows. */
+form:has(#kind option:checked:not(.has-options)) .uses-options,
+form:has(#kind option:checked:not(.textual)) .uses-text,
+form:has(#kind option:checked:not(.bounded)) .uses-bounds,
+form:has(#kind option:checked:not(.money)) .if-money,
+form:has(#kind option.money:checked) .if-count {
+  display: none;
 }
 
 code {
