@@ -30,7 +30,8 @@
     <label for="kind">What sort of answer</label>
     <select id="kind" name="kind" required>
       {{range .Kinds}}
-      <option value="{{.Value}}" {{if .Selected}}selected{{end}}>{{.Label}}</option>
+      <option value="{{.Value}}" {{if .Selected}}selected{{end}}
+              class="{{if .HasOptions}}has-options{{end}} {{if .Textual}}textual{{end}} {{if .Bounded}}bounded{{end}} {{if .Money}}money{{end}}">{{.Label}}</option>
       {{end}}
     </select>
   </div>
@@ -63,12 +64,14 @@
            autocomplete="off" maxlength="60">
   </div>
 
-  {{/* Every kind's own settings are here at once, each headed by whether the
-       selected kind uses it. With no script there is nothing to reveal a
-       section when the dropdown changes, and a page that says "this does
-       nothing for this kind" is more honest than one that hides it. */}}
+  {{/* Every kind's own settings are rendered, and the stylesheet shows only
+       the ones the kind selected in the dropdown uses -- see kindChoice. They
+       are all in the page rather than only the saved kind's, so that changing
+       the dropdown reveals the right boxes without a round trip. A browser
+       without :has() shows every section, which is the page this was before. */}}
 
-  <h2>Its choices {{if not .HasOptions}}<span class="aside">&mdash; not used by this kind</span>{{end}}</h2>
+  <div class="uses-options">
+  <h2>Its choices</h2>
 
   <div class="field">
     <label for="options">One per line</label>
@@ -79,8 +82,10 @@
     collected.</p>
     <textarea id="options" name="options" rows="6">{{.Options}}</textarea>
   </div>
+  </div>
 
-  <h2>How long the answer may be {{if not .Textual}}<span class="aside">&mdash; not used by this kind</span>{{end}}</h2>
+  <div class="uses-text">
+  <h2>How long the answer may be</h2>
 
   <div class="field">
     <label for="min_length">At least this many characters</label>
@@ -94,27 +99,7 @@
            autocomplete="off" inputmode="numeric" maxlength="6">
   </div>
 
-  <h2>What it may contain {{if not .Bounded}}<span class="aside">&mdash; not used by this kind</span>{{end}}</h2>
-
-  <p class="help">
-  {{if .Money}}An amount, like <code>5.00</code>.
-  {{else}}A whole number: how many, or how many boxes may be ticked.{{end}}
-  Leave a box empty for no limit at that end &mdash; which is not the same as a
-  limit of nothing.</p>
-
-  <div class="field">
-    <label for="min">Smallest</label>
-    <input type="text" id="min" name="min" value="{{.Min}}"
-           autocomplete="off" inputmode="decimal" maxlength="12">
-  </div>
-
-  <div class="field">
-    <label for="max">Largest</label>
-    <input type="text" id="max" name="max" value="{{.Max}}"
-           autocomplete="off" inputmode="decimal" maxlength="12">
-  </div>
-
-  <h2>A set format {{if not .Textual}}<span class="aside">&mdash; not used by this kind</span>{{end}}</h2>
+  <h2>A set format</h2>
 
   <div class="field">
     <label for="pattern">The pattern the answer must match</label>
@@ -133,6 +118,30 @@
     tells them nothing.</p>
     <input type="text" id="pattern_note" name="pattern_note" value="{{.PatternNote}}"
            autocomplete="off" maxlength="200">
+  </div>
+  </div>
+
+  <div class="uses-bounds">
+  <h2>What it may contain</h2>
+
+  <p class="help">
+  <span class="if-money">An amount, like <code>5.00</code>.</span>
+  <span class="if-count">A whole number: how many, or how many boxes may be ticked.</span>
+  Leave a box empty for no limit at that end &mdash; which is not the same as a
+  limit of nothing.</p>
+
+  <div class="field">
+    <label for="min">Smallest</label>
+    <input type="text" id="min" name="min" value="{{.Min}}"
+           autocomplete="off" inputmode="decimal" maxlength="12">
+  </div>
+
+  <div class="field">
+    <label for="max">Largest</label>
+    <input type="text" id="max" name="max" value="{{.Max}}"
+           autocomplete="off" inputmode="decimal" maxlength="12">
+  </div>
+
   </div>
 
   <h2>When it is shown</h2>
