@@ -344,7 +344,7 @@ func answered(sub submissionbus.Submission) string {
 		// under their label when the answer runs long -- a paragraph field
 		// holds five hundred characters and reading it as one wrapped line
 		// beside a label is unpleasant.
-		value := strings.Join(a.Values, ", ")
+		value := a.Readable()
 
 		if strings.Contains(value, "\n") || len(value) > 60 {
 			fmt.Fprintf(&b, "  %s:\n", a.Label)

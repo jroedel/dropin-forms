@@ -265,6 +265,30 @@ func TestTheSubmitterAndTheOfficeAreBothTold(t *testing.T) {
 	}
 }
 
+// A date is written out in the message rather than in the shape it is stored
+// in: this is somebody's own copy of what they booked, and 2026-10-17T09:05
+// is a timestamp, not a sentence anybody reads.
+func TestADateIsWrittenOutInTheMessage(t *testing.T) {
+	f := lunch(t)
+	sub := order(t, f, 0, submissionbus.StatusReceived)
+	sub.Answers.Fields = append(sub.Answers.Fields, formbus.Answer{
+		Name: "pickup", Label: "Pick-up", Kind: formbus.KindDateTime, Values: []string{"2026-10-17T09:05"},
+	})
+
+	h := newHarness(t, notifybus.Config{
+		Forms:       forms{form: f},
+		Submissions: submissions{sub: sub},
+		Office:      "office@schoenstatt.test",
+	})
+
+	h.b.Received(t.Context(), sub.ID)
+
+	mine := h.messageTo(t, "maria@example.org")
+	if !strings.Contains(mine.Text, "Pick-up: Saturday 17 October 2026, 9:05am") {
+		t.Errorf("the message does not write the pick-up out:\n%s", mine.Text)
+	}
+}
+
 // Three sources of recipients and one message each, however many of them name
 // the same person.
 func TestEverybodyIsToldOnceAndOnlyOnce(t *testing.T) {

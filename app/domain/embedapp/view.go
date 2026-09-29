@@ -180,6 +180,20 @@ func viewFields(f formbus.Form, values formbus.Values, problems formbus.Invalid)
 			v.Min = boundAsCount(fld.Min)
 			v.Max = boundAsCount(fld.Max)
 
+		// The browser's own pickers, which send the stored shape already.
+		// datetime-local rather than the long-retired datetime, and it is the
+		// right one on its merits: it sends a wall clock with no offset,
+		// which is exactly what formbus stores. A browser without one draws a
+		// text box, and the server's sentence says what to type in it.
+		case formbus.KindDate:
+			v.Shape, v.InputType = shapeInput, "date"
+
+		case formbus.KindTime:
+			v.Shape, v.InputType = shapeInput, "time"
+
+		case formbus.KindDateTime:
+			v.Shape, v.InputType = shapeInput, "datetime-local"
+
 		case formbus.KindAmount:
 			// type=number with a hundredth step. The definition's bounds are
 			// minor units and the input works in major ones, so they are

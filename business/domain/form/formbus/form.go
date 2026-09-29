@@ -56,11 +56,15 @@ const (
 	KindCheckbox  Kind = "checkbox" // a single box: agreed, or not
 	KindChoices   Kind = "choices"  // several boxes: any number of a list
 	KindAmount    Kind = "amount"   // an amount of money the person types
+	KindDate      Kind = "date"     // a calendar day, with no time of day
+	KindTime      Kind = "time"     // a time of day, with no day
+	KindDateTime  Kind = "datetime" // a day and a time of day, on a wall clock
 )
 
 // kinds is every Kind, in the order a builder UI should offer them.
 var kinds = []Kind{
 	KindText, KindParagraph, KindEmail, KindTel, KindNumber,
+	KindDate, KindTime, KindDateTime,
 	KindSelect, KindRadio, KindCheckbox, KindChoices, KindAmount,
 }
 
@@ -792,6 +796,18 @@ func (f *Form) checkCondition(fld *Field, where string, at int) []string {
 			if !slices.ContainsFunc(on.Options, func(o Option) bool { return o.Value == want }) {
 				add("%s: it is shown when %q is %q, which is not one of that field's options",
 					where, cond.Field, want)
+			}
+		}
+	}
+
+	// Compared as strings against the stored shape, so a condition written in
+	// any other shape -- 17/10/2026, or 3:30pm for a time -- would never match
+	// anything anybody could enter.
+	if on.Kind.Temporal() {
+		for _, want := range cond.Is {
+			if canon, ok := on.Kind.canonical(want); !ok || canon != want {
+				add("%s: it is shown when %q is %q, which is not written the way that field stores it, like %s",
+					where, cond.Field, want, temporals[on.Kind].example)
 			}
 		}
 	}

@@ -507,6 +507,12 @@ func describeKind(k formbus.Kind) string {
 		return "A telephone number"
 	case formbus.KindNumber:
 		return "A whole number"
+	case formbus.KindDate:
+		return "A date"
+	case formbus.KindTime:
+		return "A time of day"
+	case formbus.KindDateTime:
+		return "A date and a time"
 	case formbus.KindSelect:
 		return "A dropdown: one of a list"
 	case formbus.KindRadio:

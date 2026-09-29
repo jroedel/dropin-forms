@@ -389,6 +389,18 @@ func (fld Field) take(raw []string, currency string) ([]string, []Violation) {
 		}
 	}
 
+	// A temporal answer is rewritten into its one stored shape as well as
+	// checked, which is the only kind whose value changes on the way in. The
+	// reason is in temporal.go: it is what makes these sort and compare.
+	if fld.Kind.Temporal() {
+		canon, problems := fld.takeTemporal(values[0])
+		if problems != nil {
+			return nil, problems
+		}
+
+		return []string{canon}, nil
+	}
+
 	return values, append(vs, fld.check(values, currency)...)
 }
 
