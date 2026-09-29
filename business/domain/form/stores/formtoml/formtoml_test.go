@@ -435,7 +435,7 @@ func TestTheDailyCapIsRead(t *testing.T) {
 // list -- rather than a list whose empty line Check would have to explain.
 func TestTheListingIsRead(t *testing.T) {
 	store, err := formtoml.Load(fstest.MapFS{"alpha.toml": {Data: []byte(
-		minimal("alpha", "[listing]\nheading = \"Who is coming\"\nline = \"{who} is coming\"\nlimit = 20"))}})
+		minimal("alpha", "[listing]\nheading = \"Who is coming\"\nline = \"{who} is coming\"\nlimit = 20\noldest_first = true"))}})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -447,7 +447,7 @@ func TestTheListingIsRead(t *testing.T) {
 		t.Fatalf("ByID: %v", err)
 	}
 
-	want := formbus.Listing{Heading: "Who is coming", Line: "{who} is coming", Limit: 20}
+	want := formbus.Listing{Heading: "Who is coming", Line: "{who} is coming", Limit: 20, OldestFirst: true}
 	if f.Listing != want {
 		t.Errorf("Listing = %+v, want %+v", f.Listing, want)
 	}

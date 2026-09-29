@@ -61,6 +61,22 @@ func potluck(t *testing.T) formbus.Form {
 func potluckSurface(t *testing.T) http.Handler {
 	t.Helper()
 
+	return potluckSurfaceWith(t, func(*formbus.Listing) {})
+}
+
+// potluckSurfaceWith is the same surface with the list's settings changed
+// first.
+func potluckSurfaceWith(t *testing.T, change func(*formbus.Listing)) http.Handler {
+	t.Helper()
+
+	f := potluck(t)
+	change(&f.Listing)
+	f.Stamp()
+
+	if err := f.Check(); err != nil {
+		t.Fatalf("the changed potluck form does not pass Check: %v", err)
+	}
+
 	// A clock that moves, a second per reading, because the list is newest
 	// first and two sign-ups stamped with the same instant have no order.
 	var ticks time.Duration
@@ -71,7 +87,7 @@ func potluckSurface(t *testing.T) http.Handler {
 
 		return beforeTheFeast.Add(ticks)
 	}
-	cfg.Embed.Forms = oneForm{potluck(t)}
+	cfg.Embed.Forms = oneForm{f}
 
 	return embedOf(t, cfg)
 }
@@ -153,5 +169,35 @@ func TestTheListEscapesWhatWasTyped(t *testing.T) {
 	}
 	if !strings.Contains(body, "&lt;script&gt;alert(1)&lt;/script&gt; -- A main dish") {
 		t.Errorf("the typed name is not in the list as text:\n%s", body)
+	}
+}
+
+// Oldest at the top, and past the limit the newest are still the ones kept:
+// the person who has just signed up is at the bottom of the list rather than
+// missing from it.
+func TestAnOldestFirstListKeepsTheNewestAndTurnsThemOver(t *testing.T) {
+	h := potluckSurfaceWith(t, func(l *formbus.Listing) {
+		l.OldestFirst = true
+		l.Limit = 2
+	})
+
+	signUp(t, h, "Ann K.", "", "main")
+	signUp(t, h, "Maria G.", "", "dessert")
+	signUp(t, h, "Tom R.", "", "main")
+
+	body := getPage(t, h, potluckPath).Body.String()
+
+	maria := strings.Index(body, "<li>Maria G. -- Dessert</li>")
+	tom := strings.Index(body, "<li>Tom R. -- A main dish</li>")
+
+	switch {
+	case maria < 0 || tom < 0:
+		t.Fatalf("the list does not show the two newest sign-ups:\n%s", body)
+	case maria > tom:
+		t.Error("the newer sign-up is listed first; want oldest at the top")
+	}
+
+	if strings.Contains(body, "Ann K.") {
+		t.Error("the oldest sign-up is shown past a limit of two; want the newest two kept")
 	}
 }

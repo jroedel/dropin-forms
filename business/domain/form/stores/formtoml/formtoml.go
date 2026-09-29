@@ -224,6 +224,8 @@ type listing struct {
 	Heading string `toml:"heading"`
 	Line    string `toml:"line"`
 	Limit   int    `toml:"limit"`
+
+	OldestFirst bool `toml:"oldest_first"`
 }
 
 type field struct {
@@ -293,6 +295,8 @@ func (w form) toForm() (formbus.Form, error) {
 			Heading: w.Listing.Heading,
 			Line:    w.Listing.Line,
 			Limit:   w.Listing.Limit,
+
+			OldestFirst: w.Listing.OldestFirst,
 		},
 	}
 

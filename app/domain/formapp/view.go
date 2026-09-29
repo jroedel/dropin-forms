@@ -323,8 +323,13 @@ func settingsSummary(f formbus.Form) []settingRow {
 	}
 
 	if f.Listing.On() {
+		order := "newest at the top"
+		if f.Listing.OldestFirst {
+			order = "oldest at the top"
+		}
+
 		rows = append(rows, set("Shows beneath it, publicly",
-			fmt.Sprintf("the newest %d, each as %s", f.Listing.Shown(), f.Listing.Line)))
+			fmt.Sprintf("the newest %d, %s, each as %s", f.Listing.Shown(), order, f.Listing.Line)))
 	}
 
 	return rows

@@ -124,7 +124,7 @@ func full(t *testing.T) formbus.Form {
 			},
 		},
 
-		Listing: formbus.Listing{Heading: "Who is coming", Line: "Somebody at the {sitting} sitting", Limit: 20},
+		Listing: formbus.Listing{Heading: "Who is coming", Line: "Somebody at the {sitting} sitting", Limit: 20, OldestFirst: true},
 
 		Items: []formbus.Item{
 			{ID: "adult", Label: "Adult", Note: "Two courses", Price: types.Money(1500), Max: 8},

@@ -644,6 +644,7 @@ func TestTheListOfEarlierAnswersIsSetFromTheSettingsPage(t *testing.T) {
 		"list_heading": {"Who is coming"},
 		"list_line":    {"{who} is coming"},
 		"list_limit":   {"20"},
+		"list_order":   {"oldest"},
 	}, cookie)
 	if w.Code != http.StatusOK {
 		t.Fatalf("saving the list = %d, want 200:\n%s", w.Code, w.Body)
@@ -654,7 +655,7 @@ func TestTheListOfEarlierAnswersIsSetFromTheSettingsPage(t *testing.T) {
 		t.Fatalf("ByID: %v", err)
 	}
 
-	want := formbus.Listing{Heading: "Who is coming", Line: "{who} is coming", Limit: 20}
+	want := formbus.Listing{Heading: "Who is coming", Line: "{who} is coming", Limit: 20, OldestFirst: true}
 	if served.Listing != want {
 		t.Errorf("served listing = %+v, want %+v", served.Listing, want)
 	}

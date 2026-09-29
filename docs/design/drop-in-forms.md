@@ -1865,6 +1865,13 @@ under a page that did not tell them. The line's wording, the heading and the
 limit are not: fixing a typo in "bringing" must not throw away half-filled
 forms, and a form without a list keeps the version it had before this shipped.
 
+**Newest or oldest at the top, and the newest kept either way.**
+`Listing.OldestFirst` turns the list over, like a sign-up sheet; it does not
+change which submissions are on it. Past the limit the newest are shown in both
+orders, because the other reading — the first fifty ever — means the
+fifty-first person submits, looks at the list, and is not on it. Not in the
+fingerprint, with the heading and the limit.
+
 **Only settled submissions are listed.** `submissionbus.Recent` reads through
 `SettledStatuses`, the same rule `Status.Settled` states, so an order abandoned
 at the checkout page never appears as though it were a booking. On a form that

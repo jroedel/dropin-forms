@@ -85,6 +85,8 @@ type listing struct {
 	Heading string `json:"heading,omitempty"`
 	Line    string `json:"line,omitempty"`
 	Limit   int    `json:"limit,omitempty"`
+
+	OldestFirst bool `json:"oldest_first,omitempty"`
 }
 
 type option struct {
@@ -128,6 +130,8 @@ func encode(f formbus.Form) (string, error) {
 			Heading: f.Listing.Heading,
 			Line:    f.Listing.Line,
 			Limit:   f.Listing.Limit,
+
+			OldestFirst: f.Listing.OldestFirst,
 		},
 	}
 
@@ -222,6 +226,8 @@ func decode(body string) (formbus.Form, error) {
 			Heading: w.Listing.Heading,
 			Line:    w.Listing.Line,
 			Limit:   w.Listing.Limit,
+
+			OldestFirst: w.Listing.OldestFirst,
 		},
 	}
 
