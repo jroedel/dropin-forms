@@ -33,6 +33,7 @@ func signup(t *testing.T) formbus.Form {
 			{Name: "gf", Label: "It is gluten free", Kind: formbus.KindCheckbox},
 			{Name: "gift", Label: "Towards the hall", Kind: formbus.KindAmount},
 			{Name: "note", Label: "A note", Kind: formbus.KindParagraph},
+			{Name: "day", Label: "Which day", Kind: formbus.KindDate},
 		},
 		Listing: formbus.Listing{Heading: "Who is bringing what", Line: "{name} -- {dish}"},
 	}
@@ -149,6 +150,12 @@ func TestListLine(t *testing.T) {
 			line:   "{name} {gift}",
 			fields: []formbus.Answer{{Name: "name", Values: []string{"Ann"}}, {Name: "gift", Values: []string{"12.5"}}},
 			want:   "Ann $12.50",
+		},
+		{
+			name:   "a date written out",
+			line:   "{name} on {day}",
+			fields: []formbus.Answer{{Name: "name", Values: []string{"Ann"}}, {Name: "day", Values: []string{"2026-10-17"}}},
+			want:   "Ann on Saturday 17 October 2026",
 		},
 		{
 			name:   "a paragraph folded onto one line",

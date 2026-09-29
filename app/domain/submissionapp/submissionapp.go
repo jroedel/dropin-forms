@@ -547,7 +547,7 @@ func (a app) one(w http.ResponseWriter, r *http.Request) {
 
 		view.Answers = append(view.Answers, answerView{
 			Label:    fld.Label,
-			Value:    strings.Join(ans.Values, ", "),
+			Value:    ans.Readable(),
 			Answered: answered,
 		})
 	}

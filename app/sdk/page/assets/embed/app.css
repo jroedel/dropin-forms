@@ -137,6 +137,9 @@ input[type="text"],
 input[type="email"],
 input[type="tel"],
 input[type="number"],
+input[type="date"],
+input[type="time"],
+input[type="datetime-local"],
 select,
 textarea {
   width: 100%;
@@ -151,6 +154,16 @@ textarea {
 textarea {
   min-height: 6rem;
   resize: vertical;
+}
+
+/* A date is ten characters, and a picker stretched across a 40rem column
+   reads as a box for a sentence. The min-height is for Safari on a phone,
+   which draws an empty date input shorter than the text boxes around it. */
+input[type="date"],
+input[type="time"],
+input[type="datetime-local"] {
+  max-width: 16rem;
+  min-height: 2.6rem;
 }
 
 input:focus-visible,

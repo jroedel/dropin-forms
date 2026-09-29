@@ -1890,6 +1890,38 @@ What it does not do: the list is not shown on the closed page or on the
 confirmation, and on a form that sells, a buyer appears only once Stripe's
 webhook has confirmed the payment.
 
+### Dates and times, as built
+
+Three field kinds: `date`, `time` and `datetime`, rendered as the browser's
+own `date`, `time` and `datetime-local` pickers. The reasoning is at the top of
+`formbus/temporal.go`; the decisions worth finding from here are these.
+
+**A datetime answer is a wall clock, not an instant.** It is stored as
+`2026-10-17T15:30` with no offset — the opposite of `OpensAt`, on purpose. An
+opening time is a rule this service enforces and has to be an instant. An
+answer is something a person told us about the parish hall or the pick-up, in
+that place's zone, which the question's label supplies and this service cannot
+know. Converting it with the process's own zone would invent an offset nobody
+gave.
+
+**One stored shape per kind**, whatever arrived: `2026-10-17`, `15:30`,
+`2026-10-17T15:30`. The pickers already send that, so for nearly everybody
+nothing changes. What it buys is a CSV that sorts, and conditions that compare
+by string equality like every other condition — which is why `Check` refuses a
+condition on one of these written in any other shape. A browser that draws a
+text box instead is served by accepting `3:30pm` for a time, and by refusing
+`10/17/2026` for a date, which is a different day in Austin and in Aachen, with
+a sentence saying what to type.
+
+**Written out for people, stored shape for machines.** `Answer.Readable` turns
+the stored value into "Saturday 17 October 2026, 3:30pm" for the submission
+page and the notification mail. The admin table and the CSV keep the stored
+shape.
+
+**No earliest or latest date yet.** These kinds are not `Bounded`: `Field.Min`
+is an int64 whose unit already differs by kind, and a date would be a fourth.
+When a window is needed it wants its own pair of fields.
+
 ## 10. Dependencies
 
 A dependency needs a comment naming the standard-library answer that was
