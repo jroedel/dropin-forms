@@ -1700,6 +1700,31 @@ already collected; an item's id is recorded on every order. Neither is read
 from the request on the save route, so a rename is not something the builder
 can do by accident.
 
+**Names are generated, and a question's kind is fixed** (a later change, for
+people who have never written HTML). Asking somebody to invent a
+lowercase-underscore identifier and then telling them it can never be
+corrected is asking for a permanent decision about something they have no
+reason to understand, so the builder no longer asks: a question is its kind and
+a number (`text_1`, `checkbox_2`) and a thing for sale is `item_1`. Nothing a
+person reads uses them — the CSV and the admin table head their columns with
+the question's own words. The one way generated names could go wrong is reuse:
+remove `text_2` from a form with answers, add another text question, and the
+next free number is 2 again, so the old answers would be read as answers to the
+new question. So `Form.Retired` records every name removed, `NextFieldName` and
+`NextItemID` skip them, and `Check` refuses a field or item that reuses one.
+
+The kind cannot be changed once a question exists, because the answers already
+stored were checked as that kind, and a question that has collected "yes" does
+not become a date. To ask something different, remove it and add a new one —
+which the page says. That also let the question page render only its own
+kind's settings instead of every kind's, hidden by CSS. The add-a-question form
+keeps that trick for the one box that depends on the dropdown, its choices.
+
+**Money is behind "We need to collect money".** The form's page hides "Add
+something for sale" behind a checkbox that submits nothing and only reveals the
+section through `:has()`. A form that already takes money shows it ticked and
+fixed, with the sentence that turning selling off means removing what is sold.
+
 **Delete is allowed only for a form that has never been published.** Not "not
 live right now" — *never*. Submissions record the slug of the form they were
 made against and are read back through that definition, which is where the

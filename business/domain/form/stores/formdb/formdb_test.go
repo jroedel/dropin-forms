@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -131,6 +132,8 @@ func full(t *testing.T) formbus.Form {
 			},
 		},
 
+		Retired: []string{"text_1", "item_1"},
+
 		Listing: formbus.Listing{Heading: "Who is coming", Line: "Somebody at the {sitting} sitting", Limit: 20, OldestFirst: true},
 
 		Items: []formbus.Item{
@@ -211,6 +214,10 @@ func TestADefinitionSurvivesTheRoundTrip(t *testing.T) {
 	// lost -- and losing it means selling something for nothing.
 	if got.Form.Items[1].ID != "child" || got.Form.Items[1].Price != 0 {
 		t.Errorf("the free item read back as %+v", got.Form.Items[1])
+	}
+
+	if !slices.Equal(got.Form.Retired, want.Retired) {
+		t.Errorf("retired = %v, want %v -- a name lost here is a name the builder hands out again", got.Form.Retired, want.Retired)
 	}
 
 	if got.Form.Listing != want.Listing {

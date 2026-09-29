@@ -55,17 +55,10 @@ func (a app) addItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The id is generated, never asked for; formbus.NextItemID says why.
 	it := formbus.Item{
-		ID:    value(r, "id"),
+		ID:    s.Form.NextItemID(),
 		Label: value(r, "label"),
-	}
-
-	if _, taken := s.Form.Item(it.ID); taken {
-		a.show(w, r, http.StatusConflict, s, buildView{
-			Problem: "There is already something called " + it.ID + " for sale on this form.",
-		})
-
-		return
 	}
 
 	raw := value(r, "price")
@@ -297,6 +290,8 @@ func (a app) removeItem(w http.ResponseWriter, r *http.Request) {
 
 	f := s.Form
 	f.Items = slices.Delete(slices.Clone(f.Items), at, at+1)
+	f.Retired = slices.Clone(f.Retired)
+	f.Retire(it.ID)
 
 	problems, ok := a.save(w, r, f, s.Live)
 	if !ok {

@@ -211,7 +211,6 @@ func TestAFormBuiltInTheBrowserIsServedOnceItIsPublished(t *testing.T) {
 
 	// Give it a question.
 	w = a.post(t, "/forms/supper-2026/edit/fields", url.Values{
-		"name":     {"who"},
 		"label":    {"Your name"},
 		"kind":     {"text"},
 		"required": {"yes"},
@@ -231,7 +230,7 @@ func TestAFormBuiltInTheBrowserIsServedOnceItIsPublished(t *testing.T) {
 		t.Fatalf("the published form is not in the catalogue: %v", err)
 	}
 
-	if len(f.Fields) != 1 || f.Fields[0].Name != "who" {
+	if len(f.Fields) != 1 || f.Fields[0].Name != "text_1" {
 		t.Errorf("served %+v, want the one field", f.Fields)
 	}
 
@@ -253,7 +252,7 @@ func TestAChangeThatWouldBreakALiveFormIsRefused(t *testing.T) {
 	made(t, a, cookie, "supper-2026", "Parish supper")
 
 	if w := a.post(t, "/forms/supper-2026/edit/fields", url.Values{
-		"name": {"who"}, "label": {"Your name"}, "kind": {"text"},
+		"label": {"Your name"}, "kind": {"text"},
 	}, cookie); w.Code != http.StatusSeeOther {
 		t.Fatalf("adding the first field = %d:\n%s", w.Code, w.Body)
 	}
@@ -268,7 +267,7 @@ func TestAChangeThatWouldBreakALiveFormIsRefused(t *testing.T) {
 	}
 
 	w := a.post(t, "/forms/supper-2026/edit/fields", url.Values{
-		"name": {"sitting"}, "label": {"Which sitting"}, "kind": {"select"},
+		"label": {"Which sitting"}, "kind": {"select"},
 	}, cookie)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("adding an option-less dropdown to a live form = %d, want 400:\n%s", w.Code, w.Body)
@@ -286,7 +285,7 @@ func TestAChangeThatWouldBreakALiveFormIsRefused(t *testing.T) {
 	// With its options, the same addition goes through -- which is why the add
 	// form asks for them in the same request.
 	w = a.post(t, "/forms/supper-2026/edit/fields", url.Values{
-		"name": {"sitting"}, "label": {"Which sitting"}, "kind": {"select"},
+		"label": {"Which sitting"}, "kind": {"select"},
 		"options": {"early | Six o'clock\nlate | Eight o'clock"},
 	}, cookie)
 	if w.Code != http.StatusSeeOther {
@@ -298,7 +297,7 @@ func TestAChangeThatWouldBreakALiveFormIsRefused(t *testing.T) {
 		t.Fatalf("ByID: %v", err)
 	}
 
-	sitting, ok := served.Field("sitting")
+	sitting, ok := served.Field("select_1")
 	if !ok {
 		t.Fatal("the dropdown is not on the served form")
 	}
@@ -318,7 +317,7 @@ func TestTakingAFormDownIsNeverRefused(t *testing.T) {
 	made(t, a, cookie, "supper-2026", "Parish supper")
 
 	if w := a.post(t, "/forms/supper-2026/edit/fields", url.Values{
-		"name": {"who"}, "label": {"Your name"}, "kind": {"text"},
+		"label": {"Your name"}, "kind": {"text"},
 	}, cookie); w.Code != http.StatusSeeOther {
 		t.Fatalf("adding a field = %d:\n%s", w.Code, w.Body)
 	}
@@ -355,7 +354,7 @@ func TestAFormThatHasBeenLiveCannotBeDeleted(t *testing.T) {
 	made(t, a, cookie, "supper-2026", "Parish supper")
 
 	if w := a.post(t, "/forms/supper-2026/edit/fields", url.Values{
-		"name": {"who"}, "label": {"Your name"}, "kind": {"text"},
+		"label": {"Your name"}, "kind": {"text"},
 	}, cookie); w.Code != http.StatusSeeOther {
 		t.Fatalf("adding a field = %d:\n%s", w.Code, w.Body)
 	}
@@ -388,18 +387,18 @@ func TestMovingAFieldAboveWhatItDependsOnIsRefused(t *testing.T) {
 	made(t, a, cookie, "supper-2026", "Parish supper")
 
 	for _, f := range []url.Values{
-		{"name": {"sitting"}, "label": {"Which sitting"}, "kind": {"select"}, "options": {"early\nlate"}},
-		{"name": {"why"}, "label": {"Why so early"}, "kind": {"text"}},
+		{"label": {"Which sitting"}, "kind": {"select"}, "options": {"early\nlate"}},
+		{"label": {"Why so early"}, "kind": {"text"}},
 	} {
 		if w := a.post(t, "/forms/supper-2026/edit/fields", f, cookie); w.Code != http.StatusSeeOther {
-			t.Fatalf("adding %s = %d:\n%s", f.Get("name"), w.Code, w.Body)
+			t.Fatalf("adding %s = %d:\n%s", f.Get("label"), w.Code, w.Body)
 		}
 	}
 
 	// The second field is shown only when the first says "early".
-	w := a.post(t, "/forms/supper-2026/edit/fields/why", url.Values{
+	w := a.post(t, "/forms/supper-2026/edit/fields/text_1", url.Values{
 		"label": {"Why so early"}, "kind": {"text"},
-		"show_if_field": {"sitting"}, "show_if_is": {"early"},
+		"show_if_field": {"select_1"}, "show_if_is": {"early"},
 	}, cookie)
 	if w.Code != http.StatusOK {
 		t.Fatalf("setting the condition = %d, want 200:\n%s", w.Code, w.Body)
@@ -414,7 +413,7 @@ func TestMovingAFieldAboveWhatItDependsOnIsRefused(t *testing.T) {
 	}
 
 	// Now move it above the field it depends on.
-	w = a.post(t, "/forms/supper-2026/edit/fields/why/move", url.Values{"to": {"up"}}, cookie)
+	w = a.post(t, "/forms/supper-2026/edit/fields/text_1/move", url.Values{"to": {"up"}}, cookie)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("moving a field above its condition = %d, want 409:\n%s", w.Code, w.Body)
 	}
@@ -428,7 +427,7 @@ func TestMovingAFieldAboveWhatItDependsOnIsRefused(t *testing.T) {
 		t.Fatalf("ByID: %v", err)
 	}
 
-	if f.Fields[0].Name != "sitting" {
+	if f.Fields[0].Name != "select_1" {
 		t.Errorf("the refused move happened anyway: %v", f.Fields)
 	}
 }
@@ -445,22 +444,22 @@ func TestTheSameMoveOnADraftIsAllowedAndListedAsAProblem(t *testing.T) {
 	made(t, a, cookie, "supper-2026", "Parish supper")
 
 	for _, f := range []url.Values{
-		{"name": {"sitting"}, "label": {"Which sitting"}, "kind": {"select"}, "options": {"early\nlate"}},
-		{"name": {"why"}, "label": {"Why so early"}, "kind": {"text"}},
+		{"label": {"Which sitting"}, "kind": {"select"}, "options": {"early\nlate"}},
+		{"label": {"Why so early"}, "kind": {"text"}},
 	} {
 		if w := a.post(t, "/forms/supper-2026/edit/fields", f, cookie); w.Code != http.StatusSeeOther {
-			t.Fatalf("adding %s = %d:\n%s", f.Get("name"), w.Code, w.Body)
+			t.Fatalf("adding %s = %d:\n%s", f.Get("label"), w.Code, w.Body)
 		}
 	}
 
-	if w := a.post(t, "/forms/supper-2026/edit/fields/why", url.Values{
+	if w := a.post(t, "/forms/supper-2026/edit/fields/text_1", url.Values{
 		"label": {"Why so early"}, "kind": {"text"},
-		"show_if_field": {"sitting"}, "show_if_is": {"early"},
+		"show_if_field": {"select_1"}, "show_if_is": {"early"},
 	}, cookie); w.Code != http.StatusOK {
 		t.Fatalf("setting the condition = %d:\n%s", w.Code, w.Body)
 	}
 
-	w := a.post(t, "/forms/supper-2026/edit/fields/why/move", url.Values{"to": {"up"}}, cookie)
+	w := a.post(t, "/forms/supper-2026/edit/fields/text_1/move", url.Values{"to": {"up"}}, cookie)
 	if w.Code != http.StatusOK {
 		t.Fatalf("moving a field on a draft = %d, want 200:\n%s", w.Code, w.Body)
 	}
@@ -474,7 +473,7 @@ func TestTheSameMoveOnADraftIsAllowedAndListedAsAProblem(t *testing.T) {
 		t.Fatalf("Draft: %v", err)
 	}
 
-	if s.Form.Fields[0].Name != "why" {
+	if s.Form.Fields[0].Name != "text_1" {
 		t.Errorf("the move did not happen: %v", s.Form.Fields)
 	}
 
@@ -495,13 +494,13 @@ func TestSomethingForSaleIsPricedInTheBuilder(t *testing.T) {
 	made(t, a, cookie, "supper-2026", "Parish supper")
 
 	w := a.post(t, "/forms/supper-2026/edit/items", url.Values{
-		"id": {"adult"}, "label": {"Adult"}, "price": {"15.00"},
+		"label": {"Adult"}, "price": {"15.00"},
 	}, cookie)
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("adding something for sale = %d, want 303:\n%s", w.Code, w.Body)
 	}
 
-	w = a.post(t, "/forms/supper-2026/edit/items/adult", url.Values{
+	w = a.post(t, "/forms/supper-2026/edit/items/item_1", url.Values{
 		"label": {"Adult"}, "price": {"18.00"}, "max": {"8"},
 	}, cookie)
 	if w.Code != http.StatusOK {
@@ -513,7 +512,7 @@ func TestSomethingForSaleIsPricedInTheBuilder(t *testing.T) {
 		t.Fatalf("Draft: %v", err)
 	}
 
-	it, ok := s.Form.Item("adult")
+	it, ok := s.Form.Item("item_1")
 	if !ok {
 		t.Fatal("the item is not on the form")
 	}
@@ -524,7 +523,7 @@ func TestSomethingForSaleIsPricedInTheBuilder(t *testing.T) {
 
 	// A price that is not a price is refused with a sentence, not stored as
 	// something else.
-	w = a.post(t, "/forms/supper-2026/edit/items/adult", url.Values{
+	w = a.post(t, "/forms/supper-2026/edit/items/item_1", url.Values{
 		"label": {"Adult"}, "price": {"eighteen dollars"},
 	}, cookie)
 	if w.Code != http.StatusBadRequest {
@@ -621,8 +620,8 @@ func TestTheListOfEarlierAnswersIsSetFromTheSettingsPage(t *testing.T) {
 	made(t, a, cookie, "supper-2026", "Parish supper")
 
 	for _, f := range []url.Values{
-		{"name": {"who"}, "label": {"Your name"}, "kind": {"text"}, "required": {"yes"}},
-		{"name": {"email"}, "label": {"Email"}, "kind": {"email"}},
+		{"label": {"Your name"}, "kind": {"text"}, "required": {"yes"}},
+		{"label": {"Email"}, "kind": {"email"}},
 	} {
 		if w := a.post(t, "/forms/supper-2026/edit/fields", f, cookie); w.Code != http.StatusSeeOther {
 			t.Fatalf("adding a field = %d:\n%s", w.Code, w.Body)
@@ -635,14 +634,14 @@ func TestTheListOfEarlierAnswersIsSetFromTheSettingsPage(t *testing.T) {
 
 	// The page lists the questions a line can name, and leaves the email out.
 	page := a.get(t, "/forms/supper-2026/edit/settings", cookie).Body.String()
-	if !strings.Contains(page, "<code>{who}</code>") || strings.Contains(page, "<code>{email}</code>") {
-		t.Errorf("the settings page should offer {who} and not {email}:\n%s", page)
+	if !strings.Contains(page, "<code>{text_1}</code>") || strings.Contains(page, "<code>{email_1}</code>") {
+		t.Errorf("the settings page should offer {text_1} and not {email_1}:\n%s", page)
 	}
 
 	w := a.post(t, "/forms/supper-2026/edit/settings", url.Values{
 		"title":        {"Parish supper"},
 		"list_heading": {"Who is coming"},
-		"list_line":    {"{who} is coming"},
+		"list_line":    {"{text_1} is coming"},
 		"list_limit":   {"20"},
 		"list_order":   {"oldest"},
 	}, cookie)
@@ -655,14 +654,14 @@ func TestTheListOfEarlierAnswersIsSetFromTheSettingsPage(t *testing.T) {
 		t.Fatalf("ByID: %v", err)
 	}
 
-	want := formbus.Listing{Heading: "Who is coming", Line: "{who} is coming", Limit: 20, OldestFirst: true}
+	want := formbus.Listing{Heading: "Who is coming", Line: "{text_1} is coming", Limit: 20, OldestFirst: true}
 	if served.Listing != want {
 		t.Errorf("served listing = %+v, want %+v", served.Listing, want)
 	}
 
 	for line, reason := range map[string]string{
-		"{whoo} is coming": "not one of this form",
-		"{who} <{email}>":  "an email address",
+		"{whoo} is coming":     "not one of this form",
+		"{text_1} <{email_1}>": "an email address",
 	} {
 		w := a.post(t, "/forms/supper-2026/edit/settings", url.Values{
 			"title":     {"Parish supper"},

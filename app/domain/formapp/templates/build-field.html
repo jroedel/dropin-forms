@@ -27,13 +27,10 @@
   </div>
 
   <div class="field">
-    <label for="kind">What sort of answer</label>
-    <select id="kind" name="kind" required>
-      {{range .Kinds}}
-      <option value="{{.Value}}" {{if .Selected}}selected{{end}}
-              class="{{if .HasOptions}}has-options{{end}} {{if .Textual}}textual{{end}} {{if .Bounded}}bounded{{end}} {{if .Money}}money{{end}} {{if .Temporal}}temporal{{end}}">{{.Label}}</option>
-      {{end}}
-    </select>
+    <p><strong>What sort of answer:</strong> {{.Uses.Label}}</p>
+    <p class="help">This cannot be changed, because the answers already given
+    were given to this sort of question. To ask for a different sort of
+    answer, remove this question and add a new one.</p>
   </div>
 
   <p class="choice">
@@ -64,12 +61,11 @@
            autocomplete="off" maxlength="60">
   </div>
 
-  {{/* Every kind's own settings are rendered, and the stylesheet shows only
-       the ones the kind selected in the dropdown uses -- see kindChoice. They
-       are all in the page rather than only the saved kind's, so that changing
-       the dropdown reveals the right boxes without a round trip. A browser
-       without :has() shows every section, which is the page this was before. */}}
+  {{/* Only this kind's own settings. The kind cannot be changed once a
+       question exists -- formapp's saveField says why -- so there is nothing
+       for the page to follow and no reason to render another kind's boxes. */}}
 
+  {{if .Uses.HasOptions}}
   <div class="uses-options">
   <h2>Its choices</h2>
 
@@ -83,7 +79,9 @@
     <textarea id="options" name="options" rows="6">{{.Options}}</textarea>
   </div>
   </div>
+  {{end}}
 
+  {{if .Uses.Textual}}
   <div class="uses-text">
   <h2>How long the answer may be</h2>
 
@@ -120,13 +118,15 @@
            autocomplete="off" maxlength="200">
   </div>
   </div>
+  {{end}}
 
+  {{if .Uses.Bounded}}
   <div class="uses-bounds">
   <h2>What it may contain</h2>
 
   <p class="help">
-  <span class="if-money">An amount, like <code>5.00</code>.</span>
-  <span class="if-count">A whole number: how many, or how many boxes may be ticked.</span>
+  {{if .Uses.Money}}An amount, like <code>5.00</code>.{{end}}
+  {{if not .Uses.Money}}A whole number: how many, or how many boxes may be ticked.{{end}}
   Leave a box empty for no limit at that end &mdash; which is not the same as a
   limit of nothing.</p>
 
@@ -143,7 +143,9 @@
   </div>
 
   </div>
+  {{end}}
 
+  {{if .Uses.Temporal}}
   <div class="uses-range">
   <h2>Which dates or times it takes</h2>
 
@@ -168,6 +170,7 @@
            autocomplete="off" maxlength="20">
   </div>
   </div>
+  {{end}}
 
   <h2>When it is shown</h2>
 
