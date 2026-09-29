@@ -1889,6 +1889,7 @@ for a missing booking. It is logged.
 What it does not do: the list is not shown on the closed page or on the
 confirmation, and on a form that sells, a buyer appears only once Stripe's
 webhook has confirmed the payment.
+
 ### Dates and times, as built
 
 Three field kinds: `date`, `time` and `datetime`, rendered as the browser's

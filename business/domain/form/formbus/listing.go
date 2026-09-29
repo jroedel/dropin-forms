@@ -279,6 +279,12 @@ func (fld Field) shown(values []string, currency string) string {
 				v = show(m, currency)
 			}
 
+		case fld.Kind.Temporal():
+			// Written out, as the submission page and the mail write it: a
+			// list of names with 2026-10-17T09:05 beside each is a list of
+			// timestamps.
+			v = Answer{Kind: fld.Kind, Values: []string{v}}.Readable()
+
 		case fld.Kind == KindParagraph:
 			// One line per submission, so a paragraph is folded onto it
 			// rather than breaking the list into pieces nobody can attribute.
