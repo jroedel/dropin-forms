@@ -83,6 +83,9 @@
     {{- with $fld.Step}} step="{{.}}"{{end}}>
 {{end}}
 
+{{/* Every field the list beneath the form names says so, here, before the
+     person has submitted anything. The list publishes what they type. */}}
+{{if $fld.Public}}<p class="help public-note">What you put here is shown in the list below this form, where anybody visiting the page can read it.</p>{{end}}
 {{range $fld.Problems}}<p class="problem" data-problem-for="{{$fld.Name}}">{{.Message}}</p>{{end}}
 </div>
 {{end}}
@@ -113,5 +116,20 @@
   data-busy="{{if .Form.Sells}}One moment…{{else}}Sending…{{end}}">{{if .Form.Sells}}Continue{{else}}Send{{end}}</button>
 {{with .Form.PaymentNote}}<p class="note">{{.}}</p>{{end}}
 </form>
+
+{{/* Inside #dropin-root, so the height the script posts to the parent
+     includes it -- otherwise the frame would end at the button and cut the
+     list off. After the form rather than beside it, because the frame may be
+     300px wide. */}}
+{{with .Listing}}
+<section class="listing" aria-labelledby="listing-heading">
+<h2 id="listing-heading">{{.Heading}}</h2>
+{{if .Lines}}
+<ul>{{range .Lines}}<li>{{.}}</li>{{end}}</ul>
+{{else}}
+<p class="note">Nobody yet.</p>
+{{end}}
+</section>
+{{end}}
 </div>
 {{end}}

@@ -219,6 +219,40 @@ textarea:user-invalid {
   margin-right: .25rem;
 }
 
+/* --- the earlier answers beneath a form ---------------------------------- */
+
+/* A tinted panel like .items, so it reads as part of this form rather than as
+   the host page's own content -- the list is ours, and somebody scrolling a
+   parish page should be able to tell where the form ends. */
+.listing {
+  margin: 1.75rem 0 0;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--tint);
+  padding: .9rem 1rem;
+}
+
+.listing h2 {
+  margin: 0 0 .5rem;
+  font-size: 1rem;
+}
+
+.listing ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.listing li {
+  padding: .3rem 0;
+  border-top: 1px solid var(--rule);
+  overflow-wrap: anywhere;
+}
+
+.listing li:first-child { border-top: 0; }
+
+.listing .note { margin: 0; }
+
 /* --- problems ------------------------------------------------------------ */
 
 .summary {

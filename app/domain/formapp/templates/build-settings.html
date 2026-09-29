@@ -69,6 +69,45 @@
     <textarea id="confirmation" name="confirmation" rows="3">{{.Confirmation}}</textarea>
   </div>
 
+  <h2>Earlier answers beneath the form</h2>
+
+  <p class="help">A list under the form of what people have already sent, like
+  a sign-up sheet. <strong>Anybody who opens the page can read it</strong>, and
+  the form tells each person, beside every question the list shows, that their
+  answer will appear there. Only finished submissions are listed: an order
+  nobody paid for never appears. Leave the line empty for no list.</p>
+
+  <div class="field">
+    <label for="list_line">Each line reads</label>
+    <p class="help">Put a question's name in braces where its answer goes, like
+    <code>{name} &mdash; bringing {dish}</code>. A choice shows the words people
+    picked, not its stored value. Email and phone questions cannot be shown.
+    {{- if .Listable}} This form's questions are:{{end}}</p>
+    {{with .Listable}}
+    <ul class="help">
+    {{range .}}<li><code>{{"{"}}{{.Name}}{{"}"}}</code> {{.Label}}</li>
+    {{end}}
+    </ul>
+    {{end}}
+    <input type="text" id="list_line" name="list_line" value="{{.ListLine}}"
+           autocomplete="off" maxlength="300">
+  </div>
+
+  <div class="field">
+    <label for="list_heading">What the list is called</label>
+    <p class="help">Like "Who is bringing what". Empty gets "Already signed up".</p>
+    <input type="text" id="list_heading" name="list_heading" value="{{.ListHeading}}"
+           autocomplete="off" maxlength="200">
+  </div>
+
+  <div class="field">
+    <label for="list_limit">How many to show</label>
+    <p class="help">The newest first. Empty means {{.ListDefault}}; the most is
+    {{.ListMax}}.</p>
+    <input type="text" id="list_limit" name="list_limit" value="{{.ListLimit}}"
+           autocomplete="off" inputmode="numeric" maxlength="3">
+  </div>
+
   <h2>Money</h2>
 
   {{if .Sells}}

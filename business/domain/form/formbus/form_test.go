@@ -754,6 +754,9 @@ func TestFingerprintTracksMeaningAndIgnoresPresentation(t *testing.T) {
 		{"a field's name", func(f *formbus.Form) { f.Fields[0].Name = "guest" }},
 		{"a field's kind", func(f *formbus.Form) { f.Fields[0].Kind = formbus.KindParagraph }},
 		{"who may embed it", func(f *formbus.Form) { f.Origins = nil }},
+		{"answers being shown beneath the form", func(f *formbus.Form) {
+			f.Listing.Line = "{name}"
+		}},
 	}
 
 	for _, tt := range changes {

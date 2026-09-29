@@ -46,6 +46,18 @@ type settingsView struct {
 	Notify       string
 	DailyCap     string
 
+	ListHeading string
+	ListLine    string
+	ListLimit   string
+
+	// Listable is the questions the list's line may name, for the help text
+	// beside it: a template is only writable by somebody who can see the
+	// names it is written in. Email and telephone questions are left out,
+	// because formbus refuses them there.
+	Listable    []listable
+	ListDefault int
+	ListMax     int
+
 	// Sells says whether this form has anything for sale, which decides
 	// whether the money half of the page is shown at all. A survey should not
 	// have to scroll past a minimum order total to reach its confirmation
@@ -54,6 +66,12 @@ type settingsView struct {
 
 	Problems []string
 	Problem  string
+}
+
+// listable is one question the list's line may name.
+type listable struct {
+	Name  string
+	Label string
 }
 
 // settings shows the page.
@@ -87,6 +105,18 @@ func settingsOf(s formbus.Stored) settingsView {
 		Confirmation:    f.Confirmation,
 		Notify:          strings.Join(f.Notify, "\n"),
 		Sells:           f.Sells(),
+		ListHeading:     f.Listing.Heading,
+		ListLine:        f.Listing.Line,
+		ListDefault:     formbus.ListingDefault,
+		ListMax:         formbus.ListingMax,
+	}
+
+	for _, fld := range f.Fields {
+		if fld.Kind == formbus.KindEmail || fld.Kind == formbus.KindTel {
+			continue
+		}
+
+		v.Listable = append(v.Listable, listable{Name: fld.Name, Label: fld.Label})
 	}
 
 	// Zero means unbounded on every one of these, so it is shown as an empty
@@ -95,6 +125,7 @@ func settingsOf(s formbus.Stored) settingsView {
 	v.MinPerOrder = blankZero(f.MinPerOrder)
 	v.MaxPerOrder = blankZero(f.MaxPerOrder)
 	v.DailyCap = blankZero(f.DailyCap)
+	v.ListLimit = blankZero(f.Listing.Limit)
 
 	if f.MinTotal > 0 {
 		v.MinTotal = f.MinTotal.String()
@@ -155,6 +186,9 @@ func (a app) saveSettings(w http.ResponseWriter, r *http.Request) {
 	said.Confirmation = value(r, "confirmation")
 	said.Notify = r.PostFormValue("notify")
 	said.DailyCap = value(r, "daily_cap")
+	said.ListHeading = value(r, "list_heading")
+	said.ListLine = value(r, "list_line")
+	said.ListLimit = value(r, "list_limit")
 
 	// The definition as it stands, with its fields and items carried through
 	// untouched: this page is about everything except them.
@@ -168,6 +202,8 @@ func (a app) saveSettings(w http.ResponseWriter, r *http.Request) {
 	f.PaymentNote = said.PaymentNote
 	f.Confirmation = said.Confirmation
 	f.Notify = lines(said.Notify)
+	f.Listing.Heading = said.ListHeading
+	f.Listing.Line = said.ListLine
 
 	var problems []string
 
@@ -201,6 +237,9 @@ func (a app) saveSettings(w http.ResponseWriter, r *http.Request) {
 	fail(err)
 
 	f.DailyCap, err = parseCount("The daily limit", said.DailyCap)
+	fail(err)
+
+	f.Listing.Limit, err = parseCount("How many earlier answers to show", said.ListLimit)
 	fail(err)
 
 	if len(problems) > 0 {

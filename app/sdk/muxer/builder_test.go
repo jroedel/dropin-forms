@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
+	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/business/types"
 )
@@ -605,5 +606,76 @@ func TestTheReleaseFormIsStillServedBesideABuiltOne(t *testing.T) {
 
 	if !slices.Contains(names, theForm) {
 		t.Errorf("All = %v, want it to include %s", names, theForm)
+	}
+}
+
+// The list of earlier answers, set from the settings page: a line naming a
+// question is saved and served, and on a live form a line naming something
+// that is not a question -- or an email address -- is refused with the reason,
+// and the form keeps serving what it was.
+func TestTheListOfEarlierAnswersIsSetFromTheSettingsPage(t *testing.T) {
+	a := newAdmin(t, "")
+
+	cookie := sessionFor(t, a, siteBoss(t, a, "site@schoenstatt.test"))
+
+	made(t, a, cookie, "supper-2026", "Parish supper")
+
+	for _, f := range []url.Values{
+		{"name": {"who"}, "label": {"Your name"}, "kind": {"text"}, "required": {"yes"}},
+		{"name": {"email"}, "label": {"Email"}, "kind": {"email"}},
+	} {
+		if w := a.post(t, "/forms/supper-2026/edit/fields", f, cookie); w.Code != http.StatusSeeOther {
+			t.Fatalf("adding a field = %d:\n%s", w.Code, w.Body)
+		}
+	}
+
+	if w := a.post(t, "/forms/supper-2026/edit/state", url.Values{"state": {"live"}}, cookie); w.Code != http.StatusOK {
+		t.Fatalf("publishing = %d:\n%s", w.Code, w.Body)
+	}
+
+	// The page lists the questions a line can name, and leaves the email out.
+	page := a.get(t, "/forms/supper-2026/edit/settings", cookie).Body.String()
+	if !strings.Contains(page, "<code>{who}</code>") || strings.Contains(page, "<code>{email}</code>") {
+		t.Errorf("the settings page should offer {who} and not {email}:\n%s", page)
+	}
+
+	w := a.post(t, "/forms/supper-2026/edit/settings", url.Values{
+		"title":        {"Parish supper"},
+		"list_heading": {"Who is coming"},
+		"list_line":    {"{who} is coming"},
+		"list_limit":   {"20"},
+	}, cookie)
+	if w.Code != http.StatusOK {
+		t.Fatalf("saving the list = %d, want 200:\n%s", w.Code, w.Body)
+	}
+
+	served, err := a.catalogue.ByID(mustSlug(t, "supper-2026"))
+	if err != nil {
+		t.Fatalf("ByID: %v", err)
+	}
+
+	want := formbus.Listing{Heading: "Who is coming", Line: "{who} is coming", Limit: 20}
+	if served.Listing != want {
+		t.Errorf("served listing = %+v, want %+v", served.Listing, want)
+	}
+
+	for line, reason := range map[string]string{
+		"{whoo} is coming": "not one of this form",
+		"{who} <{email}>":  "an email address",
+	} {
+		w := a.post(t, "/forms/supper-2026/edit/settings", url.Values{
+			"title":     {"Parish supper"},
+			"list_line": {line},
+		}, cookie)
+		if w.Code != http.StatusConflict {
+			t.Errorf("a list line of %q on a live form = %d, want 409", line, w.Code)
+		}
+		if !strings.Contains(w.Body.String(), reason) {
+			t.Errorf("refusing %q does not say %q:\n%s", line, reason, w.Body)
+		}
+	}
+
+	if f, _ := a.catalogue.ByID(mustSlug(t, "supper-2026")); f.Listing != want {
+		t.Errorf("after the refusals the form serves %+v, want it unchanged", f.Listing)
 	}
 }

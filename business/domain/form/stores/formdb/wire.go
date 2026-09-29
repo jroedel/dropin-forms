@@ -44,6 +44,11 @@ type definition struct {
 	Confirmation string   `json:"confirmation,omitempty"`
 	Notify       []string `json:"notify,omitempty"`
 
+	// omitzero, so that a form with no list writes no key -- and a rollback
+	// to a binary that has never heard of one keeps serving every form that
+	// does not use it, rather than refusing all of them.
+	Listing listing `json:"listing,omitzero"`
+
 	Fields []field `json:"fields,omitzero"`
 	Items  []item  `json:"items,omitzero"`
 }
@@ -74,6 +79,12 @@ type field struct {
 	Options []option `json:"options,omitzero"`
 
 	ShowIf *condition `json:"show_if,omitempty"`
+}
+
+type listing struct {
+	Heading string `json:"heading,omitempty"`
+	Line    string `json:"line,omitempty"`
+	Limit   int    `json:"limit,omitempty"`
 }
 
 type option struct {
@@ -113,6 +124,11 @@ func encode(f formbus.Form) (string, error) {
 		DailyCap:        f.DailyCap,
 		Confirmation:    f.Confirmation,
 		Notify:          f.Notify,
+		Listing: listing{
+			Heading: f.Listing.Heading,
+			Line:    f.Listing.Line,
+			Limit:   f.Listing.Limit,
+		},
 	}
 
 	for _, o := range f.Origins {
@@ -202,6 +218,11 @@ func decode(body string) (formbus.Form, error) {
 		DailyCap:        w.DailyCap,
 		Confirmation:    w.Confirmation,
 		Notify:          w.Notify,
+		Listing: formbus.Listing{
+			Heading: w.Listing.Heading,
+			Line:    w.Listing.Line,
+			Limit:   w.Listing.Limit,
+		},
 	}
 
 	for _, raw := range w.Origins {

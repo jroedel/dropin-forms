@@ -430,3 +430,41 @@ func TestTheDailyCapIsRead(t *testing.T) {
 		t.Errorf("a form with no daily_cap came back with %d", b.DailyCap)
 	}
 }
+
+// The [listing] table reaches the domain type, and a form without one has no
+// list -- rather than a list whose empty line Check would have to explain.
+func TestTheListingIsRead(t *testing.T) {
+	store, err := formtoml.Load(fstest.MapFS{"alpha.toml": {Data: []byte(
+		minimal("alpha", "[listing]\nheading = \"Who is coming\"\nline = \"{who} is coming\"\nlimit = 20"))}})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	alpha, _ := types.ParseSlug("alpha")
+
+	f, err := store.ByID(alpha)
+	if err != nil {
+		t.Fatalf("ByID: %v", err)
+	}
+
+	want := formbus.Listing{Heading: "Who is coming", Line: "{who} is coming", Limit: 20}
+	if f.Listing != want {
+		t.Errorf("Listing = %+v, want %+v", f.Listing, want)
+	}
+
+	plain, err := formtoml.Load(fstest.MapFS{"beta.toml": {Data: []byte(minimal("beta"))}})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	beta, _ := types.ParseSlug("beta")
+
+	b, err := plain.ByID(beta)
+	if err != nil {
+		t.Fatalf("ByID: %v", err)
+	}
+
+	if b.Listing.On() {
+		t.Errorf("a form with no [listing] came back with %+v", b.Listing)
+	}
+}
