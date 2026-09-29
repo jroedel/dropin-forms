@@ -41,6 +41,11 @@ type fieldView struct {
 	Pattern     string
 	PatternNote string
 
+	// Earliest and Latest are a date or time field's range, in the shape it
+	// was typed or stored in.
+	Earliest string
+	Latest   string
+
 	Options string
 
 	// ShowIfField and ShowIfIs are the condition. Empty means always shown.
@@ -63,7 +68,7 @@ type fieldView struct {
 // kindChoice is one entry in the kind dropdown: the value the domain uses,
 // a sentence for a person, and which of the page's settings that kind uses.
 //
-// The last four are what hide the settings a kind has no use for. They are
+// The last five are what hide the settings a kind has no use for. They are
 // written onto each <option> as classes, and the stylesheet hides a section
 // when the option that is checked does not carry its class -- so the page
 // changes as the dropdown does, with no script, which the CSP forbids anyway.
@@ -80,6 +85,7 @@ type kindChoice struct {
 	Bounded    bool
 	Textual    bool
 	Money      bool
+	Temporal   bool
 }
 
 // addField appends a field and goes to its page.
@@ -180,6 +186,8 @@ func fieldOf(s formbus.Stored, fld formbus.Field, at int) fieldView {
 		Max:          writeBound(fld.Max, money),
 		Pattern:      fld.Pattern,
 		PatternNote:  fld.PatternNote,
+		Earliest:     fld.Earliest,
+		Latest:       fld.Latest,
 		Options:      writeOptions(fld.Options),
 		Kinds:        kindsFor(fld.Kind),
 	}
@@ -274,6 +282,14 @@ func (a app) saveField(w http.ResponseWriter, r *http.Request) {
 		fail(err)
 
 		fld.Max, err = parseBound("The largest value", value(r, "max"), money)
+		fail(err)
+	}
+
+	if fld.Kind.Temporal() {
+		fld.Earliest, err = parseLimit("The earliest", fld.Kind, value(r, "earliest"))
+		fail(err)
+
+		fld.Latest, err = parseLimit("The latest", fld.Kind, value(r, "latest"))
 		fail(err)
 	}
 
@@ -485,6 +501,7 @@ func kindsFor(selected formbus.Kind) []kindChoice {
 			HasOptions: k.HasOptions(),
 			Bounded:    k.Bounded(),
 			Textual:    k.Textual(),
+			Temporal:   k.Temporal(),
 			Money:      k == formbus.KindAmount,
 		})
 	}

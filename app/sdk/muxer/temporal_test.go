@@ -38,6 +38,10 @@ func visitSurface(t *testing.T) (http.Handler, *submissionbus.Business) {
 			{Name: "day", Label: "Which day", Kind: formbus.KindDate, Required: true},
 			{Name: "at", Label: "What time", Kind: formbus.KindTime},
 			{Name: "when", Label: "Pick-up", Kind: formbus.KindDateTime},
+			{
+				Name: "slot", Label: "Your appointment", Kind: formbus.KindDateTime,
+				Earliest: "2026-09-30", Latest: "2026-10-13",
+			},
 		},
 	}
 	f.Stamp()
@@ -160,5 +164,90 @@ func TestTheBuilderAddsTemporalFields(t *testing.T) {
 
 	if len(s.Form.Fields) != 3 {
 		t.Errorf("the form has %d fields, want the three added", len(s.Form.Fields))
+	}
+}
+
+// The range reaches the picker as min and max -- a day standing for its whole
+// self, so the latest is the last minute of the 13th -- and is said in words
+// beside the question, for a browser that draws a text box instead.
+func TestADatetimeRangeReachesThePickerAndThePage(t *testing.T) {
+	h, _ := visitSurface(t)
+
+	body := getPage(t, h, "/f/visit").Body.String()
+
+	for _, want := range []string{
+		`name="slot" value=""`,
+		`min="2026-09-30T00:00"`,
+		`max="2026-10-13T23:59"`,
+		"Between Wednesday 30 September 2026 and Tuesday 13 October 2026.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the page does not contain %s:\n%s", want, short(body))
+		}
+	}
+}
+
+func TestADatetimeOutsideItsRangeIsRefused(t *testing.T) {
+	h, subs := visitSurface(t)
+
+	for in, ok := range map[string]bool{"2026-10-13T18:00": true, "2026-10-14T09:00": false} {
+		grant := grantIn(t, getPage(t, h, "/f/visit").Body.String())
+
+		w := postTo(t, h, "/f/visit", url.Values{
+			embedapp.GrantField: {grant},
+			"day":               {"2026-10-01"},
+			"slot":              {in},
+		})
+
+		refused := strings.Contains(w.Body.String(),
+			"Your appointment has to be between Wednesday 30 September 2026 and Tuesday 13 October 2026.")
+
+		if refused == ok {
+			t.Errorf("%s: refused = %v, want %v:\n%s", in, refused, !ok, short(w.Body.String()))
+		}
+	}
+
+	if stored, _ := subs.ByForm(t.Context(), mustSlug(t, "visit")); len(stored) != 1 {
+		t.Errorf("%d stored, want only the one inside the range", len(stored))
+	}
+}
+
+// The builder takes a range as a person types it, stores it in the field's
+// own shape, and refuses one it cannot read with the shape to use.
+func TestTheBuilderSetsADatetimeRange(t *testing.T) {
+	a := newAdmin(t, "")
+
+	cookie := sessionFor(t, a, siteBoss(t, a, "site@schoenstatt.test"))
+
+	made(t, a, cookie, "supper-2026", "Parish supper")
+
+	if w := a.post(t, "/forms/supper-2026/edit/fields", url.Values{
+		"name": {"slot"}, "label": {"Your appointment"}, "kind": {"datetime"},
+	}, cookie); w.Code != http.StatusSeeOther {
+		t.Fatalf("adding the field = %d:\n%s", w.Code, w.Body)
+	}
+
+	w := a.post(t, "/forms/supper-2026/edit/fields/slot", url.Values{
+		"label": {"Your appointment"}, "kind": {"datetime"},
+		"earliest": {"2026-09-30"}, "latest": {"2026-10-13 18:00"},
+	}, cookie)
+	if w.Code >= 400 {
+		t.Fatalf("saving the range = %d:\n%s", w.Code, w.Body)
+	}
+
+	s, err := a.catalogue.Draft(t.Context(), mustSlug(t, "supper-2026"))
+	if err != nil {
+		t.Fatalf("Draft: %v", err)
+	}
+
+	if fld, _ := s.Form.Field("slot"); fld.Earliest != "2026-09-30" || fld.Latest != "2026-10-13T18:00" {
+		t.Errorf("stored %q to %q, want 2026-09-30 to 2026-10-13T18:00", fld.Earliest, fld.Latest)
+	}
+
+	w = a.post(t, "/forms/supper-2026/edit/fields/slot", url.Values{
+		"label": {"Your appointment"}, "kind": {"datetime"}, "earliest": {"30/09/2026"},
+	}, cookie)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "a day like 2026-10-13") {
+		t.Errorf("an unreadable earliest = %d, want 400 naming the shape:\n%s", w.Code, w.Body)
 	}
 }

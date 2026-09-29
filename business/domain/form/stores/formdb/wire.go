@@ -76,6 +76,9 @@ type field struct {
 	Pattern     string `json:"pattern,omitempty"`
 	PatternNote string `json:"pattern_note,omitempty"`
 
+	Earliest string `json:"earliest,omitempty"`
+	Latest   string `json:"latest,omitempty"`
+
 	Options []option `json:"options,omitzero"`
 
 	ShowIf *condition `json:"show_if,omitempty"`
@@ -154,6 +157,8 @@ func encode(f formbus.Form) (string, error) {
 			Max:          fld.Max,
 			Pattern:      fld.Pattern,
 			PatternNote:  fld.PatternNote,
+			Earliest:     fld.Earliest,
+			Latest:       fld.Latest,
 		}
 
 		for _, o := range fld.Options {
@@ -255,6 +260,8 @@ func decode(body string) (formbus.Form, error) {
 			Max:          wf.Max,
 			Pattern:      wf.Pattern,
 			PatternNote:  wf.PatternNote,
+			Earliest:     wf.Earliest,
+			Latest:       wf.Latest,
 		}
 
 		for _, o := range wf.Options {

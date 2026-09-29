@@ -31,7 +31,7 @@
     <select id="kind" name="kind" required>
       {{range .Kinds}}
       <option value="{{.Value}}" {{if .Selected}}selected{{end}}
-              class="{{if .HasOptions}}has-options{{end}} {{if .Textual}}textual{{end}} {{if .Bounded}}bounded{{end}} {{if .Money}}money{{end}}">{{.Label}}</option>
+              class="{{if .HasOptions}}has-options{{end}} {{if .Textual}}textual{{end}} {{if .Bounded}}bounded{{end}} {{if .Money}}money{{end}} {{if .Temporal}}temporal{{end}}">{{.Label}}</option>
       {{end}}
     </select>
   </div>
@@ -142,6 +142,31 @@
            autocomplete="off" inputmode="decimal" maxlength="12">
   </div>
 
+  </div>
+
+  <div class="uses-range">
+  <h2>Which dates or times it takes</h2>
+
+  <p class="help">Both ends are included. Leave a box empty for no limit at
+  that end. For a date, like <code>2026-09-30</code>; for a time, like
+  <code>09:00</code> or <code>5:30pm</code>; for a date and time, either a day
+  and a time like <code>2026-09-30 09:00</code>, or a day on its own &mdash; an
+  earliest of <code>2026-09-30</code> starts at the beginning of that day, and a
+  latest of <code>2026-10-13</code> runs to the end of it. The form says the
+  range beside the question, and the browser's picker greys out what is
+  outside it.</p>
+
+  <div class="field">
+    <label for="earliest">Earliest</label>
+    <input type="text" id="earliest" name="earliest" value="{{.Earliest}}"
+           autocomplete="off" maxlength="20">
+  </div>
+
+  <div class="field">
+    <label for="latest">Latest</label>
+    <input type="text" id="latest" name="latest" value="{{.Latest}}"
+           autocomplete="off" maxlength="20">
+  </div>
   </div>
 
   <h2>When it is shown</h2>

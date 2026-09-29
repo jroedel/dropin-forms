@@ -372,6 +372,12 @@ func detailOf(fld formbus.Field, currency string) string {
 		parts = append(parts, "a set format")
 	}
 
+	// The same sentence the form shows beside the field, lower-cased to sit
+	// in a list: "between Wednesday 30 September 2026 and ...".
+	if note := fld.RangeNote(); note != "" {
+		parts = append(parts, strings.ToLower(note[:1])+strings.TrimSuffix(note[1:], "."))
+	}
+
 	return strings.Join(compact(parts), ", ")
 }
 

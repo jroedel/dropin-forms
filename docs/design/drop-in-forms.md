@@ -1925,9 +1925,18 @@ the stored value into "Saturday 17 October 2026, 3:30pm" for the submission
 page and the notification mail. The admin table and the CSV keep the stored
 shape.
 
-**No earliest or latest date yet.** These kinds are not `Bounded`: `Field.Min`
-is an int64 whose unit already differs by kind, and a date would be a fourth.
-When a window is needed it wants its own pair of fields.
+**Earliest and latest are their own pair of fields.** Not `Min` and `Max`:
+`Field.Min` is an int64 whose unit already differs by kind, and a date would be
+a fourth. `Field.Earliest` and `Field.Latest` are written in the field's stored
+shape, and because every stored shape is fixed-width and most significant
+first, the range check is a string comparison — no parsing, and no zone. Both
+ends are included. A datetime's range may be a day on its own, kept as a day
+rather than as midnight, because "until the 13th" means the whole of the 13th:
+compared, it widens to `T00:00` for the earliest and `T23:59` for the latest,
+which is exact because answers have no seconds. The range is enforced on the
+server, handed to the picker as `min` and `max`, and said in words beside the
+field for a browser that draws a text box. It is in the fingerprint, so
+narrowing it re-renders every tab open against the old one.
 
 ## 10. Dependencies
 

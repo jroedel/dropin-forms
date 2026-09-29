@@ -398,7 +398,7 @@ func (fld Field) take(raw []string, currency string) ([]string, []Violation) {
 			return nil, problems
 		}
 
-		return []string{canon}, nil
+		return []string{canon}, fld.checkRange(canon)
 	}
 
 	return values, append(vs, fld.check(values, currency)...)

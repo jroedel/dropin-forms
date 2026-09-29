@@ -254,6 +254,13 @@ type field struct {
 	Pattern     string `toml:"pattern"`
 	PatternNote string `toml:"pattern_note"`
 
+	// Strings in the field's own stored shape -- see formbus.Field.Earliest.
+	// Not TOML's own date types: a datetime's latest may be a day on its own,
+	// which TOML would read as a local date and a datetime as a different
+	// type, and the one rule for both is simpler as text.
+	Earliest string `toml:"earliest"`
+	Latest   string `toml:"latest"`
+
 	Options []option `toml:"option"`
 
 	ShowIf *condition `toml:"show_if"`
@@ -363,6 +370,8 @@ func (w field) toField() (formbus.Field, error) {
 		MaxLen:       w.MaxLen,
 		Pattern:      w.Pattern,
 		PatternNote:  w.PatternNote,
+		Earliest:     w.Earliest,
+		Latest:       w.Latest,
 	}
 
 	for _, o := range w.Options {

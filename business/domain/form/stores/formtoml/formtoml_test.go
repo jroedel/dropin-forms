@@ -468,3 +468,29 @@ func TestTheListingIsRead(t *testing.T) {
 		t.Errorf("a form with no [listing] came back with %+v", b.Listing)
 	}
 }
+
+// A date or time field's range reaches the domain type as written.
+func TestADatetimeRangeIsRead(t *testing.T) {
+	store, err := formtoml.Load(fstest.MapFS{"alpha.toml": {Data: []byte(minimal("alpha") + `
+[[field]]
+name = "slot"
+label = "Your appointment"
+kind = "datetime"
+earliest = "2026-09-30"
+latest = "2026-10-13T18:00"
+`)}})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	alpha, _ := types.ParseSlug("alpha")
+
+	f, err := store.ByID(alpha)
+	if err != nil {
+		t.Fatalf("ByID: %v", err)
+	}
+
+	if fld, _ := f.Field("slot"); fld.Earliest != "2026-09-30" || fld.Latest != "2026-10-13T18:00" {
+		t.Errorf("range = %q to %q", fld.Earliest, fld.Latest)
+	}
+}

@@ -475,6 +475,7 @@ button:disabled {
 form:has(#kind option:checked:not(.has-options)) .uses-options,
 form:has(#kind option:checked:not(.textual)) .uses-text,
 form:has(#kind option:checked:not(.bounded)) .uses-bounds,
+form:has(#kind option:checked:not(.temporal)) .uses-range,
 form:has(#kind option:checked:not(.money)) .if-money,
 form:has(#kind option.money:checked) .if-count {
   display: none;

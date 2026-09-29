@@ -122,6 +122,13 @@ func full(t *testing.T) formbus.Form {
 				Max:          &max,
 				Autocomplete: "off",
 			},
+			{
+				Name:     "slot",
+				Label:    "Your appointment",
+				Kind:     formbus.KindDateTime,
+				Earliest: "2026-09-30",
+				Latest:   "2026-10-13T18:00",
+			},
 		},
 
 		Listing: formbus.Listing{Heading: "Who is coming", Line: "Somebody at the {sitting} sitting", Limit: 20, OldestFirst: true},
@@ -185,6 +192,10 @@ func TestADefinitionSurvivesTheRoundTrip(t *testing.T) {
 			t.Errorf("field %d = %+v, want %+v", i, fld, w)
 		case fld.Pattern != w.Pattern, fld.PatternNote != w.PatternNote:
 			t.Errorf("field %d pattern = %q/%q, want %q/%q", i, fld.Pattern, fld.PatternNote, w.Pattern, w.PatternNote)
+		}
+
+		if fld.Earliest != w.Earliest || fld.Latest != w.Latest {
+			t.Errorf("field %d range = %q to %q, want %q to %q", i, fld.Earliest, fld.Latest, w.Earliest, w.Latest)
 		}
 
 		if (fld.Min == nil) != (w.Min == nil) || (fld.Min != nil && *fld.Min != *w.Min) {

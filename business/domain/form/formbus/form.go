@@ -192,6 +192,14 @@ type Field struct {
 
 	ShowIf *Condition
 
+	// Earliest and Latest bound a date or time field, in that field's stored
+	// shape: 2026-10-17 for a date, 15:30 for a time, 2026-10-17T15:30 for a
+	// datetime. Both ends are included. A datetime's may also be a day on its
+	// own, which means from the start of it or to the end of it. Empty means
+	// open at that end. See temporal.go for why these are not Min and Max.
+	Earliest string
+	Latest   string
+
 	// pattern is Pattern compiled, filled in by Check so that no request pays
 	// for a compile and no handler has to deal with a compile failure.
 	pattern *regexp.Regexp
@@ -592,6 +600,7 @@ func (f *Form) checkFields() []string {
 		p = append(p, fld.checkOptions(where)...)
 		p = append(p, fld.checkBounds(where)...)
 		p = append(p, fld.checkPattern(where)...)
+		p = append(p, fld.checkLimits(where)...)
 		p = append(p, f.checkCondition(fld, where, i)...)
 	}
 
@@ -1027,6 +1036,12 @@ func (f Form) Fingerprint() string {
 		if fld.ShowIf != nil {
 			write("showif", fld.ShowIf.Field)
 			write(fld.ShowIf.Is...)
+		}
+
+		// Only when there is one, so every field that has none keeps the
+		// fingerprint it had before ranges existed.
+		if fld.Earliest != "" || fld.Latest != "" {
+			write("range", fld.Earliest, fld.Latest)
 		}
 	}
 

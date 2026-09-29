@@ -185,3 +185,131 @@ func TestReadable(t *testing.T) {
 		}
 	}
 }
+
+// The case this was written for: a pick-up between Wednesday 30 September and
+// Tuesday 13 October, both whole days, on a datetime field.
+func TestADatetimeRangeWrittenAsDaysTakesTheWholeOfBoth(t *testing.T) {
+	f := appointment(t)
+	f.Fields[2].Earliest = "2026-09-30"
+	f.Fields[2].Latest = "2026-10-13"
+	f.Stamp()
+
+	if err := f.Check(); err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+
+	for in, ok := range map[string]bool{
+		"2026-09-30T00:00": true,
+		"2026-10-13T23:59": true,
+		"2026-10-05T12:00": true,
+		"2026-09-29T23:59": false,
+		"2026-10-14T00:00": false,
+	} {
+		_, err := f.Validate(sometime, formbus.Values{"when": {in}})
+
+		switch inv, refused := errors.AsType[formbus.Invalid](err); {
+		case ok && err != nil:
+			t.Errorf("%s refused: %v", in, err)
+		case !ok && !refused:
+			t.Errorf("%s accepted, outside the range", in)
+		case !ok && inv.For("when")[0].Message != "Pick-up has to be between Wednesday 30 September 2026 and Tuesday 13 October 2026.":
+			t.Errorf("%s refused with %q", in, inv.For("when")[0].Message)
+		}
+	}
+
+	if got := f.Fields[2].RangeNote(); got != "Between Wednesday 30 September 2026 and Tuesday 13 October 2026." {
+		t.Errorf("RangeNote = %q", got)
+	}
+}
+
+func TestARangeOnEachKind(t *testing.T) {
+	tests := []struct {
+		field, earliest, latest, in string
+		want                        string // "" for accepted
+	}{
+		{"day", "2026-09-30", "", "2026-09-30", ""},
+		{"day", "2026-09-30", "", "2026-09-29", "Which day has to be on or after Wednesday 30 September 2026."},
+		{"at", "09:00", "17:00", "5:00pm", ""},
+		{"at", "09:00", "17:00", "8:59am", "What time has to be between 9:00am and 5:00pm."},
+		{"at", "", "17:00", "17:01", "What time has to be at or before 5:00pm."},
+		{"when", "2026-09-30T09:00", "", "2026-09-30T08:30", "Pick-up has to be at or after Wednesday 30 September 2026, 9:00am."},
+		{"when", "", "2026-10-13", "2026-10-14T08:00", "Pick-up has to be on or before Tuesday 13 October 2026."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.field+" "+tt.in, func(t *testing.T) {
+			f := appointment(t)
+			for i := range f.Fields {
+				if f.Fields[i].Name == tt.field {
+					f.Fields[i].Earliest, f.Fields[i].Latest = tt.earliest, tt.latest
+				}
+			}
+			f.Stamp()
+
+			if err := f.Check(); err != nil {
+				t.Fatalf("Check: %v", err)
+			}
+
+			_, err := f.Validate(sometime, formbus.Values{tt.field: {tt.in}})
+
+			if tt.want == "" {
+				if err != nil {
+					t.Errorf("refused: %v", err)
+				}
+
+				return
+			}
+
+			inv, ok := errors.AsType[formbus.Invalid](err)
+			if !ok || len(inv.For(tt.field)) != 1 || inv.For(tt.field)[0].Message != tt.want {
+				t.Errorf("Validate = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestCheckRefusesABadRange(t *testing.T) {
+	tests := []struct {
+		name             string
+		at               int
+		earliest, latest string
+		want             string
+	}{
+		{"on a text field", -1, "2026-09-30", "", "applies only to a date or a time"},
+		{"written as the day comes on paper", 0, "30/09/2026", "", `earliest "30/09/2026" is not written the way this field stores it`},
+		{"a time in words", 1, "9:00am", "", `earliest "9:00am" is not written the way`},
+		{"a day on a time field", 1, "2026-09-30", "", "not written the way"},
+		{"the wrong way round", 0, "2026-10-13", "2026-09-30", "is after its latest"},
+		{"a datetime ending before it starts", 2, "2026-10-14", "2026-10-13T09:00", "is after its latest"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := appointment(t)
+
+			if tt.at < 0 {
+				f.Fields = append(f.Fields, formbus.Field{Name: "who", Label: "Name", Kind: formbus.KindText})
+				tt.at = len(f.Fields) - 1
+			}
+
+			f.Fields[tt.at].Earliest, f.Fields[tt.at].Latest = tt.earliest, tt.latest
+			f.Stamp()
+
+			err := f.Check()
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("Check = %v, want it to contain %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestARangeIsInTheFingerprint(t *testing.T) {
+	f := appointment(t)
+	before := f.Fingerprint()
+
+	f.Fields[2].Latest = "2026-10-13"
+
+	if f.Fingerprint() == before {
+		t.Error("setting a latest date did not change the fingerprint, so a tab opened before it could still submit the 14th")
+	}
+}
