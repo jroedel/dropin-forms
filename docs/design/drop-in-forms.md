@@ -1963,6 +1963,40 @@ server, handed to the picker as `min` and `max`, and said in words beside the
 field for a browser that draws a text box. It is in the fingerprint, so
 narrowing it re-renders every tab open against the old one.
 
+### Hiding a submission, as built
+
+A test submission, a duplicate or a joke can be taken out of every list from
+its own page, by an administrator of the form, and put back from the same
+place.
+
+**Hidden, not deleted.** A submission may be a real card payment, and deleting
+it would leave Stripe holding a charge nothing here can explain; a mis-click
+would be permanent; and a deleted row cannot answer "where did Maria's order
+go". So a hiding is a row in `hidden_submissions` — who and when — for the
+reason a collection is one: a submission is immutable apart from its status,
+and this is not a status. Hiding refunds nothing, and the button says so on a
+form that took money.
+
+**Left out by the store, not by each reader.** Every listing query carries the
+same `NOT IN (SELECT submission_id FROM hidden_submissions)`: `ByForm`,
+`Settled` and `Unpaid`. Through them a hidden submission leaves the admin list
+and its totals, the CSV, the index counts, the will-call table, the list
+beneath a form and the unpaid-order mail — and a page added next year that
+lists submissions is correct without knowing hiding exists. Two readers keep
+them on purpose: `ByID`, so the submission's page can say it is hidden and
+offer to put it back, and `CountSince`, because the daily cap is an abuse
+control and a script's submissions do not stop counting because somebody tidied
+them away. `Hidden` is the one query that finds them, behind "show them" on the
+list.
+
+**Its own app, behind admin.** `submissionapp` is read-only and behind
+results, and says so; the buttons are drawn on its page for an account that
+holds admin on the form and post to `hideapp`. Admin rather than results,
+which cannot write, or door, which marks orders collected and nothing else:
+taking a row out of the totals changes the number somebody orders food
+against. The id in the path is checked against the form in the path, as the
+will-call table checks it.
+
 ## 10. Dependencies
 
 A dependency needs a comment naming the standard-library answer that was

@@ -99,6 +99,7 @@ func newConfig(t *testing.T, origins []types.Origin, expected sqldb.Expected) mu
 		// The admin surface reads submissions, so it needs both the rows
 		// and the definitions the rows are columns of.
 		Submissions: submissionbus.NewBusiness(log, submissiondb.NewStore(db)),
+		Hiding:      submissionbus.NewBusiness(log, submissiondb.NewStore(db)),
 		Forms:       definitions,
 
 		Embed: embedapp.Config{

@@ -806,3 +806,87 @@ func TestUncollectLetsAnOrderBeHandedOverAgain(t *testing.T) {
 		t.Errorf("Uncollect on an order nobody collected = %v, want nil", err)
 	}
 }
+
+// A hidden submission leaves every listing query -- ByForm, Settled and
+// Unpaid -- and stays readable by id, counted by CountSince, and listed by
+// Hidden. Unhiding puts it back.
+func TestAHiddenSubmissionLeavesEveryListAndComesBack(t *testing.T) {
+	_, store := open(t)
+
+	lunch := mustSlug(t, "feast-lunch-2026")
+
+	keep := sample(t)
+	keep.Status = submissionbus.StatusPaid
+
+	test := sample(t)
+	test.Status = submissionbus.StatusPaid
+	test.CreatedAt = now.Add(time.Minute)
+
+	unpaid := sample(t)
+	unpaid.CreatedAt = now.Add(2 * time.Minute)
+
+	for i, s := range []submissionbus.Submission{keep, test, unpaid} {
+		if _, err := store.Accept(t.Context(), s, string(rune('a'+i))); err != nil {
+			t.Fatalf("Accept: %v", err)
+		}
+	}
+
+	by := types.NewID()
+
+	for _, id := range []types.ID{test.ID, unpaid.ID} {
+		h, wrote, err := store.Hide(t.Context(), submissionbus.Hiding{SubmissionID: id, Form: lunch, HiddenAt: now, HiddenBy: by})
+		if err != nil || !wrote || h.HiddenBy != by {
+			t.Fatalf("Hide = %+v, %v, %v", h, wrote, err)
+		}
+	}
+
+	// Twice is once, and says who got there first.
+	if h, wrote, err := store.Hide(t.Context(), submissionbus.Hiding{SubmissionID: test.ID, Form: lunch, HiddenAt: now, HiddenBy: types.NewID()}); err != nil || wrote || h.HiddenBy != by {
+		t.Errorf("hiding twice = %+v, %v, %v; want the first hiding and no write", h, wrote, err)
+	}
+
+	listed, err := store.ByForm(t.Context(), lunch)
+	if err != nil || len(listed) != 1 || listed[0].ID != keep.ID {
+		t.Errorf("ByForm = %d rows, %v; want only the one not hidden", len(listed), err)
+	}
+
+	if settled, err := store.Settled(t.Context(), lunch, 10); err != nil || len(settled) != 1 {
+		t.Errorf("Settled = %d rows, %v; want only the one not hidden", len(settled), err)
+	}
+
+	if owed, err := store.Unpaid(t.Context(), now.Add(-time.Hour), now.Add(time.Hour)); err != nil || len(owed) != 0 {
+		t.Errorf("Unpaid = %d rows, %v; a hidden unpaid order must not be reported", len(owed), err)
+	}
+
+	if n, err := store.CountSince(t.Context(), lunch, now.Add(-time.Hour)); err != nil || n != 3 {
+		t.Errorf("CountSince = %d, %v; want all three -- the daily cap counts what was hidden", n, err)
+	}
+
+	if _, err := store.ByID(t.Context(), test.ID); err != nil {
+		t.Errorf("a hidden submission cannot be read by id: %v", err)
+	}
+
+	if hidden, err := store.Hidden(t.Context(), lunch); err != nil || len(hidden) != 2 || hidden[0].ID != unpaid.ID {
+		t.Errorf("Hidden = %d rows, %v; want both, newest first", len(hidden), err)
+	}
+
+	if h, ok, err := store.HidingOf(t.Context(), test.ID); err != nil || !ok || !h.HiddenAt.Equal(now) {
+		t.Errorf("HidingOf = %+v, %v, %v", h, ok, err)
+	}
+
+	if err := store.Unhide(t.Context(), test.ID); err != nil {
+		t.Fatalf("Unhide: %v", err)
+	}
+
+	if listed, _ := store.ByForm(t.Context(), lunch); len(listed) != 2 {
+		t.Errorf("after unhiding, ByForm = %d rows, want 2", len(listed))
+	}
+
+	if _, ok, _ := store.HidingOf(t.Context(), test.ID); ok {
+		t.Error("the hiding is still there after Unhide")
+	}
+
+	if err := store.Unhide(t.Context(), test.ID); err != nil {
+		t.Errorf("unhiding what is not hidden = %v, want nothing", err)
+	}
+}

@@ -19,6 +19,11 @@
 //	GET /forms/{slug}/submissions.csv   the same
 //	GET /forms/{slug}/submissions/{id}  the same
 //
+// Nothing here changes a submission. The Hide and Unhide buttons on a
+// submission's page post to hideapp, behind admin, and are shown only to an
+// account that holds it -- a results reader sees that a row is hidden and
+// cannot change it.
+//
 // The role is results rather than admin throughout. Reading the numbers is not
 // editing the price, and the person counting lunches should not have to be
 // able to change what a ticket costs.
@@ -51,6 +56,7 @@ import (
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/domain/form/stores/formtoml"
 	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
+	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/business/types"
 	"github.com/jroedel/dropin-forms/foundation/web"
 )
@@ -71,16 +77,33 @@ type Forms interface {
 
 // Submissions is the slice of the submission domain this app needs. Read-only:
 // nothing here changes a submission, which is why Settle is absent.
+//
+// ByForm leaves out hidden submissions, so the list, its totals, the CSV and
+// the index counts do too without a line here saying so. Hidden and HidingOf
+// are the two ways back to them.
 type Submissions interface {
 	ByForm(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error)
 	ByID(ctx context.Context, id types.ID) (submissionbus.Submission, error)
+	Hidden(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error)
+	HidingOf(ctx context.Context, id types.ID) (submissionbus.Hiding, bool, error)
 }
 
 // Grants answers which forms an account may reach, for the index page. The
 // per-route check is the middleware's job; this is only for deciding what to
 // list.
+//
+// Allowed is for one decision on one page: whether to show the Hide button.
+// The route it posts to has its own gate, so a wrong answer here is a button
+// that is refused, never a write that is allowed.
 type Grants interface {
 	ForUser(ctx context.Context, userID types.ID) ([]accessbus.Grant, error)
+	Allowed(ctx context.Context, userID types.ID, form types.Slug, want accessbus.Role) (bool, error)
+}
+
+// Accounts names whoever hid a submission, so the page says a person rather
+// than an identifier.
+type Accounts interface {
+	ByID(ctx context.Context, id types.ID) (userbus.User, error)
 }
 
 // Drafts is every authored definition, published or not, which is a different
@@ -113,7 +136,12 @@ type Config struct {
 	Forms       Forms
 	Submissions Submissions
 	Grants      Grants
+	Accounts    Accounts
 	Render      *page.Renderer
+
+	// CanHide says the routes that hide a submission are mounted. Without
+	// them the page draws no button, rather than one that answers 404.
+	CanHide bool
 
 	// Notifications is optional. Without it the list simply does not mention
 	// email, which is right for an installation that cannot record the
@@ -394,6 +422,12 @@ type listView struct {
 	// Summary is the answer to the question somebody actually came with: how
 	// many, how much, and how much of it is still owed.
 	Summary summaryView
+
+	// Hidden is how many submissions are out of the list, and ShowingHidden
+	// says this page is the list of them instead. A count rather than nothing,
+	// so somebody who cannot find an order is told where it might be.
+	Hidden        int
+	ShowingHidden bool
 }
 
 type rowView struct {
@@ -439,11 +473,27 @@ func (a app) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	hidden, err := a.cfg.Submissions.Hidden(r.Context(), f.ID)
+	if err != nil {
+		a.oops(w, r, "the hidden submissions could not be listed", err)
+
+		return
+	}
+
 	view := listView{
 		Form:    f,
 		FormID:  f.ID.String(),
 		Columns: columnsOf(f),
 		Summary: summarise(f, subs),
+		Hidden:  len(hidden),
+	}
+
+	// The hidden ones, instead of the rest, with the totals still those of
+	// the rest: the summary is what to cater for, and a hidden row is by
+	// definition not in it.
+	if r.URL.Query().Get("hidden") != "" {
+		view.ShowingHidden = true
+		subs = hidden
 	}
 
 	for _, s := range subs {
@@ -473,6 +523,14 @@ type oneView struct {
 
 	Answers []answerView
 	Lines   []lineView
+
+	// Hidden says the submission is out of every list, and who took it out
+	// and when. CanHide is whether this reader may change that, which decides
+	// only whether the button is drawn.
+	Hidden   bool
+	HiddenBy string
+	HiddenAt string
+	CanHide  bool
 }
 
 type answerView struct {
@@ -561,7 +619,48 @@ func (a app) one(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	a.hiding(r, s, &view)
+
 	a.cfg.Render.Render(w, r, http.StatusOK, "submission", view)
+}
+
+// hiding fills in whether a submission is hidden and whether this reader may
+// change it.
+//
+// Failures are logged and the page is rendered without the answer rather than
+// refused: a reader who came to look up an order should see it, and not being
+// told it is hidden costs them a sentence, not the order.
+func (a app) hiding(r *http.Request, s submissionbus.Submission, view *oneView) {
+	log := func(what string, err error) {
+		a.cfg.Log.Error(what,
+			"request_id", web.RequestIDFrom(r.Context()), "submission_id", s.ID.String(), "error", err)
+	}
+
+	h, hidden, err := a.cfg.Submissions.HidingOf(r.Context(), s.ID)
+	if err != nil {
+		log("whether the submission is hidden could not be read", err)
+	}
+
+	if hidden {
+		view.Hidden = true
+		view.HiddenAt = h.HiddenAt.Local().Format("Monday 2 January 2006, 15:04")
+		view.HiddenBy = "somebody"
+
+		if a.cfg.Accounts != nil && !h.HiddenBy.Zero() {
+			if u, err := a.cfg.Accounts.ByID(r.Context(), h.HiddenBy); err == nil {
+				view.HiddenBy = u.Email.String()
+			}
+		}
+	}
+
+	if me, ok := mid.UserFrom(r.Context()); ok && a.cfg.CanHide {
+		allowed, err := a.cfg.Grants.Allowed(r.Context(), me.ID, s.Form, accessbus.RoleAdmin)
+		if err != nil {
+			log("whether the reader may hide the submission could not be read", err)
+		}
+
+		view.CanHide = allowed
+	}
 }
 
 // export writes the CSV.
