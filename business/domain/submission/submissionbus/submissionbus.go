@@ -106,6 +106,12 @@ func (s Status) String() string { return string(s) }
 // collect money for it twice.
 func (s Status) Settled() bool { return s == StatusReceived || s == StatusPaid }
 
+// SettledStatuses is every status [Status.Settled] reports true for, for a
+// store that has to write the same rule into a query.
+func SettledStatuses() []Status {
+	return slices.DeleteFunc(slices.Clone(statuses), func(s Status) bool { return !s.Settled() })
+}
+
 // Submission is an accepted submission.
 type Submission struct {
 	ID   types.ID
@@ -190,6 +196,12 @@ type Storer interface {
 
 	ByID(ctx context.Context, id types.ID) (Submission, error)
 	ByForm(ctx context.Context, form types.Slug) ([]Submission, error)
+
+	// Settled lists at most limit of a form's settled submissions, newest
+	// first. Bounded in the query rather than by the caller, because the
+	// caller is a public page and reading every row a form has ever taken to
+	// show fifty of them is a cost any stranger can make us pay per reload.
+	Settled(ctx context.Context, form types.Slug, limit int) ([]Submission, error)
 
 	// CountSince is how many submissions a form has taken since an instant,
 	// which is what a daily cap is measured against.
@@ -344,6 +356,28 @@ func (b *Business) ByForm(ctx context.Context, form types.Slug) ([]Submission, e
 	out, err := b.store.ByForm(ctx, form)
 	if err != nil {
 		return nil, fmt.Errorf("listing the submissions: %w", err)
+	}
+
+	return out, nil
+}
+
+// Recent lists at most limit of a form's settled submissions, newest first,
+// for the list a form shows of its earlier answers beneath itself.
+//
+// Settled, and that is the rule this exists to state. The list is read on the
+// public page as "these people are down for this", and an order that reached
+// the checkout page and was closed is somebody who is not: printing their name
+// under a sign-up form would be telling the next person a place is taken that
+// is not. A free submission is settled on arrival, so on a form that sells
+// nothing this is simply every submission.
+func (b *Business) Recent(ctx context.Context, form types.Slug, limit int) ([]Submission, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	out, err := b.store.Settled(ctx, form, limit)
+	if err != nil {
+		return nil, fmt.Errorf("listing the recent submissions: %w", err)
 	}
 
 	return out, nil

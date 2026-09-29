@@ -38,6 +38,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
@@ -230,6 +231,50 @@ func (s *Store) ByForm(ctx context.Context, form types.Slug) ([]submissionbus.Su
 	const q = selectColumns + ` WHERE form_slug = ? ORDER BY created_at DESC, id`
 
 	rows, err := s.db.QueryContext(ctx, q, form.String())
+	if err != nil {
+		return nil, fmt.Errorf("querying the submissions: %w", err)
+	}
+	defer rows.Close()
+
+	var out []submissionbus.Submission
+	for rows.Next() {
+		sub, err := scan(rows)
+		if err != nil {
+			return nil, fmt.Errorf("reading a submission: %w", err)
+		}
+
+		out = append(out, sub)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading the submissions: %w", err)
+	}
+
+	return out, nil
+}
+
+// Settled lists at most limit of a form's settled submissions, newest first.
+//
+// Walks the (form_slug, created_at) index in order and stops at the limit, so
+// the cost is the rows shown plus whatever unsettled ones lie between them --
+// not every row the form has ever taken, which is what ByForm reads.
+//
+// The statuses come from submissionbus.SettledStatuses rather than being
+// written into the SQL, so that what "settled" means is stated in one place,
+// beside Status.Settled, and a status added there cannot be forgotten here.
+func (s *Store) Settled(ctx context.Context, form types.Slug, limit int) ([]submissionbus.Submission, error) {
+	settled := submissionbus.SettledStatuses()
+
+	args := []any{form.String()}
+	for _, st := range settled {
+		args = append(args, st.String())
+	}
+	args = append(args, limit)
+
+	q := selectColumns + ` WHERE form_slug = ? AND status IN (?` + strings.Repeat(", ?", len(settled)-1) +
+		`) ORDER BY created_at DESC, id LIMIT ?`
+
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("querying the submissions: %w", err)
 	}

@@ -211,8 +211,19 @@ type form struct {
 	Confirmation string   `toml:"confirmation"`
 	Notify       []string `toml:"notify"`
 
+	// Listing is the optional [listing] table: the earlier answers shown
+	// beneath the form. See formbus.Listing for what it publishes and why
+	// some fields may not be named in it.
+	Listing listing `toml:"listing"`
+
 	Fields []field `toml:"field"`
 	Items  []item  `toml:"item"`
+}
+
+type listing struct {
+	Heading string `toml:"heading"`
+	Line    string `toml:"line"`
+	Limit   int    `toml:"limit"`
 }
 
 type field struct {
@@ -278,6 +289,11 @@ func (w form) toForm() (formbus.Form, error) {
 		Confirmation:    w.Confirmation,
 		Notify:          w.Notify,
 		ReturnURL:       w.ReturnURL,
+		Listing: formbus.Listing{
+			Heading: w.Listing.Heading,
+			Line:    w.Listing.Line,
+			Limit:   w.Listing.Limit,
+		},
 	}
 
 	slug, err := types.ParseSlug(w.ID)

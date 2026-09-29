@@ -86,6 +86,12 @@ type fieldView struct {
 	ShowIfField  string
 	ShowIfValues string
 
+	// Public is set when the form's list of earlier answers shows this field,
+	// and the template says so beside it. Derived here from the definition
+	// rather than left to the template, so there is no way to publish a field
+	// without the sentence appearing.
+	Public bool
+
 	// Value and Values are what to put back after a refusal.
 	Value  string
 	Values []string
@@ -132,9 +138,11 @@ const conditionSeparator = "\x1f"
 // viewFields turns the definition's fields into what the template renders.
 func viewFields(f formbus.Form, values formbus.Values, problems formbus.Invalid) []fieldView {
 	out := make([]fieldView, 0, len(f.Fields))
+	public := f.Listed()
 
 	for _, fld := range f.Fields {
 		v := fieldView{
+			Public:       public[fld.Name],
 			Name:         fld.Name,
 			Label:        fld.Label,
 			Help:         fld.Help,

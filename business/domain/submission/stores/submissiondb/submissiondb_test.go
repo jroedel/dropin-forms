@@ -356,6 +356,57 @@ func TestByFormIsNewestFirstAndScoped(t *testing.T) {
 	}
 }
 
+// Settled is what the public list beneath a form reads, so what it must not
+// do is show an order nobody paid for, or read past the number asked for.
+func TestSettledIsNewestFirstBoundedAndSkipsTheUnpaid(t *testing.T) {
+	_, store := open(t)
+
+	lunch := mustSlug(t, "feast-lunch-2026")
+
+	statuses := []submissionbus.Status{
+		submissionbus.StatusReceived, // oldest
+		submissionbus.StatusPending,
+		submissionbus.StatusPaid,
+		submissionbus.StatusFailed,
+		submissionbus.StatusReceived, // newest
+	}
+
+	for i, st := range statuses {
+		sub := sample(t)
+		sub.Status = st
+		sub.CreatedAt = now.Add(time.Duration(i) * time.Minute)
+		sub.UpdatedAt = sub.CreatedAt
+
+		if _, err := store.Accept(t.Context(), sub, string(rune('a'+i))); err != nil {
+			t.Fatalf("Accept: %v", err)
+		}
+	}
+
+	got, err := store.Settled(t.Context(), lunch, 10)
+	if err != nil {
+		t.Fatalf("Settled: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("%d settled submissions, want 3", len(got))
+	}
+	for i, s := range got {
+		if !s.Status.Settled() {
+			t.Errorf("submission %d is %s, which is not settled", i, s.Status)
+		}
+		if i > 0 && s.CreatedAt.After(got[i-1].CreatedAt) {
+			t.Errorf("submission %d is newer than the one before it", i)
+		}
+	}
+
+	two, err := store.Settled(t.Context(), lunch, 2)
+	if err != nil {
+		t.Fatalf("Settled: %v", err)
+	}
+	if len(two) != 2 || !two[0].CreatedAt.Equal(now.Add(4*time.Minute)) || two[1].Status != submissionbus.StatusPaid {
+		t.Errorf("Settled with a limit of 2 = %d rows, want the newest received and then the paid one", len(two))
+	}
+}
+
 func TestSetStatusRecordsThePayment(t *testing.T) {
 	_, store := open(t)
 	sub := sample(t)

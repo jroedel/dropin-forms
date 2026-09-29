@@ -94,8 +94,14 @@ type Forms interface {
 }
 
 // Submissions is the slice of the submission domain this app needs.
+//
+// Recent is the one read on a surface that otherwise only writes, and it is
+// here for a form whose list of earlier answers is on: submissionbus decides
+// which submissions count as settled enough to show, and formbus decides what
+// of each is shown. This app renders what those two hand it.
 type Submissions interface {
 	Accept(ctx context.Context, now time.Time, g formbus.Grant, ns submissionbus.New) (submissionbus.Submission, error)
+	Recent(ctx context.Context, form types.Slug, limit int) ([]submissionbus.Submission, error)
 }
 
 // Payments is the slice of the payment domain this app needs: it starts a
@@ -391,6 +397,17 @@ type formView struct {
 	// which owns the table, so that a price beside a field and a price inside
 	// a violation are written the same way.
 	Symbol string
+
+	// Listing is the earlier answers shown beneath the form, or nil when the
+	// form has no list -- or has one that could not be read this time.
+	Listing *listingView
+}
+
+// listingView is the list of earlier answers, each already written out as the
+// line the author's template makes of it.
+type listingView struct {
+	Heading string
+	Lines   []string
 }
 
 // blank renders an empty form and mints the grant it will be submitted with.
@@ -914,7 +931,42 @@ func (a app) render(
 		OrderProblems: problems.For(""),
 		Problems:      problems,
 		Note:          note,
+		Listing:       a.listing(r, f),
 	})
+}
+
+// listing reads the earlier answers a form shows beneath itself.
+//
+// A failure is logged and the page is rendered without the list rather than
+// refused. The form is the thing somebody came to fill in, and a database
+// hiccup reading a list of names is not a reason to stop them: the list is
+// what the next reload is for. The alternative -- a 500 in place of a working
+// form -- trades a missing paragraph for a missing booking.
+func (a app) listing(r *http.Request, f formbus.Form) *listingView {
+	if !f.Listing.On() {
+		return nil
+	}
+
+	subs, err := a.cfg.Submissions.Recent(r.Context(), f.ID, f.Listing.Shown())
+	if err != nil {
+		a.cfg.Log.Error("the earlier answers could not be read",
+			"request_id", web.RequestIDFrom(r.Context()), "form", f.ID.String(), "error", err)
+
+		return nil
+	}
+
+	view := &listingView{Heading: f.Listing.Heading}
+	if view.Heading == "" {
+		view.Heading = "Already signed up"
+	}
+
+	for _, s := range subs {
+		if line := f.ListLine(s.Answers); line != "" {
+			view.Lines = append(view.Lines, line)
+		}
+	}
+
+	return view
 }
 
 func (a app) closed(w http.ResponseWriter, r *http.Request, f formbus.Form, now time.Time) {

@@ -85,6 +85,23 @@ func (m *memStore) ByForm(_ context.Context, form types.Slug) ([]submissionbus.S
 	return out, nil
 }
 
+func (m *memStore) Settled(_ context.Context, form types.Slug, limit int) ([]submissionbus.Submission, error) {
+	if m.fail != nil {
+		return nil, m.fail
+	}
+
+	var out []submissionbus.Submission
+	for _, s := range m.subs {
+		if s.Form == form && s.Status.Settled() {
+			out = append(out, s)
+		}
+	}
+
+	slices.SortFunc(out, func(a, b submissionbus.Submission) int { return b.CreatedAt.Compare(a.CreatedAt) })
+
+	return out[:min(limit, len(out))], nil
+}
+
 func (m *memStore) Unpaid(_ context.Context, from, before time.Time) ([]submissionbus.Submission, error) {
 	if m.fail != nil {
 		return nil, m.fail
@@ -336,6 +353,32 @@ func TestAcceptRefusesWhatCannotBeASubmission(t *testing.T) {
 
 	if _, err := b.Accept(t.Context(), now, grantFor(a, "n"), submissionbus.New{Answers: noVersion}); err == nil {
 		t.Error("accepted a submission with no version")
+	}
+}
+
+// SettledStatuses is what a store writes into its query, so it has to be
+// exactly the statuses Settled says yes to -- no more, which would publish an
+// abandoned order, and no fewer, which would hide a paid one.
+func TestSettledStatusesAgreesWithSettled(t *testing.T) {
+	got := submissionbus.SettledStatuses()
+
+	for _, s := range []submissionbus.Status{
+		submissionbus.StatusReceived, submissionbus.StatusPending,
+		submissionbus.StatusPaid, submissionbus.StatusFailed,
+	} {
+		if slices.Contains(got, s) != s.Settled() {
+			t.Errorf("SettledStatuses contains %s = %v, but Settled = %v", s, !s.Settled(), s.Settled())
+		}
+	}
+}
+
+func TestRecentAsksForNothingWhenNothingIsWanted(t *testing.T) {
+	bus, store := newBusiness()
+	store.fail = errors.New("the store was read")
+
+	got, err := bus.Recent(t.Context(), mustSlug(t, "feast-lunch-2026"), 0)
+	if err != nil || got != nil {
+		t.Errorf("Recent with no limit = %v, %v; want nothing, and no read", got, err)
 	}
 }
 

@@ -322,6 +322,11 @@ func settingsSummary(f formbus.Form) []settingRow {
 		rows = append(rows, set("Submissions a day", strconv.Itoa(f.DailyCap)))
 	}
 
+	if f.Listing.On() {
+		rows = append(rows, set("Shows beneath it, publicly",
+			fmt.Sprintf("the newest %d, each as %s", f.Listing.Shown(), f.Listing.Line)))
+	}
+
 	return rows
 }
 

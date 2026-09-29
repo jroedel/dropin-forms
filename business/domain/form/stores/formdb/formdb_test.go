@@ -124,6 +124,8 @@ func full(t *testing.T) formbus.Form {
 			},
 		},
 
+		Listing: formbus.Listing{Heading: "Who is coming", Line: "Somebody at the {sitting} sitting", Limit: 20},
+
 		Items: []formbus.Item{
 			{ID: "adult", Label: "Adult", Note: "Two courses", Price: types.Money(1500), Max: 8},
 			{ID: "child", Label: "Child", Price: types.Money(0)},
@@ -198,6 +200,10 @@ func TestADefinitionSurvivesTheRoundTrip(t *testing.T) {
 	// lost -- and losing it means selling something for nothing.
 	if got.Form.Items[1].ID != "child" || got.Form.Items[1].Price != 0 {
 		t.Errorf("the free item read back as %+v", got.Form.Items[1])
+	}
+
+	if got.Form.Listing != want.Listing {
+		t.Errorf("listing = %+v, want %+v", got.Form.Listing, want.Listing)
 	}
 
 	if !got.Live || !got.PublishedAt.Equal(now) {

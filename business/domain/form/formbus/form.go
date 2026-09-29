@@ -27,6 +27,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"net/url"
 	"regexp"
 	"slices"
@@ -342,6 +343,11 @@ type Form struct {
 	// hurry must not invalidate every half-filled form already open in
 	// somebody's browser.
 	DailyCap int
+
+	// Listing is what the form shows of its earlier submissions beneath
+	// itself. Off unless its Line is set; see [Listing]. Which fields it
+	// names is in the fingerprint, and [Form.Fingerprint] says why.
+	Listing Listing
 }
 
 // Currencies this service will take. One, today. The list exists so that
@@ -463,6 +469,7 @@ func (f *Form) Check() error {
 
 	p = append(p, f.checkFields()...)
 	p = append(p, f.checkItems()...)
+	p = append(p, f.checkListing()...)
 
 	if len(p) > 0 {
 		return DefinitionError{FormID: f.ID.String(), Problems: p}
@@ -1011,6 +1018,22 @@ func (f Form) Fingerprint() string {
 		write("item", it.ID)
 		num(int64(it.Price))
 		num(int64(it.Max))
+	}
+
+	// Which answers are published is part of what a submission means: the
+	// person was told, beside each field, whether it would be shown. So
+	// switching the list on, or naming a further field in it, re-renders
+	// every tab already open, and nobody submits under a page that did not
+	// say so. The names are hashed rather than the line: the words around
+	// them, the heading and the limit change nothing anybody agreed to, and
+	// fixing a typo in "bringing" must not throw away half-filled forms.
+	//
+	// Written only when the list is on, so that every form without one keeps
+	// the version it had and no half-filled tab is thrown away by the release
+	// that added this.
+	if f.Listing.On() {
+		write("listing")
+		write(slices.Sorted(maps.Keys(f.Listed()))...)
 	}
 
 	return hex.EncodeToString(h.Sum(nil))[:12]

@@ -1838,6 +1838,58 @@ ticket price rises on 10 October. That stays one edit to `price` in
 and the builder refuses to edit a built-in, so §13's settled decision is
 untouched and still the only way it happens.
 
+### Earlier answers beneath a form, as built
+
+A form can show what has already been sent, under itself: a sign-up sheet, a
+"who is bringing what". It is `formbus.Listing` — a heading, a limit, and a
+line such as `{name} — bringing {dish}` — set on the settings page or in a
+`[listing]` table in TOML. An empty line means no list.
+
+**One line per submission, from a template, rather than a table of chosen
+columns.** What somebody wants to read on a parish page is a sentence, and a
+table with a "Name" heading and a "Dish" heading is that sentence taken apart.
+The template is also the whole of the choice about which fields appear, so
+there is no second setting that can disagree with it. There is no escape for a
+literal brace; a brace that does not open a placeholder naming a question is a
+`Check` problem, so a typo is refused on the settings page rather than printed
+as `{nmae}` on somebody else's website.
+
+**It publishes what people typed, so three things are enforced rather than
+advised.** Every field the line names carries a sentence beside it on the form
+saying that the answer will be shown; `viewFields` derives that from
+`Form.Listed`, so no field can be published without it. Email and telephone
+fields cannot be named at all — an address on a public page belongs to the
+next robot to crawl it. And *which* fields are named is in the fingerprint, so
+switching the list on re-renders every tab already open, and nobody submits
+under a page that did not tell them. The line's wording, the heading and the
+limit are not: fixing a typo in "bringing" must not throw away half-filled
+forms, and a form without a list keeps the version it had before this shipped.
+
+**Only settled submissions are listed.** `submissionbus.Recent` reads through
+`SettledStatuses`, the same rule `Status.Settled` states, so an order abandoned
+at the checkout page never appears as though it were a booking. On a form that
+sells nothing every submission is settled on arrival.
+
+**Bounded in the query, not by the caller.** The page is unauthenticated, and
+each view of it reads the list. `submissiondb.Settled` walks the
+`(form_slug, created_at)` index with a `LIMIT` (fifty by default, at most five
+hundred), rather than reading every row the form has taken the way the admin
+listing does.
+
+**Values are written the way a person reads them,** by `Form.ListLine` against
+today's definition: an option by its current label (or, if the option has
+since been removed, by what was stored), a ticked box as "yes", an amount in
+the form's currency, a paragraph folded onto one line. `html/template` escapes
+the result like any other string.
+
+**A failure to read the list renders the form without it.** The form is what
+somebody came to fill in; a 500 in its place would trade a missing paragraph
+for a missing booking. It is logged.
+
+What it does not do: the list is not shown on the closed page or on the
+confirmation, and on a form that sells, a buyer appears only once Stripe's
+webhook has confirmed the payment.
+
 ## 10. Dependencies
 
 A dependency needs a comment naming the standard-library answer that was
