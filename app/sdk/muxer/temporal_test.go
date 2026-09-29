@@ -150,7 +150,7 @@ func TestTheBuilderAddsTemporalFields(t *testing.T) {
 		}
 
 		w := a.post(t, "/forms/supper-2026/edit/fields", url.Values{
-			"name": {string(kind) + "_asked"}, "label": {label}, "kind": {string(kind)},
+			"label": {label}, "kind": {string(kind)},
 		}, cookie)
 		if w.Code != http.StatusSeeOther {
 			t.Errorf("adding a %s field = %d:\n%s", kind, w.Code, w.Body)
@@ -222,12 +222,12 @@ func TestTheBuilderSetsADatetimeRange(t *testing.T) {
 	made(t, a, cookie, "supper-2026", "Parish supper")
 
 	if w := a.post(t, "/forms/supper-2026/edit/fields", url.Values{
-		"name": {"slot"}, "label": {"Your appointment"}, "kind": {"datetime"},
+		"label": {"Your appointment"}, "kind": {"datetime"},
 	}, cookie); w.Code != http.StatusSeeOther {
 		t.Fatalf("adding the field = %d:\n%s", w.Code, w.Body)
 	}
 
-	w := a.post(t, "/forms/supper-2026/edit/fields/slot", url.Values{
+	w := a.post(t, "/forms/supper-2026/edit/fields/datetime_1", url.Values{
 		"label": {"Your appointment"}, "kind": {"datetime"},
 		"earliest": {"2026-09-30"}, "latest": {"2026-10-13 18:00"},
 	}, cookie)
@@ -240,11 +240,11 @@ func TestTheBuilderSetsADatetimeRange(t *testing.T) {
 		t.Fatalf("Draft: %v", err)
 	}
 
-	if fld, _ := s.Form.Field("slot"); fld.Earliest != "2026-09-30" || fld.Latest != "2026-10-13T18:00" {
+	if fld, _ := s.Form.Field("datetime_1"); fld.Earliest != "2026-09-30" || fld.Latest != "2026-10-13T18:00" {
 		t.Errorf("stored %q to %q, want 2026-09-30 to 2026-10-13T18:00", fld.Earliest, fld.Latest)
 	}
 
-	w = a.post(t, "/forms/supper-2026/edit/fields/slot", url.Values{
+	w = a.post(t, "/forms/supper-2026/edit/fields/datetime_1", url.Values{
 		"label": {"Your appointment"}, "kind": {"datetime"}, "earliest": {"30/09/2026"},
 	}, cookie)
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "a day like 2026-10-13") {

@@ -356,6 +356,12 @@ type Form struct {
 	// somebody's browser.
 	DailyCap int
 
+	// Retired are field names and item ids this form has used and removed,
+	// which no new field or item may be given -- see names.go for why. Not in
+	// the fingerprint: it changes nothing about what a submission means, only
+	// what the builder will name the next question.
+	Retired []string
+
 	// Listing is what the form shows of its earlier submissions beneath
 	// itself. Off unless its Line is set; see [Listing]. Which fields it
 	// names is in the fingerprint, and [Form.Fingerprint] says why.
@@ -482,6 +488,17 @@ func (f *Form) Check() error {
 	p = append(p, f.checkFields()...)
 	p = append(p, f.checkItems()...)
 	p = append(p, f.checkListing()...)
+
+	// The invariant names.go exists for, held here as well as by the builder
+	// so that no store and no hand-edited document can break it quietly.
+	for _, name := range f.Retired {
+		if _, ok := f.Field(name); ok {
+			add("its field %q has a name this form has already used and removed; answers to the old one would be read as answers to it", name)
+		}
+		if _, ok := f.Item(name); ok {
+			add("its item %q has an id this form has already used and removed; orders for the old one would be counted as orders for it", name)
+		}
+	}
 
 	if len(p) > 0 {
 		return DefinitionError{FormID: f.ID.String(), Problems: p}

@@ -466,18 +466,21 @@ button:disabled {
   font-weight: 400;
 }
 
-/* A question's page shows only the settings its kind uses. Each <option> in
-   the kind dropdown carries a class for every group of settings that kind
-   uses (formapp's kindChoice), and a group is hidden while the checked option
-   lacks its class -- so the page follows the dropdown with no script. Hidden
-   boxes are still submitted; saveField ignores the ones the kind cannot use.
-   Without :has() nothing here matches and every group shows. */
-form:has(#kind option:checked:not(.has-options)) .uses-options,
-form:has(#kind option:checked:not(.textual)) .uses-text,
-form:has(#kind option:checked:not(.bounded)) .uses-bounds,
-form:has(#kind option:checked:not(.temporal)) .uses-range,
-form:has(#kind option:checked:not(.money)) .if-money,
-form:has(#kind option.money:checked) .if-count {
+/* The add-a-question form shows its choices box only while a kind that takes
+   choices is picked. Each <option> in the kind dropdown carries has-options
+   when its kind does (formapp's kindChoice), and the box is hidden while the
+   checked option lacks it -- so the form follows the dropdown with no script.
+   The hidden box is still submitted; addField ignores it for a kind that
+   takes none. Without :has() nothing here matches and the box shows. A
+   question's own page needs none of this: its kind is fixed, so it renders
+   only that kind's settings. */
+form:has(#kind option:checked:not(.has-options)) .uses-options {
+  display: none;
+}
+
+/* The "We need to collect money" box on a form's page reveals the form for
+   adding something for sale. Same mechanism, same fallback. */
+main:has(#collects-money:not(:checked)) .if-collects-money {
   display: none;
 }
 

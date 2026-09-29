@@ -52,9 +52,10 @@ type fieldView struct {
 	ShowIfField string
 	ShowIfIs    string
 
-	// Kinds is every kind this service can validate, in formbus's own order,
-	// which its comment says is the order a builder should offer them in.
-	Kinds []kindChoice
+	// Uses is this field's own kind: its wording, and which of the page's
+	// settings it takes. One kind rather than the dropdown's every kind,
+	// because the kind is fixed once the field exists -- see saveField.
+	Uses kindChoice
 
 	// Earlier is the fields this one may be shown conditionally on: the ones
 	// above it, because a condition may only name an earlier field and that is
@@ -68,12 +69,12 @@ type fieldView struct {
 // kindChoice is one entry in the kind dropdown: the value the domain uses,
 // a sentence for a person, and which of the page's settings that kind uses.
 //
-// The last five are what hide the settings a kind has no use for. They are
-// written onto each <option> as classes, and the stylesheet hides a section
-// when the option that is checked does not carry its class -- so the page
-// changes as the dropdown does, with no script, which the CSP forbids anyway.
-// Carrying them on every option rather than once for the saved kind is the
-// point: the selection that matters is the one on screen, not the one stored. The sentence is here rather than on formbus.Kind
+// The last five say which settings a kind has any use for. On a question's own
+// page the kind is fixed, so they decide which sections are rendered at all.
+// On the add-a-question form they are written onto each <option> as classes,
+// and the stylesheet hides the choices box while the option that is checked
+// does not carry has-options -- so the form follows the dropdown with no
+// script, which the CSP forbids anyway. The sentence is here rather than on formbus.Kind
 // because it is wording, and the business package should not be where a
 // wording change is made -- the same line peopleapp draws for a role.
 type kindChoice struct {
@@ -90,8 +91,10 @@ type kindChoice struct {
 
 // addField appends a field and goes to its page.
 //
-// The three things a field cannot be created without are asked for here: a
-// name, a label and a kind. A kind that needs a list of options asks for that
+// The two things a field cannot be created without are asked for here: a
+// label and a kind. The name is not asked for at all -- it is the kind and a
+// number, from formbus.NextFieldName, which says why. A kind that needs a list
+// of options asks for that
 // too, and the reason is the live/draft bargain in the package comment -- on a
 // form that is already on the web, a save that would leave it unusable is
 // refused, and an option-less dropdown is exactly that. Asking for the options
@@ -111,19 +114,28 @@ func (a app) addField(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fld := formbus.Field{
-		Name:     value(r, "name"),
 		Label:    value(r, "label"),
 		Kind:     formbus.Kind(value(r, "kind")),
 		Required: checked(r, "required"),
-		Options:  parseOptions(r.PostFormValue("options")),
 	}
 
-	if _, taken := s.Form.Field(fld.Name); taken {
-		a.show(w, r, http.StatusConflict, s, buildView{
-			Problem: "There is already a field called " + fld.Name + " on this form.",
+	// Refused here rather than left to Check, because an unknown kind would
+	// otherwise be given a name built from whatever was posted.
+	if !fld.Kind.Known() {
+		a.show(w, r, http.StatusBadRequest, s, buildView{
+			Problem: "Choose what sort of answer it takes.",
 		})
 
 		return
+	}
+
+	fld.Name = s.Form.NextFieldName(fld.Kind)
+
+	// Options only for a kind that has them. The box is hidden for the
+	// others but still submitted, and Check refuses options on a text field
+	// -- which would refuse the save over a box nobody could see.
+	if fld.Kind.HasOptions() {
+		fld.Options = parseOptions(r.PostFormValue("options"))
 	}
 
 	f := s.Form
@@ -189,7 +201,7 @@ func fieldOf(s formbus.Stored, fld formbus.Field, at int) fieldView {
 		Earliest:     fld.Earliest,
 		Latest:       fld.Latest,
 		Options:      writeOptions(fld.Options),
-		Kinds:        kindsFor(fld.Kind),
+		Uses:         kindOf(fld.Kind),
 	}
 
 	if fld.ShowIf != nil {
@@ -230,14 +242,17 @@ func (a app) saveField(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The name is not read from the request. It keys the route and it keys
-	// every answer already collected under it; a rename would have to rewrite
-	// the submissions, and a form builder that can silently orphan a column is
-	// not one anybody should have.
+	// Neither the name nor the kind is read from the request. The name keys
+	// the route and every answer already collected under it; a rename would
+	// have to rewrite the submissions. The kind is fixed for a reason of the
+	// same shape: answers already stored were checked as that kind, and a
+	// question that has collected "yes" and "no" does not become a date. It
+	// also keeps the page simple -- one kind's settings, not every kind's --
+	// and the page says to remove the question and add a new one instead.
 	fld := formbus.Field{
 		Name:         was.Name,
 		Label:        value(r, "label"),
-		Kind:         formbus.Kind(value(r, "kind")),
+		Kind:         was.Kind,
 		Required:     checked(r, "required"),
 		Help:         value(r, "help"),
 		Placeholder:  value(r, "placeholder"),
@@ -418,6 +433,8 @@ func (a app) removeField(w http.ResponseWriter, r *http.Request) {
 
 	f := s.Form
 	f.Fields = slices.Delete(slices.Clone(f.Fields), at, at+1)
+	f.Retired = slices.Clone(f.Retired)
+	f.Retire(fld.Name)
 
 	problems, ok := a.save(w, r, f, s.Live)
 	if !ok {
@@ -493,20 +510,27 @@ func kindsFor(selected formbus.Kind) []kindChoice {
 	out := make([]kindChoice, 0, len(all))
 
 	for _, k := range all {
-		out = append(out, kindChoice{
-			Value:    string(k),
-			Label:    describeKind(k),
-			Selected: k == selected,
+		c := kindOf(k)
+		c.Selected = k == selected
 
-			HasOptions: k.HasOptions(),
-			Bounded:    k.Bounded(),
-			Textual:    k.Textual(),
-			Temporal:   k.Temporal(),
-			Money:      k == formbus.KindAmount,
-		})
+		out = append(out, c)
 	}
 
 	return out
+}
+
+// kindOf is one kind's wording and which of the settings it takes.
+func kindOf(k formbus.Kind) kindChoice {
+	return kindChoice{
+		Value: string(k),
+		Label: describeKind(k),
+
+		HasOptions: k.HasOptions(),
+		Bounded:    k.Bounded(),
+		Textual:    k.Textual(),
+		Temporal:   k.Temporal(),
+		Money:      k == formbus.KindAmount,
+	}
 }
 
 // describeKind is the wording for each kind. A kind with no sentence written

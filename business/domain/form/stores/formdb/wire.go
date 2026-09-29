@@ -49,6 +49,10 @@ type definition struct {
 	// does not use it, rather than refusing all of them.
 	Listing listing `json:"listing,omitzero"`
 
+	// Retired is the names the builder must never hand out again. omitzero,
+	// so a form nobody has removed anything from writes no key.
+	Retired []string `json:"retired,omitzero"`
+
 	Fields []field `json:"fields,omitzero"`
 	Items  []item  `json:"items,omitzero"`
 }
@@ -129,6 +133,7 @@ func encode(f formbus.Form) (string, error) {
 		DailyCap:        f.DailyCap,
 		Confirmation:    f.Confirmation,
 		Notify:          f.Notify,
+		Retired:         f.Retired,
 		Listing: listing{
 			Heading: f.Listing.Heading,
 			Line:    f.Listing.Line,
@@ -227,6 +232,7 @@ func decode(body string) (formbus.Form, error) {
 		DailyCap:        w.DailyCap,
 		Confirmation:    w.Confirmation,
 		Notify:          w.Notify,
+		Retired:         w.Retired,
 		Listing: formbus.Listing{
 			Heading: w.Listing.Heading,
 			Line:    w.Listing.Line,
