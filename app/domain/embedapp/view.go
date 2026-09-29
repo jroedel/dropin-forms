@@ -59,6 +59,11 @@ type fieldView struct {
 	// definition loader refuses a pattern without one.
 	PatternNote string
 
+	// RangeNote is a date or time field's earliest and latest in words, for
+	// the same reason: a browser that draws a text box instead of a picker
+	// shows no range at all.
+	RangeNote string
+
 	// InputMode is the on-screen keyboard to ask for. A phone showing a
 	// numeric pad for an amount and a full keyboard for a name is most of
 	// what makes a form bearable on a phone.
@@ -218,6 +223,14 @@ func viewFields(f formbus.Form, values formbus.Values, problems formbus.Invalid)
 			// somebody is told; a min on a checkbox would be a constraint
 			// about the wrong thing.
 			v.Shape, v.BoxType = shapeCheckboxes, "checkbox"
+		}
+
+		// The range, as the picker's own min and max, so it greys out what
+		// cannot be chosen. The stored shapes are exactly the shapes these
+		// inputs take, which is one of the reasons they were chosen.
+		if fld.Kind.Temporal() {
+			v.Min, v.Max = fld.Kind.Span(fld.Earliest, fld.Latest)
+			v.RangeNote = fld.RangeNote()
 		}
 
 		if fld.Kind.HasOptions() {

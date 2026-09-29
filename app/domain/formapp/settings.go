@@ -49,6 +49,7 @@ type settingsView struct {
 	ListHeading string
 	ListLine    string
 	ListLimit   string
+	ListOldest  bool
 
 	// Listable is the questions the list's line may name, for the help text
 	// beside it: a template is only writable by somebody who can see the
@@ -126,6 +127,7 @@ func settingsOf(s formbus.Stored) settingsView {
 	v.MaxPerOrder = blankZero(f.MaxPerOrder)
 	v.DailyCap = blankZero(f.DailyCap)
 	v.ListLimit = blankZero(f.Listing.Limit)
+	v.ListOldest = f.Listing.OldestFirst
 
 	if f.MinTotal > 0 {
 		v.MinTotal = f.MinTotal.String()
@@ -189,6 +191,7 @@ func (a app) saveSettings(w http.ResponseWriter, r *http.Request) {
 	said.ListHeading = value(r, "list_heading")
 	said.ListLine = value(r, "list_line")
 	said.ListLimit = value(r, "list_limit")
+	said.ListOldest = r.PostFormValue("list_order") == "oldest"
 
 	// The definition as it stands, with its fields and items carried through
 	// untouched: this page is about everything except them.
@@ -204,6 +207,7 @@ func (a app) saveSettings(w http.ResponseWriter, r *http.Request) {
 	f.Notify = lines(said.Notify)
 	f.Listing.Heading = said.ListHeading
 	f.Listing.Line = said.ListLine
+	f.Listing.OldestFirst = said.ListOldest
 
 	var problems []string
 

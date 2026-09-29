@@ -100,10 +100,26 @@
            autocomplete="off" maxlength="200">
   </div>
 
+  <fieldset class="field">
+    <legend>In what order</legend>
+    <p class="choice">
+      <input type="radio" id="list_order_newest" name="list_order" value="newest"
+             {{if not .ListOldest}}checked{{end}}>
+      <label for="list_order_newest">Newest at the top</label>
+    </p>
+    <p class="choice">
+      <input type="radio" id="list_order_oldest" name="list_order" value="oldest"
+             {{if .ListOldest}}checked{{end}}>
+      <label for="list_order_oldest">Oldest at the top, like a sign-up sheet</label>
+    </p>
+  </fieldset>
+
   <div class="field">
     <label for="list_limit">How many to show</label>
-    <p class="help">The newest first. Empty means {{.ListDefault}}; the most is
-    {{.ListMax}}.</p>
+    <p class="help">Empty means {{.ListDefault}}; the most is {{.ListMax}}. When
+    there are more than that, the newest are the ones shown, whichever order
+    they are listed in &mdash; so somebody who has just sent the form always
+    finds themselves on it.</p>
     <input type="text" id="list_limit" name="list_limit" value="{{.ListLimit}}"
            autocomplete="off" inputmode="numeric" maxlength="3">
   </div>

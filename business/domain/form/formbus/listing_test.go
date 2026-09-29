@@ -206,7 +206,7 @@ func TestListingFingerprint(t *testing.T) {
 		t.Error("showing a further answer did not change the fingerprint")
 	}
 
-	f.Listing = formbus.Listing{Line: "Coming: {name}", Heading: "Who is coming", Limit: 20}
+	f.Listing = formbus.Listing{Line: "Coming: {name}", Heading: "Who is coming", Limit: 20, OldestFirst: true}
 	if f.Fingerprint() != on {
 		t.Error("rewording the line changed the fingerprint, which discards every half-filled form for a typo")
 	}

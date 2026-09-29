@@ -263,3 +263,26 @@ func writeOrigins(origins []types.Origin) string {
 
 	return b.String()
 }
+
+// parseLimit reads a date or time field's earliest or latest, where empty
+// means open at that end, into the shape formbus stores it in -- so somebody
+// may type 9:00am, or 2026-10-13 18:00 with a space, and get what they meant.
+func parseLimit(label string, k formbus.Kind, raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+
+	canon, ok := k.CanonicalBound(raw)
+	if ok {
+		return canon, nil
+	}
+
+	switch k {
+	case formbus.KindDate:
+		return "", fmt.Errorf("%s has to be a date like 2026-10-13, or be left empty", label)
+	case formbus.KindTime:
+		return "", fmt.Errorf("%s has to be a time like 09:00 or 5:30pm, or be left empty", label)
+	default:
+		return "", fmt.Errorf("%s has to be a day like 2026-10-13, or a day and time like 2026-10-13 18:00, or be left empty", label)
+	}
+}

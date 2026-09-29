@@ -435,7 +435,7 @@ func TestTheDailyCapIsRead(t *testing.T) {
 // list -- rather than a list whose empty line Check would have to explain.
 func TestTheListingIsRead(t *testing.T) {
 	store, err := formtoml.Load(fstest.MapFS{"alpha.toml": {Data: []byte(
-		minimal("alpha", "[listing]\nheading = \"Who is coming\"\nline = \"{who} is coming\"\nlimit = 20"))}})
+		minimal("alpha", "[listing]\nheading = \"Who is coming\"\nline = \"{who} is coming\"\nlimit = 20\noldest_first = true"))}})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -447,7 +447,7 @@ func TestTheListingIsRead(t *testing.T) {
 		t.Fatalf("ByID: %v", err)
 	}
 
-	want := formbus.Listing{Heading: "Who is coming", Line: "{who} is coming", Limit: 20}
+	want := formbus.Listing{Heading: "Who is coming", Line: "{who} is coming", Limit: 20, OldestFirst: true}
 	if f.Listing != want {
 		t.Errorf("Listing = %+v, want %+v", f.Listing, want)
 	}
@@ -466,5 +466,31 @@ func TestTheListingIsRead(t *testing.T) {
 
 	if b.Listing.On() {
 		t.Errorf("a form with no [listing] came back with %+v", b.Listing)
+	}
+}
+
+// A date or time field's range reaches the domain type as written.
+func TestADatetimeRangeIsRead(t *testing.T) {
+	store, err := formtoml.Load(fstest.MapFS{"alpha.toml": {Data: []byte(minimal("alpha") + `
+[[field]]
+name = "slot"
+label = "Your appointment"
+kind = "datetime"
+earliest = "2026-09-30"
+latest = "2026-10-13T18:00"
+`)}})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	alpha, _ := types.ParseSlug("alpha")
+
+	f, err := store.ByID(alpha)
+	if err != nil {
+		t.Fatalf("ByID: %v", err)
+	}
+
+	if fld, _ := f.Field("slot"); fld.Earliest != "2026-09-30" || fld.Latest != "2026-10-13T18:00" {
+		t.Errorf("range = %q to %q", fld.Earliest, fld.Latest)
 	}
 }

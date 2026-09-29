@@ -49,8 +49,21 @@ type Listing struct {
 	// "{nmae}" on the parish's website.
 	Line string
 
-	// Limit is how many are shown, newest first. Zero is [ListingDefault].
+	// Limit is how many are shown. Zero is [ListingDefault].
 	Limit int
+
+	// OldestFirst lists them in the order they arrived, like a sign-up
+	// sheet, rather than newest at the top.
+	//
+	// It changes the order and never which ones are shown: past the limit,
+	// the newest are kept either way. "The first fifty ever" would be the
+	// other reading, and on that reading the fifty-first person to sign up
+	// submits the form, looks at the list, and is not on it -- which reads
+	// as their answer having been lost. Kept newest, they are at the bottom.
+	//
+	// Not in the fingerprint, with the heading and the limit: it changes
+	// how a list reads and nothing anybody agreed to when filling it in.
+	OldestFirst bool
 }
 
 const (

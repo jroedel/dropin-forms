@@ -323,8 +323,13 @@ func settingsSummary(f formbus.Form) []settingRow {
 	}
 
 	if f.Listing.On() {
+		order := "newest at the top"
+		if f.Listing.OldestFirst {
+			order = "oldest at the top"
+		}
+
 		rows = append(rows, set("Shows beneath it, publicly",
-			fmt.Sprintf("the newest %d, each as %s", f.Listing.Shown(), f.Listing.Line)))
+			fmt.Sprintf("the newest %d, %s, each as %s", f.Listing.Shown(), order, f.Listing.Line)))
 	}
 
 	return rows
@@ -365,6 +370,12 @@ func detailOf(fld formbus.Field, currency string) string {
 
 	if fld.Pattern != "" {
 		parts = append(parts, "a set format")
+	}
+
+	// The same sentence the form shows beside the field, lower-cased to sit
+	// in a list: "between Wednesday 30 September 2026 and ...".
+	if note := fld.RangeNote(); note != "" {
+		parts = append(parts, strings.ToLower(note[:1])+strings.TrimSuffix(note[1:], "."))
 	}
 
 	return strings.Join(compact(parts), ", ")

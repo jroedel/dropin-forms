@@ -966,6 +966,14 @@ func (a app) listing(r *http.Request, f formbus.Form) *listingView {
 		}
 	}
 
+	// Recent reads the newest, newest first, and that is which ones are
+	// shown whichever way round they are listed -- formbus.Listing.OldestFirst
+	// says why. So oldest-first is the same page turned over, not a
+	// different query.
+	if f.Listing.OldestFirst {
+		slices.Reverse(view.Lines)
+	}
+
 	return view
 }
 

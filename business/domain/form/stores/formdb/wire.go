@@ -76,6 +76,9 @@ type field struct {
 	Pattern     string `json:"pattern,omitempty"`
 	PatternNote string `json:"pattern_note,omitempty"`
 
+	Earliest string `json:"earliest,omitempty"`
+	Latest   string `json:"latest,omitempty"`
+
 	Options []option `json:"options,omitzero"`
 
 	ShowIf *condition `json:"show_if,omitempty"`
@@ -85,6 +88,8 @@ type listing struct {
 	Heading string `json:"heading,omitempty"`
 	Line    string `json:"line,omitempty"`
 	Limit   int    `json:"limit,omitempty"`
+
+	OldestFirst bool `json:"oldest_first,omitempty"`
 }
 
 type option struct {
@@ -128,6 +133,8 @@ func encode(f formbus.Form) (string, error) {
 			Heading: f.Listing.Heading,
 			Line:    f.Listing.Line,
 			Limit:   f.Listing.Limit,
+
+			OldestFirst: f.Listing.OldestFirst,
 		},
 	}
 
@@ -150,6 +157,8 @@ func encode(f formbus.Form) (string, error) {
 			Max:          fld.Max,
 			Pattern:      fld.Pattern,
 			PatternNote:  fld.PatternNote,
+			Earliest:     fld.Earliest,
+			Latest:       fld.Latest,
 		}
 
 		for _, o := range fld.Options {
@@ -222,6 +231,8 @@ func decode(body string) (formbus.Form, error) {
 			Heading: w.Listing.Heading,
 			Line:    w.Listing.Line,
 			Limit:   w.Listing.Limit,
+
+			OldestFirst: w.Listing.OldestFirst,
 		},
 	}
 
@@ -249,6 +260,8 @@ func decode(body string) (formbus.Form, error) {
 			Max:          wf.Max,
 			Pattern:      wf.Pattern,
 			PatternNote:  wf.PatternNote,
+			Earliest:     wf.Earliest,
+			Latest:       wf.Latest,
 		}
 
 		for _, o := range wf.Options {

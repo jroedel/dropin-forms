@@ -69,6 +69,7 @@
   <label for="f-{{$fld.Name}}">{{$fld.Label}}{{if $fld.Required}} <span class="required-mark" title="required">*</span>{{end}}</label>
   {{with $fld.Help}}<p class="help">{{.}}</p>{{end}}
   {{with $fld.PatternNote}}<p class="help">{{.}}</p>{{end}}
+  {{with $fld.RangeNote}}<p class="help">{{.}}</p>{{end}}
   {{if eq $fld.Shape "amount"}}<span class="currency">{{$.Symbol}}</span>{{end}}
   <input id="f-{{$fld.Name}}" type="{{$fld.InputType}}" name="{{$fld.Name}}" value="{{$fld.Value}}"
     {{- if $fld.Required}} required{{end}}

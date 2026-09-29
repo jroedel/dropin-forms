@@ -1865,6 +1865,13 @@ under a page that did not tell them. The line's wording, the heading and the
 limit are not: fixing a typo in "bringing" must not throw away half-filled
 forms, and a form without a list keeps the version it had before this shipped.
 
+**Newest or oldest at the top, and the newest kept either way.**
+`Listing.OldestFirst` turns the list over, like a sign-up sheet; it does not
+change which submissions are on it. Past the limit the newest are shown in both
+orders, because the other reading — the first fifty ever — means the
+fifty-first person submits, looks at the list, and is not on it. Not in the
+fingerprint, with the heading and the limit.
+
 **Only settled submissions are listed.** `submissionbus.Recent` reads through
 `SettledStatuses`, the same rule `Status.Settled` states, so an order abandoned
 at the checkout page never appears as though it were a booking. On a form that
@@ -1918,9 +1925,18 @@ the stored value into "Saturday 17 October 2026, 3:30pm" for the submission
 page and the notification mail. The admin table and the CSV keep the stored
 shape.
 
-**No earliest or latest date yet.** These kinds are not `Bounded`: `Field.Min`
-is an int64 whose unit already differs by kind, and a date would be a fourth.
-When a window is needed it wants its own pair of fields.
+**Earliest and latest are their own pair of fields.** Not `Min` and `Max`:
+`Field.Min` is an int64 whose unit already differs by kind, and a date would be
+a fourth. `Field.Earliest` and `Field.Latest` are written in the field's stored
+shape, and because every stored shape is fixed-width and most significant
+first, the range check is a string comparison — no parsing, and no zone. Both
+ends are included. A datetime's range may be a day on its own, kept as a day
+rather than as midnight, because "until the 13th" means the whole of the 13th:
+compared, it widens to `T00:00` for the earliest and `T23:59` for the latest,
+which is exact because answers have no seconds. The range is enforced on the
+server, handed to the picker as `min` and `max`, and said in words beside the
+field for a browser that draws a text box. It is in the fingerprint, so
+narrowing it re-renders every tab open against the old one.
 
 ## 10. Dependencies
 
