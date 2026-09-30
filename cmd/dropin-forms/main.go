@@ -281,6 +281,7 @@ func run() error {
 		Access:       access,
 		Submissions:  submissions,
 		Table:        submissions,
+		Hiding:       submissions,
 		Forms:        definitions,
 		Builder:      definitions,
 		EmbedBaseURL: cfg.Server.EmbedBaseURL,

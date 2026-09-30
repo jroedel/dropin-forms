@@ -76,6 +76,7 @@ import (
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
 	"github.com/jroedel/dropin-forms/app/domain/formapp"
+	"github.com/jroedel/dropin-forms/app/domain/hideapp"
 	"github.com/jroedel/dropin-forms/app/domain/notifyapp"
 	"github.com/jroedel/dropin-forms/app/domain/paymentapp"
 	"github.com/jroedel/dropin-forms/app/domain/peopleapp"
@@ -137,6 +138,13 @@ type Config struct {
 	// Optional: without it the will-call routes are not mounted, which is
 	// right for an installation that has no table to work.
 	Table willcallapp.Orders
+
+	// Hiding is what takes a submission out of the lists and puts it back:
+	// the same submissions again, with two writes. Its own field for the
+	// reason Table is -- the read-only surface must not acquire a write by
+	// being handed the wider value. Optional: without it the routes are not
+	// mounted and the page for one submission draws no button to them.
+	Hiding hideapp.Submissions
 
 	// Builder is the write half of the form domain, and the one dependency
 	// here that only one app has. Optional: without it the service serves
@@ -390,7 +398,9 @@ func Admin(cfg Config) (http.Handler, error) {
 		Forms:       cfg.Forms,
 		Submissions: cfg.Submissions,
 		Grants:      cfg.Access,
+		Accounts:    cfg.Users,
 		Render:      cfg.Render,
+		CanHide:     cfg.Hiding != nil,
 	}
 
 	if cfg.Notify != nil {
@@ -444,6 +454,18 @@ func Admin(cfg Config) (http.Handler, error) {
 	}
 
 	peopleapp.Routes(mux, pc, guard, admins)
+
+	// Hiding a submission, behind admin on that form: it changes the totals
+	// somebody orders food against. The buttons are on submissionapp's page,
+	// which is read-only and behind results; hideapp says why these are not
+	// its routes.
+	if cfg.Hiding != nil {
+		hideapp.Routes(mux, hideapp.Config{
+			Log:         cfg.Log,
+			Forms:       cfg.Forms,
+			Submissions: cfg.Hiding,
+		}, guard, admins)
+	}
 
 	// The will-call table, behind the door role -- the middle of the three,
 	// which reads this form's submissions and marks one collected and can do

@@ -58,9 +58,10 @@ func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 // Expected is what CheckSchema verifies at startup: the columns this binary
 // will read.
 var Expected = sqldb.Expected{
-	"submissions":  {"id", "form_slug", "version", "status", "answers", "email", "total", "currency", "remote_ip", "payment_ref", "created_at", "updated_at"},
-	"spent_grants": {"nonce", "form_slug", "spent_at"},
-	"collections":  {"submission_id", "form_slug", "collected_at", "collected_by"},
+	"submissions":        {"id", "form_slug", "version", "status", "answers", "email", "total", "currency", "remote_ip", "payment_ref", "created_at", "updated_at"},
+	"spent_grants":       {"nonce", "form_slug", "spent_at"},
+	"collections":        {"submission_id", "form_slug", "collected_at", "collected_by"},
+	"hidden_submissions": {"submission_id", "form_slug", "hidden_at", "hidden_by"},
 }
 
 // Init creates this domain's tables. Idempotent, and run at every startup.
@@ -129,6 +130,22 @@ CREATE TABLE IF NOT EXISTS collections (
 -- a query per row is how a page that is fast with two orders is slow with two
 -- hundred on a phone in a car park.
 CREATE INDEX IF NOT EXISTS collections_form ON collections (form_slug);
+
+-- One row per submission somebody has taken out of the lists: a test, a
+-- duplicate. Its own table for the reason collections is -- a submission is
+-- immutable apart from its status -- and a row rather than a delete, because
+-- a hidden submission may be a real payment and must stay explicable.
+-- submissionbus.Hiding says which readers leave these out.
+--
+-- The primary key makes hiding twice a no-op rather than two rows, and the
+-- listing queries test membership with NOT IN against it, which SQLite
+-- answers from this primary key's index.
+CREATE TABLE IF NOT EXISTS hidden_submissions (
+    submission_id  TEXT    PRIMARY KEY REFERENCES submissions(id) ON DELETE CASCADE,
+    form_slug      TEXT    NOT NULL,
+    hidden_at      INTEGER NOT NULL,
+    hidden_by      TEXT    NOT NULL
+) STRICT;
 `
 
 	if _, err := db.ExecContext(ctx, schema); err != nil {
@@ -225,10 +242,16 @@ func (s *Store) ByID(ctx context.Context, id types.ID) (submissionbus.Submission
 	return sub, nil
 }
 
+// notHidden is the condition every listing query carries, so that a hidden
+// submission is left out by the store rather than by each reader remembering
+// to -- a new page listing submissions is correct by default. ByID and
+// CountSince do not carry it, on purpose: see submissionbus.Hiding.
+const notHidden = `id NOT IN (SELECT submission_id FROM hidden_submissions)`
+
 // ByForm lists a form's submissions, newest first, which is the order the
 // index is built for and the order a page wants.
 func (s *Store) ByForm(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error) {
-	const q = selectColumns + ` WHERE form_slug = ? ORDER BY created_at DESC, id`
+	const q = selectColumns + ` WHERE form_slug = ? AND ` + notHidden + ` ORDER BY created_at DESC, id`
 
 	rows, err := s.db.QueryContext(ctx, q, form.String())
 	if err != nil {
@@ -271,8 +294,8 @@ func (s *Store) Settled(ctx context.Context, form types.Slug, limit int) ([]subm
 	}
 	args = append(args, limit)
 
-	q := selectColumns + ` WHERE form_slug = ? AND status IN (?` + strings.Repeat(", ?", len(settled)-1) +
-		`) ORDER BY created_at DESC, id LIMIT ?`
+	q := selectColumns + ` WHERE form_slug = ? AND ` + notHidden + ` AND status IN (?` +
+		strings.Repeat(", ?", len(settled)-1) + `) ORDER BY created_at DESC, id LIMIT ?`
 
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -310,7 +333,7 @@ func (s *Store) Settled(ctx context.Context, form types.Slug, limit int) ([]subm
 // bottom and the one most likely to matter is the one that has been waiting
 // longest.
 func (s *Store) Unpaid(ctx context.Context, from, before time.Time) ([]submissionbus.Submission, error) {
-	const q = selectColumns + ` WHERE status = ? AND created_at >= ? AND created_at < ? ORDER BY created_at, id`
+	const q = selectColumns + ` WHERE status = ? AND ` + notHidden + ` AND created_at >= ? AND created_at < ? ORDER BY created_at, id`
 
 	rows, err := s.db.QueryContext(ctx, q, submissionbus.StatusPending.String(), msOf(from), msOf(before))
 	if err != nil {
@@ -688,3 +711,105 @@ func scanCollection(scan func(...any) error) (submissionbus.Collection, error) {
 
 func msOf(t time.Time) int64    { return t.UTC().UnixMilli() }
 func timeOf(ms int64) time.Time { return time.UnixMilli(ms).UTC() }
+
+// Hide records a hiding, or reports the one already there.
+func (s *Store) Hide(ctx context.Context, h submissionbus.Hiding) (submissionbus.Hiding, bool, error) {
+	const insert = `
+INSERT INTO hidden_submissions (submission_id, form_slug, hidden_at, hidden_by)
+VALUES (?, ?, ?, ?)`
+
+	_, err := s.db.ExecContext(ctx, insert,
+		h.SubmissionID.String(), h.Form.String(), msOf(h.HiddenAt), h.HiddenBy.String())
+
+	switch {
+	case sqldb.IsPrimaryKeyViolation(err):
+		was, ok, err := s.HidingOf(ctx, h.SubmissionID)
+		switch {
+		case err != nil:
+			return submissionbus.Hiding{}, false, err
+		case !ok:
+			// Unhidden in the moment between the two statements, which is two
+			// people disagreeing rather than a fault.
+			return submissionbus.Hiding{}, false, fmt.Errorf("%w: the hiding was removed while it was being read", submissionbus.ErrNotFound)
+		}
+
+		return was, false, nil
+
+	case err != nil:
+		return submissionbus.Hiding{}, false, fmt.Errorf("recording the hiding: %w", err)
+	}
+
+	return h, true, nil
+}
+
+// Unhide removes a hiding. Removing nothing is not an error.
+func (s *Store) Unhide(ctx context.Context, id types.ID) error {
+	const q = `DELETE FROM hidden_submissions WHERE submission_id = ?`
+
+	if _, err := s.db.ExecContext(ctx, q, id.String()); err != nil {
+		return fmt.Errorf("removing the hiding: %w", err)
+	}
+
+	return nil
+}
+
+// Hidden lists a form's hidden submissions, newest first.
+func (s *Store) Hidden(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error) {
+	const q = selectColumns + ` WHERE form_slug = ? AND id IN (SELECT submission_id FROM hidden_submissions) ORDER BY created_at DESC, id`
+
+	rows, err := s.db.QueryContext(ctx, q, form.String())
+	if err != nil {
+		return nil, fmt.Errorf("querying the hidden submissions: %w", err)
+	}
+	defer rows.Close()
+
+	var out []submissionbus.Submission
+	for rows.Next() {
+		sub, err := scan(rows)
+		if err != nil {
+			return nil, fmt.Errorf("reading a submission: %w", err)
+		}
+
+		out = append(out, sub)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading the hidden submissions: %w", err)
+	}
+
+	return out, nil
+}
+
+// HidingOf reads one submission's hiding, and whether there is one.
+func (s *Store) HidingOf(ctx context.Context, id types.ID) (submissionbus.Hiding, bool, error) {
+	const q = `
+SELECT submission_id, form_slug, hidden_at, hidden_by
+FROM hidden_submissions
+WHERE submission_id = ?`
+
+	var (
+		sid, form, byWhom string
+		at                int64
+	)
+
+	err := s.db.QueryRowContext(ctx, q, id.String()).Scan(&sid, &form, &at, &byWhom)
+
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return submissionbus.Hiding{}, false, nil
+	case err != nil:
+		return submissionbus.Hiding{}, false, fmt.Errorf("reading the hiding: %w", err)
+	}
+
+	slug, err := types.ParseSlug(form)
+	if err != nil {
+		return submissionbus.Hiding{}, false, fmt.Errorf("a hiding names an unreadable form %q: %w", form, err)
+	}
+
+	// Not parsed strictly, for the reason scanCollection gives: it is an
+	// audit field, and refusing to say a row is hidden over it would put the
+	// row back in every list.
+	by, _ := types.ParseID(byWhom)
+
+	return submissionbus.Hiding{SubmissionID: id, Form: slug, HiddenAt: timeOf(at), HiddenBy: by}, true, nil
+}

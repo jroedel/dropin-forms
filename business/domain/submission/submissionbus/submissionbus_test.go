@@ -26,6 +26,7 @@ type memStore struct {
 	subs   map[types.ID]submissionbus.Submission
 	nonces map[string]time.Time
 	handed map[types.ID]submissionbus.Collection
+	hidden map[types.ID]submissionbus.Hiding
 
 	// counted is how many times the day's submissions have been counted, so
 	// that a test can assert an uncapped form does not pay for the query.
@@ -39,6 +40,7 @@ func newMemStore() *memStore {
 		subs:   map[types.ID]submissionbus.Submission{},
 		nonces: map[string]time.Time{},
 		handed: map[types.ID]submissionbus.Collection{},
+		hidden: map[types.ID]submissionbus.Hiding{},
 	}
 }
 
@@ -77,12 +79,45 @@ func (m *memStore) ByForm(_ context.Context, form types.Slug) ([]submissionbus.S
 
 	var out []submissionbus.Submission
 	for _, s := range m.subs {
-		if s.Form == form {
+		if _, gone := m.hidden[s.ID]; s.Form == form && !gone {
 			out = append(out, s)
 		}
 	}
 
 	return out, nil
+}
+
+func (m *memStore) Hide(_ context.Context, h submissionbus.Hiding) (submissionbus.Hiding, bool, error) {
+	if was, ok := m.hidden[h.SubmissionID]; ok {
+		return was, false, nil
+	}
+
+	m.hidden[h.SubmissionID] = h
+
+	return h, true, nil
+}
+
+func (m *memStore) Unhide(_ context.Context, id types.ID) error {
+	delete(m.hidden, id)
+
+	return nil
+}
+
+func (m *memStore) Hidden(_ context.Context, form types.Slug) ([]submissionbus.Submission, error) {
+	var out []submissionbus.Submission
+	for id := range m.hidden {
+		if s := m.subs[id]; s.Form == form {
+			out = append(out, s)
+		}
+	}
+
+	return out, nil
+}
+
+func (m *memStore) HidingOf(_ context.Context, id types.ID) (submissionbus.Hiding, bool, error) {
+	h, ok := m.hidden[id]
+
+	return h, ok, nil
 }
 
 func (m *memStore) Settled(_ context.Context, form types.Slug, limit int) ([]submissionbus.Submission, error) {

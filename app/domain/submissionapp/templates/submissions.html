@@ -5,6 +5,16 @@
 {{define "content"}}
 <h1>{{.Form.Title}}</h1>
 
+{{if .ShowingHidden}}
+<p class="notice">These {{len .Rows}} submission{{if ne (len .Rows) 1}}s are{{else}} is{{end}} hidden, and
+not counted in anything below. Open one to put it back.
+<a href="/forms/{{.FormID}}/submissions">Back to the list</a></p>
+{{else if .Hidden}}
+<p class="help">{{.Hidden}} hidden submission{{if ne .Hidden 1}}s are{{else}} is{{end}} not
+shown or counted here. <a href="/forms/{{.FormID}}/submissions?hidden=1">Show
+{{if ne .Hidden 1}}them{{else}}it{{end}}</a></p>
+{{end}}
+
 <div class="summary-cards">
 <p><strong>{{.Summary.Count}}</strong> submission{{if ne .Summary.Count 1}}s{{end}}</p>
 {{if .Summary.Paid}}<p><strong>{{.Summary.Paid}}</strong> paid</p>{{end}}
@@ -55,6 +65,8 @@ started and has not paid for.</caption>
 </tbody>
 </table>
 </div>
+{{else if .ShowingHidden}}
+<p>Nothing is hidden.</p>
 {{else}}
 <p>Nothing has been submitted yet.</p>
 {{end}}

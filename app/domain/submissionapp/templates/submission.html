@@ -5,7 +5,20 @@
 {{define "content"}}
 <h1>Submission</h1>
 
-<p class="crumb"><a href="/forms/{{.FormID}}/submissions">{{.Form.Title}}</a></p>
+<p class="crumb"><a href="/forms/{{.FormID}}/submissions{{if .Hidden}}?hidden=1{{end}}">{{.Form.Title}}</a></p>
+
+{{if .Hidden}}
+<div class="notice">
+<p><strong>Hidden.</strong> {{.HiddenBy}} took this out of every list on
+{{.HiddenAt}}. It is not counted in the totals, the download, the will-call
+table or the list beneath the form.</p>
+{{if .CanHide}}
+<form method="post" action="/forms/{{.FormID}}/submissions/{{.ID}}/unhide" class="inline">
+  <button type="submit">Put it back</button>
+</form>
+{{end}}
+</div>
+{{end}}
 
 <table class="detail">
 <tbody>
@@ -46,5 +59,16 @@
 <tr class="total"><th scope="row" colspan="3">Total</th><td class="figure">{{$.Total}}</td></tr>
 </tbody>
 </table>
+{{end}}
+
+{{if and .CanHide (not .Hidden)}}
+<h2>Hide it</h2>
+<p class="help">For a test, a duplicate, or anything else that should not be
+counted. It leaves every list, the totals and the download, and can be put back
+from here at any time. Nothing is deleted{{if .Ref}}, and nothing is refunded
+&mdash; a refund is made in Stripe{{end}}.</p>
+<form method="post" action="/forms/{{.FormID}}/submissions/{{.ID}}/hide">
+  <button type="submit" class="quiet">Hide this submission</button>
+</form>
 {{end}}
 {{end}}

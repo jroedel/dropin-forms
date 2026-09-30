@@ -169,6 +169,30 @@ type Collection struct {
 	CollectedBy types.ID
 }
 
+// Hiding is a submission taken out of every list: a test, a duplicate, a
+// joke. Its own row, for the reason [Collection] is -- a submission is
+// immutable apart from its status, and this is not a status. It is somebody
+// deciding a row should not be counted.
+//
+// Hidden rather than deleted, and that is the decision this type exists to
+// record. A submission can be a real card payment, and deleting it would leave
+// Stripe holding a charge that nothing here can explain. A mis-click would be
+// permanent. And a hidden row keeps saying who hid it and when, which is the
+// answer to "where did Maria's order go" that a deleted one cannot give.
+//
+// What a hidden submission is left out of is every reader that counts or
+// lists: ByForm, the public list beneath a form, the unpaid-order sweep, and
+// through them the admin list and its totals, the CSV, the index counts and
+// the will-call table. What it is not left out of is CountSince, the daily
+// cap: that is an abuse control, and a script's submissions do not stop
+// counting because somebody tidied them away.
+type Hiding struct {
+	SubmissionID types.ID
+	Form         types.Slug
+	HiddenAt     time.Time
+	HiddenBy     types.ID
+}
+
 // New is what the app layer supplies to accept one.
 type New struct {
 	Answers  formbus.Answers
@@ -233,6 +257,20 @@ type Storer interface {
 	// CollectionsForForm reads every collection on a form, keyed by
 	// submission, in one query.
 	CollectionsForForm(ctx context.Context, form types.Slug) (map[types.ID]Collection, error)
+
+	// Hide records a hiding, reporting false when there already was one and
+	// returning the row that stands either way -- Collect's shape.
+	Hide(ctx context.Context, h Hiding) (Hiding, bool, error)
+
+	// Unhide removes one. Removing nothing is not an error.
+	Unhide(ctx context.Context, id types.ID) error
+
+	// Hidden lists a form's hidden submissions, newest first. Every other
+	// list leaves them out; this is the one that finds them again.
+	Hidden(ctx context.Context, form types.Slug) ([]Submission, error)
+
+	// HidingOf reads one submission's hiding, and whether there is one.
+	HidingOf(ctx context.Context, id types.ID) (Hiding, bool, error)
 }
 
 // Business is the set of operations on submissions.
@@ -351,7 +389,8 @@ func (b *Business) ByID(ctx context.Context, id types.ID) (Submission, error) {
 	return s, nil
 }
 
-// ByForm lists a form's submissions, newest first.
+// ByForm lists a form's submissions, newest first, leaving out any that have
+// been hidden -- see [Hiding] for which readers that reaches.
 func (b *Business) ByForm(ctx context.Context, form types.Slug) ([]Submission, error) {
 	out, err := b.store.ByForm(ctx, form)
 	if err != nil {
@@ -538,4 +577,65 @@ func (b *Business) Collected(ctx context.Context, form types.Slug) (map[types.ID
 	}
 
 	return out, nil
+}
+
+// Hide takes a submission out of every list, recording who did it.
+//
+// Twice is once: the second caller is told who got there first, as Collect
+// tells a second volunteer. Any status may be hidden, a paid one included --
+// a test run with a real card is exactly the row somebody wants gone -- and
+// hiding refunds nothing, which the page that offers it says.
+func (b *Business) Hide(ctx context.Context, now time.Time, id, by types.ID) (Hiding, bool, error) {
+	s, err := b.store.ByID(ctx, id)
+	if err != nil {
+		return Hiding{}, false, fmt.Errorf("reading the submission: %w", err)
+	}
+
+	h, wrote, err := b.store.Hide(ctx, Hiding{
+		SubmissionID: s.ID,
+		Form:         s.Form,
+		HiddenAt:     now.UTC(),
+		HiddenBy:     by,
+	})
+	if err != nil {
+		return Hiding{}, false, fmt.Errorf("hiding the submission: %w", err)
+	}
+
+	if wrote {
+		b.log.Info("submission hidden",
+			"submission_id", id.String(), "form", s.Form.String(), "status", s.Status.String(), "by", by.String())
+	}
+
+	return h, wrote, nil
+}
+
+// Unhide puts a submission back in every list.
+func (b *Business) Unhide(ctx context.Context, id, by types.ID) error {
+	if err := b.store.Unhide(ctx, id); err != nil {
+		return fmt.Errorf("unhiding the submission: %w", err)
+	}
+
+	b.log.Info("submission unhidden", "submission_id", id.String(), "by", by.String())
+
+	return nil
+}
+
+// Hidden lists a form's hidden submissions, newest first.
+func (b *Business) Hidden(ctx context.Context, form types.Slug) ([]Submission, error) {
+	out, err := b.store.Hidden(ctx, form)
+	if err != nil {
+		return nil, fmt.Errorf("listing the hidden submissions: %w", err)
+	}
+
+	return out, nil
+}
+
+// HidingOf reads one submission's hiding, and whether it has one.
+func (b *Business) HidingOf(ctx context.Context, id types.ID) (Hiding, bool, error) {
+	h, ok, err := b.store.HidingOf(ctx, id)
+	if err != nil {
+		return Hiding{}, false, fmt.Errorf("reading whether the submission is hidden: %w", err)
+	}
+
+	return h, ok, nil
 }
