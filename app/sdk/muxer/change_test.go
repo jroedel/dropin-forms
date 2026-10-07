@@ -12,6 +12,8 @@ import (
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
 	"github.com/jroedel/dropin-forms/app/sdk/muxer"
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
+	"github.com/jroedel/dropin-forms/business/domain/feed/feedbus"
+	"github.com/jroedel/dropin-forms/business/domain/feed/stores/feeddb"
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/domain/form/stores/formtoml"
 	"github.com/jroedel/dropin-forms/business/domain/notify/notifybus"
@@ -144,6 +146,8 @@ func retreatSurface(t *testing.T) retreatHarness {
 	}
 
 	cfg.Notify = notifier
+	cfg.Feeds = feedbus.NewBusiness(cfg.Log, feeddb.NewStore(cfg.DB))
+	cfg.FeedRows = subs
 
 	return retreatHarness{h: embedOf(t, cfg), form: &f, now: &now, subs: subs, cfg: cfg, sent: sent}
 }
