@@ -1,0 +1,21 @@
+{{define "title"}}{{.Form.Title}}{{end}}
+
+{{define "content"}}
+<div id="dropin-root" data-parent-origin="" class="closed">
+<h1>{{.Form.Title}}</h1>
+{{if .TooLate}}
+{{/* Not a dead end. The person has something to tell us and the date for
+     doing it here has passed; replying to the email reaches somebody who can
+     still put it right. */}}
+<p>Answers to this form can no longer be changed here{{with .Until}} — changes closed on {{.}}{{end}}.
+If something has changed, reply to any email we sent you about it and we will update it for you.</p>
+{{else}}
+{{/* One sentence for every reason: a link that was cut short by a mail
+     program, one for a different form, one that has been withdrawn. Which it
+     was is not something to tell whoever is holding it. */}}
+<p>This link does not lead to any answers. If it came from an email, check
+that the whole address was copied — some mail programs break long links in
+two. Or reply to the email and we will send you a fresh one.</p>
+{{end}}
+</div>
+{{end}}

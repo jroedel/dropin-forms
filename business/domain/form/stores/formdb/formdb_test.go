@@ -155,6 +155,11 @@ func TestADefinitionSurvivesTheRoundTrip(t *testing.T) {
 
 	want := full(t)
 
+	// Not a combination Check allows on a form that sells, which this one
+	// does. The store is not where that rule lives, and what is under test
+	// is that the setting is carried at all.
+	want.ChangeableUntil = time.Date(2027, 2, 7, 6, 0, 0, 0, time.UTC)
+
 	if err := store.Upsert(t.Context(), formbus.Stored{
 		Form: want, Live: true, CreatedAt: now, UpdatedAt: now, PublishedAt: now,
 	}); err != nil {
@@ -181,6 +186,10 @@ func TestADefinitionSurvivesTheRoundTrip(t *testing.T) {
 	if !got.Form.OpensAt.Equal(want.OpensAt) || !got.Form.ClosesAt.Equal(want.ClosesAt) {
 		t.Errorf("times = %v/%v, want %v/%v",
 			got.Form.OpensAt, got.Form.ClosesAt, want.OpensAt, want.ClosesAt)
+	}
+
+	if !got.Form.ChangeableUntil.Equal(want.ChangeableUntil) {
+		t.Errorf("changeable until = %v, want %v", got.Form.ChangeableUntil, want.ChangeableUntil)
 	}
 
 	if len(got.Form.Fields) != len(want.Fields) {

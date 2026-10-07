@@ -27,6 +27,8 @@ type settingsView struct {
 	ClosesAt   string
 	ClosedNote string
 
+	ChangeableUntil string
+
 	Zone string
 
 	Origins   string
@@ -96,6 +98,7 @@ func settingsOf(s formbus.Stored) settingsView {
 		Intro:           f.Intro,
 		OpensAt:         writeWhen(f.OpensAt),
 		ClosesAt:        writeWhen(f.ClosesAt),
+		ChangeableUntil: writeWhen(f.ChangeableUntil),
 		ClosedNote:      f.ClosedNote,
 		Zone:            zoneName(time.Now()),
 		Origins:         writeOrigins(f.Origins),
@@ -177,6 +180,7 @@ func (a app) saveSettings(w http.ResponseWriter, r *http.Request) {
 	said.OpensAt = value(r, "opens_at")
 	said.ClosesAt = value(r, "closes_at")
 	said.ClosedNote = value(r, "closed_note")
+	said.ChangeableUntil = value(r, "changeable_until")
 	said.Origins = r.PostFormValue("origins")
 	said.ReturnURL = value(r, "return_url")
 	said.MinPerOrder = value(r, "min_per_order")
@@ -223,6 +227,9 @@ func (a app) saveSettings(w http.ResponseWriter, r *http.Request) {
 	fail(err)
 
 	f.ClosesAt, err = parseWhen("The date it closes", said.ClosesAt)
+	fail(err)
+
+	f.ChangeableUntil, err = parseWhen("The date answers can be changed until", said.ChangeableUntil)
 	fail(err)
 
 	f.Origins, err = parseOrigins(said.Origins)

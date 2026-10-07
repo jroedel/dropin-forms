@@ -7,6 +7,13 @@
 // to is not a working document. Only the payment status moves, and only
 // forwards.
 //
+// One exception, and it is narrow. On a form that says so, and that sells
+// nothing, the person who answered may change their answers until a date the
+// form states, through the link in every message we send them. Even then
+// nothing is overwritten: the answers being replaced are kept as a
+// [Revision], so the record of what somebody said, and when, is all still
+// there. change.go has the rules.
+//
 // # Accepting a submission is one transaction with the grant it arrived on
 //
 // [Business.Accept] writes the submission and spends the grant's nonce
@@ -89,6 +96,17 @@ var (
 	// number somebody else set, which is why the app layer answers it with the
 	// form and a sentence rather than with an error page.
 	ErrDailyCap = errors.New("that form has taken as many submissions as it can today")
+
+	// ErrChangedMeanwhile is a change to answers that were changed, or
+	// hidden, after they were read and before the change arrived: two tabs
+	// open on the same link. Nothing was written. The app layer shows the
+	// answers as they now stand and lets the person decide again.
+	ErrChangedMeanwhile = errors.New("those answers were changed somewhere else in the meantime")
+
+	// ErrUnchanged is a change that changed nothing. An outcome rather than a
+	// fault -- somebody pressed Save to be sure -- and nothing is written,
+	// so there is no revision and no message about it.
+	ErrUnchanged = errors.New("nothing in those answers was different")
 )
 
 // ParseStatus reads a status, and is the only way to get one from a database.
@@ -271,6 +289,17 @@ type Storer interface {
 
 	// HidingOf reads one submission's hiding, and whether there is one.
 	HidingOf(ctx context.Context, id types.ID) (Hiding, bool, error)
+
+	// Change replaces before's answers with after's, keeps before's as a
+	// revision and spends the nonce, in one transaction. It reports false
+	// when the nonce had already been spent, Accept's shape, and
+	// ErrChangedMeanwhile when the stored row is no longer before -- changed
+	// or hidden since it was read.
+	Change(ctx context.Context, before, after Submission, nonce string) (bool, error)
+
+	// Revisions reads the answers a submission has held and no longer does,
+	// oldest first.
+	Revisions(ctx context.Context, sub Submission) ([]Revision, error)
 }
 
 // Business is the set of operations on submissions.

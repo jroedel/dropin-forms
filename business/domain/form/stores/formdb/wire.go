@@ -23,6 +23,8 @@ type definition struct {
 	ClosesAt   time.Time `json:"closes_at,omitzero"`
 	ClosedNote string    `json:"closed_note,omitempty"`
 
+	ChangeableUntil time.Time `json:"changeable_until,omitzero"`
+
 	Currency string   `json:"currency"`
 	Origins  []string `json:"origins,omitempty"`
 
@@ -121,6 +123,7 @@ func encode(f formbus.Form) (string, error) {
 		Intro:           f.Intro,
 		OpensAt:         f.OpensAt,
 		ClosesAt:        f.ClosesAt,
+		ChangeableUntil: f.ChangeableUntil,
 		ClosedNote:      f.ClosedNote,
 		Currency:        f.Currency,
 		ReturnURL:       f.ReturnURL,
@@ -220,6 +223,7 @@ func decode(body string) (formbus.Form, error) {
 		Intro:           w.Intro,
 		OpensAt:         w.OpensAt,
 		ClosesAt:        w.ClosesAt,
+		ChangeableUntil: w.ChangeableUntil,
 		ClosedNote:      w.ClosedNote,
 		Currency:        w.Currency,
 		ReturnURL:       w.ReturnURL,

@@ -243,6 +243,13 @@ func run() error {
 		return err
 	}
 
+	// The links back to somebody's own answers, signed with the same secret
+	// under a label of their own, for the same reasons.
+	answerKey, err := submissionbus.ParseAnswerKey(cfg.Embed.GrantSigningKey)
+	if err != nil {
+		return err
+	}
+
 	notifier, err := notifybus.NewBusiness(notifybus.Config{
 		Log:          log,
 		Mail:         sender,
@@ -309,6 +316,7 @@ func run() error {
 			Submissions: submissions,
 			Render:      embedPages,
 			GrantKey:    cfg.Embed.grantKey,
+			AnswerKey:   answerKey,
 
 			// Nil when Stripe is not configured, which embedapp handles as a
 			// form that stores its orders and shows no way to pay. An

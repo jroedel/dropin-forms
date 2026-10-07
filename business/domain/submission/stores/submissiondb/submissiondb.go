@@ -62,6 +62,8 @@ var Expected = sqldb.Expected{
 	"spent_grants":       {"nonce", "form_slug", "spent_at"},
 	"collections":        {"submission_id", "form_slug", "collected_at", "collected_by"},
 	"hidden_submissions": {"submission_id", "form_slug", "hidden_at", "hidden_by"},
+	"submission_revisions": {"submission_id", "revision", "version", "answers", "email", "total", "currency",
+		"remote_ip", "answered_at", "replaced_at"},
 }
 
 // Init creates this domain's tables. Idempotent, and run at every startup.
@@ -146,6 +148,32 @@ CREATE TABLE IF NOT EXISTS hidden_submissions (
     hidden_at      INTEGER NOT NULL,
     hidden_by      TEXT    NOT NULL
 ) STRICT;
+
+-- One row per set of answers a submission has held and no longer does,
+-- written when somebody changes their answers through the link in a message
+-- we sent them. The submissions row always holds the current answers, so
+-- every list, the CSV and the public listing read one row per submission as
+-- they always have; this table is the history behind it, and nothing in it is
+-- ever updated or removed except with the submission itself.
+--
+-- revision counts from 1, which is what was first submitted. answered_at is
+-- when these answers became the current ones and replaced_at is when they
+-- stopped being, so a row says on its own which stretch of time it covers.
+-- total and currency are kept, though a form whose answers can change sells
+-- nothing, so that a row reads back through the same code as a submission.
+CREATE TABLE IF NOT EXISTS submission_revisions (
+    submission_id  TEXT    NOT NULL REFERENCES submissions(id) ON DELETE CASCADE,
+    revision       INTEGER NOT NULL,
+    version        TEXT    NOT NULL,
+    answers        TEXT    NOT NULL,
+    email          TEXT    NOT NULL,
+    total          INTEGER NOT NULL,
+    currency       TEXT    NOT NULL,
+    remote_ip      TEXT    NOT NULL,
+    answered_at    INTEGER NOT NULL,
+    replaced_at    INTEGER NOT NULL,
+    PRIMARY KEY (submission_id, revision)
+) STRICT;
 `
 
 	if _, err := db.ExecContext(ctx, schema); err != nil {
@@ -207,6 +235,153 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	}
 
 	return true, nil
+}
+
+// Change replaces a submission's answers, keeping the ones it held as a
+// revision, and spends the nonce -- in one transaction, for the reason Accept
+// is one.
+//
+// The UPDATE is conditional on the row being the one the caller read: the
+// same updated_at, and not hidden. Two tabs open on the same link, both
+// submitting, is the case that matters. Without the condition the second
+// would silently replace the first, and the revision it wrote would claim the
+// answers it replaced were the ones from before either of them. With it, the
+// second is told [submissionbus.ErrChangedMeanwhile] and nothing is written.
+// A hiding that lands between the caller's read and this write is the same
+// answer, for the same reason.
+func (s *Store) Change(ctx context.Context, before, after submissionbus.Submission, nonce string) (bool, error) {
+	was, err := marshalAnswers(before.Answers)
+	if err != nil {
+		return false, err
+	}
+
+	now, err := marshalAnswers(after.Answers)
+	if err != nil {
+		return false, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("beginning the transaction: %w", err)
+	}
+
+	defer tx.Rollback()
+
+	const spend = `INSERT INTO spent_grants (nonce, form_slug, spent_at) VALUES (?, ?, ?)`
+
+	_, err = tx.ExecContext(ctx, spend, nonce, after.Form.String(), msOf(after.UpdatedAt))
+
+	switch {
+	case sqldb.IsPrimaryKeyViolation(err):
+		return false, nil
+
+	case err != nil:
+		return false, fmt.Errorf("spending the grant: %w", err)
+	}
+
+	const update = `
+UPDATE submissions
+SET version = ?, answers = ?, email = ?, total = ?, currency = ?, remote_ip = ?, updated_at = ?
+WHERE id = ? AND form_slug = ? AND updated_at = ? AND ` + notHidden
+
+	res, err := tx.ExecContext(ctx, update,
+		after.Version, now, after.Email.String(), int64(after.Answers.Total), after.Answers.Currency,
+		after.RemoteIP, msOf(after.UpdatedAt),
+		before.ID.String(), before.Form.String(), msOf(before.UpdatedAt))
+	if err != nil {
+		return false, fmt.Errorf("changing the submission: %w", err)
+	}
+
+	n, err := res.RowsAffected()
+	switch {
+	case err != nil:
+		return false, fmt.Errorf("changing the submission: %w", err)
+	case n == 0:
+		return false, submissionbus.ErrChangedMeanwhile
+	}
+
+	// Numbered inside the transaction, so two changes cannot both take the
+	// same number -- and the conditional UPDATE above already means only one
+	// of two could reach here.
+	const keep = `
+INSERT INTO submission_revisions
+    (submission_id, revision, version, answers, email, total, currency, remote_ip, answered_at, replaced_at)
+SELECT ?, COALESCE(MAX(revision), 0) + 1, ?, ?, ?, ?, ?, ?, ?, ?
+FROM submission_revisions WHERE submission_id = ?`
+
+	_, err = tx.ExecContext(ctx, keep,
+		before.ID.String(), before.Version, was, before.Email.String(), int64(before.Answers.Total),
+		before.Answers.Currency, before.RemoteIP, msOf(before.UpdatedAt), msOf(after.UpdatedAt),
+		before.ID.String())
+	if err != nil {
+		return false, fmt.Errorf("keeping the earlier answers: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("committing the change: %w", err)
+	}
+
+	return true, nil
+}
+
+// Revisions reads every set of answers a submission has held and no longer
+// does, oldest first. Empty for one that has never been changed.
+func (s *Store) Revisions(ctx context.Context, sub submissionbus.Submission) ([]submissionbus.Revision, error) {
+	const q = `
+SELECT revision, version, answers, email, total, currency, remote_ip, answered_at, replaced_at
+FROM submission_revisions
+WHERE submission_id = ?
+ORDER BY revision`
+
+	rows, err := s.db.QueryContext(ctx, q, sub.ID.String())
+	if err != nil {
+		return nil, fmt.Errorf("querying the earlier answers: %w", err)
+	}
+	defer rows.Close()
+
+	var out []submissionbus.Revision
+	for rows.Next() {
+		var (
+			number                   int
+			version, doc, email, cur string
+			remoteIP                 string
+			total, from, until       int64
+		)
+
+		if err := rows.Scan(&number, &version, &doc, &email, &total, &cur, &remoteIP, &from, &until); err != nil {
+			return nil, fmt.Errorf("reading earlier answers: %w", err)
+		}
+
+		answers, err := unmarshalAnswers(doc, sub.Form, version, cur, types.Money(total))
+		if err != nil {
+			return nil, err
+		}
+
+		rev := submissionbus.Revision{
+			SubmissionID: sub.ID,
+			Number:       number,
+			Version:      version,
+			Answers:      answers,
+			RemoteIP:     remoteIP,
+			From:         timeOf(from),
+			Until:        timeOf(until),
+		}
+
+		if email != "" {
+			rev.Email, err = types.ParseEmail(email)
+			if err != nil {
+				return nil, fmt.Errorf("the address on earlier answers is unreadable: %w", err)
+			}
+		}
+
+		out = append(out, rev)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading the earlier answers: %w", err)
+	}
+
+	return out, nil
 }
 
 // CountSince is how many submissions a form has taken since an instant.

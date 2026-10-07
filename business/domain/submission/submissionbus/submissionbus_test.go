@@ -27,6 +27,7 @@ type memStore struct {
 	nonces map[string]time.Time
 	handed map[types.ID]submissionbus.Collection
 	hidden map[types.ID]submissionbus.Hiding
+	revs   map[types.ID][]submissionbus.Revision
 
 	// counted is how many times the day's submissions have been counted, so
 	// that a test can assert an uncapped form does not pay for the query.
@@ -41,6 +42,7 @@ func newMemStore() *memStore {
 		nonces: map[string]time.Time{},
 		handed: map[types.ID]submissionbus.Collection{},
 		hidden: map[types.ID]submissionbus.Hiding{},
+		revs:   map[types.ID][]submissionbus.Revision{},
 	}
 }
 

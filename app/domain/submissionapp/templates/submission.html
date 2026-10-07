@@ -23,6 +23,7 @@ table or the list beneath the form.</p>
 <table class="detail">
 <tbody>
 <tr><th scope="row">Received</th><td>{{.When}}</td></tr>
+{{with .Changed}}<tr><th scope="row">Last changed</th><td>{{.}}, by the person who sent it</td></tr>{{end}}
 <tr><th scope="row">Status</th><td>{{.Status}}</td></tr>
 {{with .Email}}<tr><th scope="row">Email</th><td>{{.}}</td></tr>{{end}}
 <tr><th scope="row">Total</th><td>{{.Total}}</td></tr>
@@ -46,6 +47,27 @@ table or the list beneath the form.</p>
 </tbody>
 </table>
 
+{{with .Earlier}}
+<h2>Earlier answers</h2>
+<p class="help">What these answers said before each change, newest first.
+They were changed through the link in the emails sent to whoever answered.</p>
+{{range .}}
+<details>
+<summary>As sent {{.From}}, until {{.Until}}</summary>
+<table class="detail">
+<tbody>
+{{range .Answers}}
+<tr>
+<th scope="row">{{.Label}}</th>
+<td>{{if .Answered}}{{if .Value}}{{.Value}}{{else}}<span class="absent">left blank</span>{{end}}{{else}}<span class="absent">not asked</span>{{end}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+</details>
+{{end}}
+{{end}}
+
 {{if .Lines}}
 <h2>Order</h2>
 <table class="detail">
@@ -66,7 +88,10 @@ table or the list beneath the form.</p>
 <p class="help">For a test, a duplicate, or anything else that should not be
 counted. It leaves every list, the totals and the download, and can be put back
 from here at any time. Nothing is deleted{{if .Ref}}, and nothing is refunded
-&mdash; a refund is made in Stripe{{end}}.</p>
+&mdash; a refund is made in Stripe{{end}}.{{if not .Form.ChangeableUntil.IsZero}}
+While it is hidden, the link in the emails sent to whoever answered stops
+working, which is also how to withdraw a link that has been forwarded
+somewhere it should not have gone.{{end}}</p>
 <form method="post" action="/forms/{{.FormID}}/submissions/{{.ID}}/hide">
   <button type="submit" class="quiet">Hide this submission</button>
 </form>

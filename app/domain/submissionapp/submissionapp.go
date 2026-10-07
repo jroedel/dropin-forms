@@ -46,6 +46,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -86,6 +87,7 @@ type Submissions interface {
 	ByID(ctx context.Context, id types.ID) (submissionbus.Submission, error)
 	Hidden(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error)
 	HidingOf(ctx context.Context, id types.ID) (submissionbus.Hiding, bool, error)
+	Revisions(ctx context.Context, s submissionbus.Submission) ([]submissionbus.Revision, error)
 }
 
 // Grants answers which forms an account may reach, for the index page. The
@@ -531,6 +533,21 @@ type oneView struct {
 	HiddenBy string
 	HiddenAt string
 	CanHide  bool
+
+	// Changed is when the person last changed these answers through the link
+	// we sent them, or empty if they never have. Earlier is what the answers
+	// said before each change, newest first: what the office reads when it
+	// asks "what did he tell us in October".
+	Changed string
+	Earlier []revisionView
+}
+
+// revisionView is one set of answers a submission held and no longer does.
+type revisionView struct {
+	Number  int
+	From    string
+	Until   string
+	Answers []answerView
 }
 
 type answerView struct {
@@ -590,25 +607,14 @@ func (a app) one(w http.ResponseWriter, r *http.Request) {
 		Form:   f,
 		FormID: f.ID.String(),
 		ID:     s.ID.String(),
-		When:   s.CreatedAt.Local().Format("Monday 2 January 2006, 15:04"),
+		When:   s.CreatedAt.Local().Format(longWhen),
 		Status: s.Status.String(),
 		Email:  s.Email.String(),
 		Total:  formbus.Show(s.Answers.Total, f.Currency),
 		Ref:    s.PaymentRef,
 	}
 
-	// Walked in the definition's order rather than the record's, so two
-	// submissions to the same form read the same way down the page even when
-	// one of them skipped a conditional field.
-	for _, fld := range f.Fields {
-		ans, answered := s.Answers.Field(fld.Name)
-
-		view.Answers = append(view.Answers, answerView{
-			Label:    fld.Label,
-			Value:    ans.Readable(),
-			Answered: answered,
-		})
-	}
+	view.Answers = answersOf(f, s.Answers)
 
 	for _, l := range s.Answers.Lines {
 		view.Lines = append(view.Lines, lineView{
@@ -620,8 +626,64 @@ func (a app) one(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.hiding(r, s, &view)
+	a.history(r, f, s, &view)
 
 	a.cfg.Render.Render(w, r, http.StatusOK, "submission", view)
+}
+
+// longWhen is how this page writes an instant.
+const longWhen = "Monday 2 January 2006, 15:04"
+
+// answersOf lays answers out against a definition.
+//
+// Walked in the definition's order rather than the record's, so two
+// submissions to the same form read the same way down the page even when one
+// of them skipped a conditional field -- and so an earlier version of one
+// submission's answers reads row for row against its current one, with a
+// question added since showing as not asked.
+func answersOf(f formbus.Form, a formbus.Answers) []answerView {
+	out := make([]answerView, 0, len(f.Fields))
+
+	for _, fld := range f.Fields {
+		ans, answered := a.Field(fld.Name)
+
+		out = append(out, answerView{
+			Label:    fld.Label,
+			Value:    ans.Readable(),
+			Answered: answered,
+		})
+	}
+
+	return out
+}
+
+// history fills in what the answers said before each change.
+//
+// A failure is logged and the page is rendered without it, as hiding's is:
+// somebody who came to read the current answers should get them.
+func (a app) history(r *http.Request, f formbus.Form, s submissionbus.Submission, view *oneView) {
+	revs, err := a.cfg.Submissions.Revisions(r.Context(), s)
+	if err != nil {
+		a.cfg.Log.Error("the earlier answers could not be read",
+			"request_id", web.RequestIDFrom(r.Context()), "submission_id", s.ID.String(), "error", err)
+
+		return
+	}
+
+	if len(revs) == 0 {
+		return
+	}
+
+	view.Changed = s.UpdatedAt.Local().Format(longWhen)
+
+	for _, rev := range slices.Backward(revs) {
+		view.Earlier = append(view.Earlier, revisionView{
+			Number:  rev.Number,
+			From:    rev.From.Local().Format(longWhen),
+			Until:   rev.Until.Local().Format(longWhen),
+			Answers: answersOf(f, rev.Answers),
+		})
+	}
 }
 
 // hiding fills in whether a submission is hidden and whether this reader may

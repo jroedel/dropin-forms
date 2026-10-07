@@ -184,6 +184,11 @@ type form struct {
 	OpensAt  string `toml:"opens_at"`
 	ClosesAt string `toml:"closes_at"`
 
+	// Until when somebody who has answered may change their answers, through
+	// the link in the messages they are sent. Also RFC 3339; empty means
+	// never. See formbus.Form.ChangeableUntil.
+	ChangeableUntil string `toml:"changeable_until"`
+
 	ClosedNote string `toml:"closed_note"`
 
 	Currency string   `toml:"currency"`
@@ -317,6 +322,9 @@ func (w form) toForm() (formbus.Form, error) {
 		return formbus.Form{}, err
 	}
 	if f.ClosesAt, err = parseInstant("closes_at", w.ClosesAt); err != nil {
+		return formbus.Form{}, err
+	}
+	if f.ChangeableUntil, err = parseInstant("changeable_until", w.ChangeableUntil); err != nil {
 		return formbus.Form{}, err
 	}
 
