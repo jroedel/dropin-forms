@@ -55,6 +55,11 @@ func TestAChangeReplacesTheRowAndKeepsTheOldAnswers(t *testing.T) {
 		t.Fatalf("second Change: %v, %v", ok, err)
 	}
 
+	counts, err := store.ChangeCounts(ctx, first.Form)
+	if err != nil || counts[first.ID] != 2 || len(counts) != 1 {
+		t.Errorf("ChangeCounts = %v, %v; want this submission changed twice", counts, err)
+	}
+
 	got, err := store.ByID(ctx, first.ID)
 	if err != nil {
 		t.Fatalf("ByID: %v", err)
@@ -218,5 +223,43 @@ func TestConcurrentChangesProduceOneWinner(t *testing.T) {
 	revs, _ := store.Revisions(ctx, got)
 	if len(revs) != 1 {
 		t.Errorf("%d revisions, want 1", len(revs))
+	}
+}
+
+func TestByEmailFindsOneAddressOnOneFormAndSkipsTheHidden(t *testing.T) {
+	_, store := open(t)
+	ctx := t.Context()
+
+	mine := changeable(t)
+	if _, err := store.Accept(ctx, mine, "n1"); err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+
+	hidden := changeable(t)
+	hidden.ID = types.NewID()
+	if _, err := store.Accept(ctx, hidden, "n2"); err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+	if _, _, err := store.Hide(ctx, submissionbus.Hiding{SubmissionID: hidden.ID, Form: hidden.Form, HiddenAt: now, HiddenBy: types.NewID()}); err != nil {
+		t.Fatalf("Hide: %v", err)
+	}
+
+	other := changeable(t)
+	other.ID = types.NewID()
+	other.Email = mustEmail(t, "someone@example.org")
+	if _, err := store.Accept(ctx, other, "n3"); err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+
+	got, err := store.ByEmail(ctx, mine.Form, mine.Email)
+	if err != nil {
+		t.Fatalf("ByEmail: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != mine.ID {
+		t.Errorf("ByEmail = %d rows, want only the visible one from this address", len(got))
+	}
+
+	if got, _ := store.ByEmail(ctx, mustSlug(t, "elsewhere"), mine.Email); len(got) != 0 {
+		t.Errorf("ByEmail on another form = %d rows", len(got))
 	}
 }

@@ -92,6 +92,10 @@ type Submissions interface {
 	// money, oldest first. What counts as long enough is passed in rather than
 	// decided there, because it is a judgement about people.
 	Unpaid(ctx context.Context, now time.Time, grace time.Duration) ([]submissionbus.Submission, error)
+
+	// Yours is a form's submissions from one address that its owner could
+	// still change, for sending somebody their links again.
+	Yours(ctx context.Context, form types.Slug, email types.Email) ([]submissionbus.Submission, error)
 }
 
 // Grants answers who may read a form's submissions, which is most of who
@@ -172,6 +176,13 @@ type Config struct {
 	// message still says everything it has to say and simply carries no link,
 	// which is better than a link to nowhere.
 	AdminBaseURL string
+
+	// AnswerKey and EmbedBaseURL make the link back to somebody's own answers,
+	// which every message to them carries on a form that takes changes. Either
+	// one missing leaves the link out, and the message says to reply instead,
+	// which is what every message said before there was a link.
+	AnswerKey    submissionbus.AnswerKey
+	EmbedBaseURL string
 
 	// Now is the clock, injected so a test does not have to be run at a
 	// particular time. Nil means time.Now.

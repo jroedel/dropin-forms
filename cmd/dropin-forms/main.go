@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
+	"github.com/jroedel/dropin-forms/app/domain/feedapp"
 	"github.com/jroedel/dropin-forms/app/domain/formapp"
 	"github.com/jroedel/dropin-forms/app/domain/notifyapp"
 	"github.com/jroedel/dropin-forms/app/domain/peopleapp"
@@ -23,6 +24,8 @@ import (
 	"github.com/jroedel/dropin-forms/app/sdk/page"
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/access/stores/accessdb"
+	"github.com/jroedel/dropin-forms/business/domain/feed/feedbus"
+	"github.com/jroedel/dropin-forms/business/domain/feed/stores/feeddb"
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/domain/form/stores/formdb"
 	"github.com/jroedel/dropin-forms/business/domain/form/stores/formtoml"
@@ -169,6 +172,12 @@ func run() error {
 		return err
 	}
 
+	// The keys a spreadsheet reads one form's answers with; feedbus says why
+	// a service without credentials has these.
+	if err := feeddb.Init(ctx, db); err != nil {
+		return err
+	}
+
 	// The schema is checked once at startup as well as on every health
 	// request. Failing here means the process never begins serving, which is
 	// what should happen when a binary and a database disagree -- the deploy
@@ -180,7 +189,7 @@ func run() error {
 	expected := sqldb.Expected{}
 	for _, part := range []sqldb.Expected{
 		sqldb.Infrastructure, userdb.Expected, accessdb.Expected, submissiondb.Expected,
-		paydb.Expected, notifydb.Expected, formdb.Expected,
+		paydb.Expected, notifydb.Expected, formdb.Expected, feeddb.Expected,
 	} {
 		for table, columns := range part {
 			if _, clash := expected[table]; clash {
@@ -262,6 +271,8 @@ func run() error {
 		MuteKey:      muteKey,
 		Office:       cfg.Mail.Notify,
 		AdminBaseURL: cfg.Server.AdminBaseURL,
+		AnswerKey:    answerKey,
+		EmbedBaseURL: cfg.Server.EmbedBaseURL,
 	})
 	if err != nil {
 		return err
@@ -269,7 +280,7 @@ func run() error {
 
 	adminPages, err := page.NewRenderer(log, page.AdminChrome(),
 		authapp.Templates, submissionapp.Templates, notifyapp.Templates, peopleapp.Templates,
-		formapp.Templates, willcallapp.Templates, siteapp.Templates)
+		formapp.Templates, willcallapp.Templates, siteapp.Templates, feedapp.Templates)
 	if err != nil {
 		return err
 	}
@@ -289,6 +300,8 @@ func run() error {
 		Submissions:  submissions,
 		Table:        submissions,
 		Hiding:       submissions,
+		Feeds:        feedbus.NewBusiness(log, feeddb.NewStore(db)),
+		FeedRows:     submissions,
 		Forms:        definitions,
 		Builder:      definitions,
 		EmbedBaseURL: cfg.Server.EmbedBaseURL,

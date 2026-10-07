@@ -49,6 +49,30 @@ func (m *memStore) Revisions(_ context.Context, s submissionbus.Submission) ([]s
 	return slices.Clone(m.revs[s.ID]), nil
 }
 
+func (m *memStore) ByEmail(_ context.Context, form types.Slug, email types.Email) ([]submissionbus.Submission, error) {
+	var out []submissionbus.Submission
+
+	for _, s := range m.subs {
+		if _, hidden := m.hidden[s.ID]; s.Form == form && s.Email == email && !hidden {
+			out = append(out, s)
+		}
+	}
+
+	return out, nil
+}
+
+func (m *memStore) ChangeCounts(_ context.Context, form types.Slug) (map[types.ID]int, error) {
+	out := map[types.ID]int{}
+
+	for id, revs := range m.revs {
+		if m.subs[id].Form == form {
+			out[id] = len(revs)
+		}
+	}
+
+	return out, nil
+}
+
 // accepted stores one free submission and returns it.
 func accepted(t *testing.T, b *submissionbus.Business, form types.Slug) submissionbus.Submission {
 	t.Helper()
@@ -273,3 +297,32 @@ func (r *racingStore) Change(ctx context.Context, before, after submissionbus.Su
 }
 
 func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+func TestYoursIsWhatAnAddressCouldChange(t *testing.T) {
+	b, _ := newBusiness()
+	form := mustSlug(t, "ordination")
+
+	kept := accepted(t, b, form)
+
+	gone := answers(t, form, 0)
+	hidden, err := b.Accept(t.Context(), now, grantFor(gone, "hidden"), submissionbus.New{Answers: gone})
+	if err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+	if _, _, err := b.Hide(t.Context(), now, hidden.ID, types.NewID()); err != nil {
+		t.Fatalf("Hide: %v", err)
+	}
+
+	paid := answers(t, form, types.Money(500))
+	if _, err := b.Accept(t.Context(), now, grantFor(paid, "order"), submissionbus.New{Answers: paid}); err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+
+	got, err := b.Yours(t.Context(), form, kept.Email)
+	if err != nil {
+		t.Fatalf("Yours: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != kept.ID {
+		t.Errorf("Yours = %d submissions, want only the one neither hidden nor an order", len(got))
+	}
+}

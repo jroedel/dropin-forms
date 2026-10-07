@@ -1,0 +1,118 @@
+{{define "title"}}Spreadsheet for {{.Form.Title}}{{end}}
+
+{{define "masthead"}}<a href="/forms">Forms</a>{{end}}
+
+{{define "content"}}
+<h1>A spreadsheet that keeps up</h1>
+
+<p class="crumb"><a href="/forms/{{.FormID}}/submissions">{{.Form.Title}}</a></p>
+
+<p class="help">A Google Sheet can read this form's answers every few minutes and
+keep a tab of its own up to date, so your own sheets can look people up in it.
+It reads with a key you make here. A key can read this one form's answers and
+nothing else, and can change nothing.</p>
+
+{{with .Secret}}
+<div class="notice">
+<p><strong>Copy this key now.</strong> It will not be shown again. Anyone who
+has it can read every answer to this form, so put it only where the steps
+below say.</p>
+<pre class="snippet">{{.}}</pre>
+</div>
+{{end}}
+
+<h2>Keys</h2>
+{{if .Keys}}
+<table class="listing">
+<thead>
+<tr>
+<th scope="col">Called</th>
+<th scope="col">Made</th>
+<th scope="col">Last used</th>
+<th scope="col"><span class="visually-hidden">Revoke</span></th>
+</tr>
+</thead>
+<tbody>
+{{range .Keys}}
+<tr>
+<th scope="row">{{.Label}}</th>
+<td class="when">{{.Made}}</td>
+<td class="when">{{.LastUsed}}</td>
+<td>
+{{if .Live}}
+<form method="post" action="/forms/{{$.FormID}}/feed/{{.ID}}/revoke" class="inline">
+  <button type="submit" class="quiet">Revoke</button>
+</form>
+{{else}}
+<span class="absent">revoked</span>
+{{end}}
+</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p class="help">None yet.</p>
+{{end}}
+
+<form method="post" action="/forms/{{.FormID}}/feed">
+<div class="field">
+  <label for="label">Make a key called</label>
+  <p class="help">So that you can tell which one to revoke later.</p>
+  <input type="text" id="label" name="label" placeholder="Office sheet" maxlength="80">
+</div>
+<button type="submit">Make a key</button>
+</form>
+
+<h2>Setting up the sheet</h2>
+<ol>
+<li>In the Google Sheet, open <strong>Extensions → Apps Script</strong>.</li>
+<li>Open <strong>Project Settings</strong> (the gear), and under <strong>Script
+Properties</strong> add one called <code>FEED_KEY</code> whose value is the key
+above. It goes there rather than in the script so that anybody who can read the
+script cannot read the key.</li>
+<li>Back in the editor, replace what is there with this, and save:
+<pre class="snippet">// Copies the answers to "{{.Form.Title}}" into a tab called Responses.
+const FEED = '{{.FeedURL}}';
+const TAB = 'Responses';
+
+function pull() {
+  const key = PropertiesService.getScriptProperties().getProperty('FEED_KEY');
+  const res = UrlFetchApp.fetch(FEED, {
+    headers: { Authorization: 'Bearer ' + key },
+    muteHttpExceptions: true,
+  });
+  if (res.getResponseCode() !== 200) {
+    throw new Error('The feed answered ' + res.getResponseCode() + ': ' + res.getContentText());
+  }
+  const feed = JSON.parse(res.getContentText());
+
+  const head = ['Reference', 'Received', 'Last changed', 'Times changed', 'Email']
+    .concat(feed.fields.map(f => f.label));
+  const rows = feed.responses.map(r => [
+    r.id, new Date(r.created_at), new Date(r.updated_at), r.changes, r.email,
+  ].concat(feed.fields.map(f => {
+    const v = r.answers[f.name];
+    return v == null ? '' : Array.isArray(v) ? v.join(', ') : v;
+  })));
+
+  const book = SpreadsheetApp.getActive();
+  const sheet = book.getSheetByName(TAB) || book.insertSheet(TAB);
+  sheet.clearContents();
+  sheet.getRange(1, 1, 1, head.length).setValues([head]).setFontWeight('bold');
+  if (rows.length) sheet.getRange(2, 1, rows.length, head.length).setValues(rows);
+  sheet.setFrozenRows(1);
+}</pre></li>
+<li>Choose <code>pull</code> beside the Run button and press <strong>Run</strong>.
+Google will ask you to allow it to reach this site and change the sheet; allow
+it. A <em>Responses</em> tab appears.</li>
+<li>Open <strong>Triggers</strong> (the clock), <strong>Add Trigger</strong>,
+choose <code>pull</code>, <em>Time-driven</em>, every 5 or 10 minutes.</li>
+</ol>
+
+<p class="help">The tab is rewritten each time, one row per answer, oldest first,
+so a person keeps the row they were on. Hidden submissions are left out, as they
+are from the download. Point your own sheets at this tab — by reference or by
+email, with <code>XLOOKUP</code> or <code>VLOOKUP</code> — rather than typing
+into it, because whatever is typed into it is replaced at the next pull.</p>
+{{end}}

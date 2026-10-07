@@ -324,6 +324,79 @@ FROM submission_revisions WHERE submission_id = ?`
 	return true, nil
 }
 
+// ChangeCounts is how many times each of a form's changed submissions has
+// been changed, in one query. A submission never changed is absent.
+func (s *Store) ChangeCounts(ctx context.Context, form types.Slug) (map[types.ID]int, error) {
+	const q = `
+SELECT r.submission_id, COUNT(*)
+FROM submission_revisions r JOIN submissions s ON s.id = r.submission_id
+WHERE s.form_slug = ?
+GROUP BY r.submission_id`
+
+	rows, err := s.db.QueryContext(ctx, q, form.String())
+	if err != nil {
+		return nil, fmt.Errorf("counting the changes: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[types.ID]int)
+	for rows.Next() {
+		var (
+			raw string
+			n   int
+		)
+
+		if err := rows.Scan(&raw, &n); err != nil {
+			return nil, fmt.Errorf("reading a count of changes: %w", err)
+		}
+
+		id, err := types.ParseID(raw)
+		if err != nil {
+			return nil, fmt.Errorf("the submission identifier on a revision is unreadable: %w", err)
+		}
+
+		out[id] = n
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading the counts of changes: %w", err)
+	}
+
+	return out, nil
+}
+
+// ByEmail lists a form's submissions from one address that are not hidden,
+// newest first: the ones a "send me my link" request may be answered with.
+//
+// Scanned rather than indexed. It is one form's rows, read by a person typing
+// their address into a page behind the submit throttle, and an index on
+// (form_slug, email) would be paid for on every insert to serve that.
+func (s *Store) ByEmail(ctx context.Context, form types.Slug, email types.Email) ([]submissionbus.Submission, error) {
+	const q = selectColumns + ` WHERE form_slug = ? AND email = ? AND ` + notHidden + ` ORDER BY created_at DESC, id`
+
+	rows, err := s.db.QueryContext(ctx, q, form.String(), email.String())
+	if err != nil {
+		return nil, fmt.Errorf("querying the submissions from an address: %w", err)
+	}
+	defer rows.Close()
+
+	var out []submissionbus.Submission
+	for rows.Next() {
+		sub, err := scan(rows)
+		if err != nil {
+			return nil, fmt.Errorf("reading a submission: %w", err)
+		}
+
+		out = append(out, sub)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading the submissions from an address: %w", err)
+	}
+
+	return out, nil
+}
+
 // Revisions reads every set of answers a submission has held and no longer
 // does, oldest first. Empty for one that has never been changed.
 func (s *Store) Revisions(ctx context.Context, sub submissionbus.Submission) ([]submissionbus.Revision, error) {

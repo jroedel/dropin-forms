@@ -2059,6 +2059,71 @@ never the query; Apache's access log on the same host does record it, which is
 the same trust boundary as the database the token unlocks a row of. The POST
 carries it in a hidden field, not in its address.
 
+**Every message carries the way back.** On a form that takes changes, the
+last paragraph of every message to the person is the link and its date, in
+place of "reply and we will put it right" — which it still says as well. It
+also says plainly to keep the link to themselves, because a forwarded email is
+the one way somebody else gets in. The office's copies never carry it.
+
+**A change is announced.** The person is sent their answers as they now stand,
+with the link again. The office is sent what changed, one line per question in
+the definition's order — `Plans: booked (was: considering)`, `Arrival flight:
+UA 1234 (was: not answered)` — because "he updated his form" sends somebody to
+go and look and the line is something they can act on. If the email answer
+changed, the old address is told where mail now goes, with the link: if the
+change was not theirs, that is the quickest way to put it back.
+
+**"Lost your link?"** A page on the form (`/f/{slug}/link`, offered beneath
+the form while it takes changes) takes an address and mails the links for
+whatever that address has answered. It says the same thing whether or not
+there was anything: for this form, "no answers from that address" would tell a
+stranger who is and is not coming. Nothing is sent to an address that never
+answered, or the page would be a way to send our mail to anybody. It sits
+behind the submit allowance and a grant. It is synchronous, like sign-in, and
+accepts the same small timing difference sign-in does.
+
+### The spreadsheet feed, as built
+
+The office keeps its own Google Sheets — rooming, rides, the vesting list —
+and wants them to follow the answers without anybody downloading a CSV. So a
+form's administrator can make a **key** on the form's Spreadsheet page
+(`/forms/{slug}/feed`, linked from the submissions list), and a Google Apps
+Script holding it reads `GET /forms/{slug}/feed.json` on a timer and rewrites a
+tab of its own. The page carries the script, with the address filled in, and
+the five steps to install it.
+
+**A key, on a service that left key management behind.** CLAUDE.md says so,
+and this is a deliberate, narrow exception. A sheet's script cannot hold a
+session: it cannot follow an emailed sign-in link, and it would have to every
+fourteen days. What keeps it narrow is what a key cannot do. It reads one form
+and is refused on every other. It writes nothing: no route anywhere accepts a
+key for a write. It has no scopes, no roles and no expiry. An administrator
+revokes it from the page that made it, and the page shows when each key was
+last used.
+
+**Shown once, stored as a hash.** A key is `dfk_` and 32 random bytes; the
+prefix makes one pasted somewhere it should not be recognisable. Only its
+SHA-256 is stored, and the lookup is by that hash. A fast hash is right for 256
+bits of randomness: there is nothing to stretch. The page tells the person to
+put the key in the script's properties rather than in the script, so that
+whoever can read the script cannot read the key.
+
+**Behind the key alone.** The JSON route sits on the admin listener behind the
+ordinary chain, which refuses nothing a script sends: no Sec-Fetch-Site and
+no Origin pass the same-origin gate, the form-encoding gate looks only at
+writes, and Authenticate never refuses. A session is not a key: an
+administrator's cookie reads nothing there. Every refusal is the same 401, and
+the key is checked before the form is looked up, so a stranger learns nothing
+about which forms exist.
+
+**Everything, every time.** The feed holds the same rows as the CSV — not
+hidden — oldest first, so a person keeps their row from one pull to the next,
+with a key for every question the form now asks (`null` when unanswered) and
+how many times each has been changed. An incremental `?since=` was designed
+and dropped: hiding a submission does not change it, so a script asking "what
+is new" would never hear that a row should go. At a parish form's size, all of
+it is a few kilobytes.
+
 ## 10. Dependencies
 
 A dependency needs a comment naming the standard-library answer that was
