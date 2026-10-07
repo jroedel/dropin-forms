@@ -11,12 +11,14 @@ import (
 
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
+	"github.com/jroedel/dropin-forms/app/domain/feedapp"
 	"github.com/jroedel/dropin-forms/app/domain/notifyapp"
 	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
 	"github.com/jroedel/dropin-forms/app/sdk/muxer"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/access/stores/accessdb"
+	"github.com/jroedel/dropin-forms/business/domain/feed/stores/feeddb"
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/domain/form/stores/formtoml"
 	"github.com/jroedel/dropin-forms/business/domain/notify/stores/notifydb"
@@ -62,7 +64,7 @@ func newConfig(t *testing.T, origins []types.Origin, expected sqldb.Expected) mu
 	}
 
 	renderer, err := page.NewRenderer(log, page.AdminChrome(),
-		authapp.Templates, submissionapp.Templates, notifyapp.Templates)
+		authapp.Templates, submissionapp.Templates, notifyapp.Templates, feedapp.Templates)
 	if err != nil {
 		t.Fatalf("building the renderer: %v", err)
 	}
@@ -75,6 +77,11 @@ func newConfig(t *testing.T, origins []types.Origin, expected sqldb.Expected) mu
 	// submissiondb's tables too, because the embed surface accepts writes.
 	if err := submissiondb.Init(t.Context(), db); err != nil {
 		t.Fatalf("initialising the submission tables: %v", err)
+	}
+
+	// And the spreadsheet feed's keys, for the tests that mount it.
+	if err := feeddb.Init(t.Context(), db); err != nil {
+		t.Fatalf("initialising the feed key table: %v", err)
 	}
 
 	// And the notification preferences, because the admin surface mounts the

@@ -162,7 +162,11 @@ decision rather than by oversight. **This is an ordinary web server.**
   Storage is plain.
 - **Key and credential management.** `app/sdk/adminkey`, the credential domain,
   per-credential read/write scopes, and the `RequireWrite` gate that reads
-  them.
+  them. One narrow exception was made on purpose: `feedbus` issues a
+  read-only key per form so that a Google Sheet can follow a form's answers.
+  It reads one form, writes nothing, has no scopes, and is revoked from the
+  page that made it — see "The spreadsheet feed, as built" in the design doc.
+  It is not a foothold for the rest.
 - **The operational apparatus around those:** credential-disclosure playbooks,
   secret rotation policy, the `prod-*` scripts, deploy bundles.
 

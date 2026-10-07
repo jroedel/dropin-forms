@@ -184,6 +184,18 @@ func (b *Business) Yours(ctx context.Context, form types.Slug, email types.Email
 	return slices.DeleteFunc(subs, func(s Submission) bool { return s.Status != StatusReceived }), nil
 }
 
+// ChangeCounts is how many times each of a form's submissions has been
+// changed, absent for one never changed. One query for a whole form, for a
+// reader that lists them all.
+func (b *Business) ChangeCounts(ctx context.Context, form types.Slug) (map[types.ID]int, error) {
+	counts, err := b.store.ChangeCounts(ctx, form)
+	if err != nil {
+		return nil, fmt.Errorf("counting the changes: %w", err)
+	}
+
+	return counts, nil
+}
+
 // sameAnswers compares what was said, and nothing else.
 //
 // Labels are left out on purpose: a question reworded since somebody answered
