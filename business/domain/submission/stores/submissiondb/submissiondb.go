@@ -324,6 +324,38 @@ FROM submission_revisions WHERE submission_id = ?`
 	return true, nil
 }
 
+// ByEmail lists a form's submissions from one address that are not hidden,
+// newest first: the ones a "send me my link" request may be answered with.
+//
+// Scanned rather than indexed. It is one form's rows, read by a person typing
+// their address into a page behind the submit throttle, and an index on
+// (form_slug, email) would be paid for on every insert to serve that.
+func (s *Store) ByEmail(ctx context.Context, form types.Slug, email types.Email) ([]submissionbus.Submission, error) {
+	const q = selectColumns + ` WHERE form_slug = ? AND email = ? AND ` + notHidden + ` ORDER BY created_at DESC, id`
+
+	rows, err := s.db.QueryContext(ctx, q, form.String(), email.String())
+	if err != nil {
+		return nil, fmt.Errorf("querying the submissions from an address: %w", err)
+	}
+	defer rows.Close()
+
+	var out []submissionbus.Submission
+	for rows.Next() {
+		sub, err := scan(rows)
+		if err != nil {
+			return nil, fmt.Errorf("reading a submission: %w", err)
+		}
+
+		out = append(out, sub)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading the submissions from an address: %w", err)
+	}
+
+	return out, nil
+}
+
 // Revisions reads every set of answers a submission has held and no longer
 // does, oldest first. Empty for one that has never been changed.
 func (s *Store) Revisions(ctx context.Context, sub submissionbus.Submission) ([]submissionbus.Revision, error) {

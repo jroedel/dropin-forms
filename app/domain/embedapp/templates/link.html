@@ -1,0 +1,30 @@
+{{define "title"}}{{.Form.Title}}: your link{{end}}
+
+{{define "content"}}
+<div id="dropin-root" data-parent-origin="" class="form-shell">
+<h1>{{.Form.Title}}</h1>
+
+{{if .Sent}}
+<div class="summary" role="status">
+<p>If <strong>{{.Email}}</strong> has answered this form, a message with the
+link to those answers is on its way to it. It can take a few minutes; if
+nothing arrives, look in the spam folder, or check the address and ask
+again.</p>
+</div>
+{{else}}
+<p class="intro">Already answered, and need the link to change your answers?
+Type the email address you gave, and we will send it there.</p>
+
+{{with .Problem}}<div class="summary" role="alert"><p>{{.}}</p></div>{{end}}
+
+<form method="post" action="/f/{{.Form.ID}}/link">
+<input type="hidden" name="_grant" value="{{.Grant}}">
+<div class="field">
+<label for="email">Your email address</label>
+<input id="email" type="email" name="email" value="{{.Email}}" autocomplete="email" required>
+</div>
+<button class="go" type="submit" data-busy="Sending…">Send me the link</button>
+</form>
+{{end}}
+</div>
+{{end}}

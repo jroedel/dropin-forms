@@ -15,7 +15,8 @@ If something has changed, reply to any email we sent you about it and we will up
      was is not something to tell whoever is holding it. */}}
 <p>This link does not lead to any answers. If it came from an email, check
 that the whole address was copied — some mail programs break long links in
-two. Or reply to the email and we will send you a fresh one.</p>
+two.{{if .LinkAgain}}{{else}} Or reply to the email and we will send you a fresh one.{{end}}</p>
+{{with .LinkAgain}}<p><a href="{{.}}">Send me the link again</a></p>{{end}}
 {{end}}
 </div>
 {{end}}

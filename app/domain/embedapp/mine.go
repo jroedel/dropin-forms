@@ -73,6 +73,10 @@ type unreachableView struct {
 	// checking the address in.
 	TooLate bool
 	Until   string
+
+	// LinkAgain is where to ask for a fresh link, when the form still takes
+	// changes.
+	LinkAgain string
 }
 
 // mine shows somebody their own answers, ready to change.
@@ -265,6 +269,11 @@ func (a app) change(w http.ResponseWriter, r *http.Request) {
 		"request_id", web.RequestIDFrom(r.Context()),
 		"form", f.ID.String(), "submission_id", after.ID.String())
 
+	// Before the render, for the reason submit tells before it renders.
+	if a.cfg.Notify != nil {
+		a.cfg.Notify.Changed(r.Context(), before, after)
+	}
+
 	a.cfg.Render.Render(w, r, http.StatusOK, "done", doneView{
 		Form:         f,
 		Submission:   after,
@@ -273,6 +282,118 @@ func (a app) change(w http.ResponseWriter, r *http.Request) {
 		ChangeURL:    a.changeURL(f, after),
 		ChangeUntil:  untilWords(f.ChangeableUntil),
 	})
+}
+
+// linkView is the page that sends somebody their link again.
+type linkView struct {
+	Form  formbus.Form
+	Grant string
+
+	// Email is what was typed, back in the box; Problem is what was wrong
+	// with it, or with the page.
+	Email   string
+	Problem string
+
+	// Sent is the outcome, which reads the same whether anything was sent.
+	Sent bool
+}
+
+// lostLink asks for an address to send the link to.
+func (a app) lostLink(w http.ResponseWriter, r *http.Request) {
+	f, ok := a.changeable(w, r)
+	if !ok {
+		return
+	}
+
+	a.renderLink(w, r, http.StatusOK, f, linkView{})
+}
+
+// sendLink mails the links for an address, if it has any, and says the same
+// thing either way.
+//
+// The same thing, because the page takes any address anybody types: "we have
+// no answers from that address" would tell a stranger who has and has not
+// answered, which for this form is who is coming to an ordination. The mail
+// goes only to the address typed, so asking for somebody else's link sends it
+// to them and not to whoever asked.
+//
+// The grant is checked and not spent. Spending it would need a write per
+// request, and what it would prevent -- the same address asked for twice --
+// costs one more message to somebody who has answered, which the submit
+// allowance already bounds.
+func (a app) sendLink(w http.ResponseWriter, r *http.Request) {
+	f, ok := a.changeable(w, r)
+	if !ok {
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+
+	if err := r.ParseForm(); err != nil {
+		a.renderLink(w, r, http.StatusBadRequest, f, linkView{Problem: "We could not read that. Please try again."})
+
+		return
+	}
+
+	typed := r.PostFormValue("email")
+
+	if _, err := formbus.Redeem(a.cfg.GrantKey, r.PostFormValue(grantField), f, a.now()); err != nil {
+		a.renderLink(w, r, http.StatusOK, f, linkView{
+			Email:   typed,
+			Problem: "This page had been open a while, so we have refreshed it. Please send it again.",
+		})
+
+		return
+	}
+
+	email, err := types.ParseEmail(typed)
+	if err != nil {
+		a.renderLink(w, r, http.StatusUnprocessableEntity, f, linkView{
+			Email:   typed,
+			Problem: "That does not look like an email address. Please check it and try again.",
+		})
+
+		return
+	}
+
+	if a.cfg.Notify != nil {
+		a.cfg.Notify.SendLinks(r.Context(), f.ID, email)
+	}
+
+	a.renderLink(w, r, http.StatusOK, f, linkView{Email: email.String(), Sent: true})
+}
+
+// changeable resolves the form and answers the page itself when it does not
+// take changes now.
+func (a app) changeable(w http.ResponseWriter, r *http.Request) (formbus.Form, bool) {
+	f, ok := a.lookup(w, r)
+	if !ok {
+		return formbus.Form{}, false
+	}
+
+	if !f.Changeable(a.now()) || a.cfg.AnswerKey.Zero() {
+		a.unreachable(w, r, http.StatusOK, f, true)
+
+		return formbus.Form{}, false
+	}
+
+	return f, true
+}
+
+func (a app) renderLink(w http.ResponseWriter, r *http.Request, status int, f formbus.Form, v linkView) {
+	grant, err := formbus.Mint(a.cfg.GrantKey, f, a.now())
+	if err != nil {
+		a.cfg.Log.Error("a grant could not be minted",
+			"request_id", web.RequestIDFrom(r.Context()), "form", f.ID.String(), "error", err)
+		a.oops(w, r)
+
+		return
+	}
+
+	v.Form = f
+	v.Grant = grant
+
+	a.cfg.Render.Render(w, r, status, "link", v)
 }
 
 // answerLink reads a presented token and checks it names this form, answering
@@ -357,10 +478,21 @@ func (a app) renderMine(
 
 func (a app) unreachable(w http.ResponseWriter, r *http.Request, status int, f formbus.Form, tooLate bool) {
 	a.cfg.Render.Render(w, r, status, "unreachable", unreachableView{
-		Form:    f,
-		TooLate: tooLate,
-		Until:   untilWords(f.ChangeableUntil),
+		Form:      f,
+		TooLate:   tooLate,
+		Until:     untilWords(f.ChangeableUntil),
+		LinkAgain: a.linkAgain(f),
 	})
+}
+
+// linkAgain is the page that sends somebody their link again, or empty on a
+// form where there is no link to send.
+func (a app) linkAgain(f formbus.Form) string {
+	if !f.Changeable(a.now()) || a.cfg.AnswerKey.Zero() {
+		return ""
+	}
+
+	return "/f/" + f.ID.String() + "/link"
 }
 
 // changeURL is the link back to one submission's answers, relative to this

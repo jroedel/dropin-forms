@@ -33,6 +33,10 @@
 //	                       hidden field), the submission grant, and the
 //	                       definition's rules -- submit's chain, with the link
 //	                       in front of it.
+//	GET /f/{slug}/link     nothing: a box for an address, and a grant.
+//	POST /f/{slug}/link    the same-origin gate and the grant. It mails the
+//	                       links for that address and says the same thing
+//	                       whether there were any or not.
 //	GET /f/{slug}/return   nothing, and it must stay that way: this is where
 //	                       a browser lands after Stripe, and the one thing it
 //	                       carries is a word saying what happened. It decides
@@ -141,8 +145,13 @@ type Payments interface {
 // submission is stored and the page has been rendered; a relay that is down is
 // a line in the log, not a different answer to the person who filled the form
 // in.
+//
+// Changed and SendLinks are the two messages about answers somebody can come
+// back to: that they did, and the link again for somebody who lost it.
 type Notify interface {
 	Received(ctx context.Context, id types.ID)
+	Changed(ctx context.Context, before, after submissionbus.Submission)
+	SendLinks(ctx context.Context, form types.Slug, email types.Email)
 }
 
 // Config is what this app needs.
@@ -359,6 +368,12 @@ func Routes(mux *http.ServeMux, cfg Config, writes func(http.Handler) http.Handl
 	mux.Handle("GET /f/{slug}/mine", reads(http.HandlerFunc(a.mine)))
 	mux.Handle("POST /f/{slug}/mine", submits(writes(http.HandlerFunc(a.change))))
 
+	// The link again, by mail, for somebody who has lost it. The POST sends
+	// mail to an address a stranger typed, which is what the submit
+	// allowance is for.
+	mux.Handle("GET /f/{slug}/link", reads(http.HandlerFunc(a.lostLink)))
+	mux.Handle("POST /f/{slug}/link", submits(writes(http.HandlerFunc(a.sendLink))))
+
 	// Where Stripe sends the browser back to. Strictly speaking Stripe sends
 	// it to the *hosting* page and embed.js brings it here, which is the only
 	// reason this can be a page inside the frame rather than a redirect.
@@ -430,6 +445,10 @@ type formView struct {
 	// Mine is set when the page is showing somebody their own answers,
 	// through the link we sent them, rather than a blank form.
 	Mine *mineView
+
+	// LinkAgain is where somebody who has already answered can ask for their
+	// link, on a form that takes changes, or empty.
+	LinkAgain string
 }
 
 // listingView is the list of earlier answers, each already written out as the
@@ -989,6 +1008,7 @@ func (a app) formView(
 		Problems:      problems,
 		Note:          note,
 		Listing:       a.listing(r, f),
+		LinkAgain:     a.linkAgain(f),
 	}, true
 }
 

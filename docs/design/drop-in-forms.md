@@ -2059,6 +2059,29 @@ never the query; Apache's access log on the same host does record it, which is
 the same trust boundary as the database the token unlocks a row of. The POST
 carries it in a hidden field, not in its address.
 
+**Every message carries the way back.** On a form that takes changes, the
+last paragraph of every message to the person is the link and its date, in
+place of "reply and we will put it right" — which it still says as well. It
+also says plainly to keep the link to themselves, because a forwarded email is
+the one way somebody else gets in. The office's copies never carry it.
+
+**A change is announced.** The person is sent their answers as they now stand,
+with the link again. The office is sent what changed, one line per question in
+the definition's order — `Plans: booked (was: considering)`, `Arrival flight:
+UA 1234 (was: not answered)` — because "he updated his form" sends somebody to
+go and look and the line is something they can act on. If the email answer
+changed, the old address is told where mail now goes, with the link: if the
+change was not theirs, that is the quickest way to put it back.
+
+**"Lost your link?"** A page on the form (`/f/{slug}/link`, offered beneath
+the form while it takes changes) takes an address and mails the links for
+whatever that address has answered. It says the same thing whether or not
+there was anything: for this form, "no answers from that address" would tell a
+stranger who is and is not coming. Nothing is sent to an address that never
+answered, or the page would be a way to send our mail to anybody. It sits
+behind the submit allowance and a grant. It is synchronous, like sign-in, and
+accepts the same small timing difference sign-in does.
+
 ## 10. Dependencies
 
 A dependency needs a comment naming the standard-library answer that was

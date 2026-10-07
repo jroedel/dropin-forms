@@ -11,7 +11,7 @@
 <p>Your answers are exactly as they were, so there was nothing to save.</p>
 {{else if .Changed}}
 <h1>Your changes are saved</h1>
-<p>We have your answers as they now stand.</p>
+<p>We have your answers as they now stand.{{if .Submission.Email.String}} A copy is on its way to you by email.{{end}}</p>
 {{else if .Owed}}
 <h1>Almost done</h1>
 <p>Your answers are saved. The last step is the payment.</p>

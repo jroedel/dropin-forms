@@ -58,10 +58,7 @@ func (b *Business) forSubmitter(f formbus.Form, sub submissionbus.Submission, pa
 		body.WriteString("\n")
 	}
 
-	// Reply, rather than a link to anything. This address belongs to a
-	// stranger who has no account here and never will, and the useful thing
-	// they can do with a mistake is tell a person about it.
-	body.WriteString("If anything above is wrong, reply to this message and we will put it right.\n")
+	body.WriteString(b.wayBack(f, sub))
 
 	subject := f.Title + ": we have your form"
 	if paid {
@@ -69,6 +66,50 @@ func (b *Business) forSubmitter(f formbus.Form, sub submissionbus.Submission, pa
 	}
 
 	return mail.Message{Subject: subject, Text: body.String()}
+}
+
+// wayBack is the last paragraph of every message to a submitter: how to put
+// something right.
+//
+// Reply, on most forms, rather than a link to anything. This address belongs
+// to a stranger who has no account here and never will, and the useful thing
+// they can do with a mistake is tell a person about it.
+//
+// On a form that takes changes it is the link to their own answers as well,
+// because there the whole design is that they will come back: holding a
+// message from us is what lets them in, and so every message carries the way.
+// It says plainly that the link is theirs, because it is the only thing
+// standing between a forwarded email and somebody else editing their answers.
+func (b *Business) wayBack(f formbus.Form, sub submissionbus.Submission) string {
+	link := b.answerLink(f, sub)
+	if link == "" {
+		return "If anything above is wrong, reply to this message and we will put it right.\n"
+	}
+
+	return fmt.Sprintf("Know more later, or need to change something? This link goes to your own answers,\n"+
+		"and works until %s:\n\n%s\n\n"+
+		"Keep it to yourself -- anyone with it can change what you sent. Or simply reply to this\n"+
+		"message and we will put it right.\n",
+		b.when(f.ChangeableUntil), link)
+}
+
+// answerLink is the full address of somebody's own answers, or empty when
+// there is none to give: a form that does not take changes, or has stopped,
+// or a service with no key or no public address for the form.
+func (b *Business) answerLink(f formbus.Form, sub submissionbus.Submission) string {
+	if !f.Changeable(b.now()) || b.cfg.AnswerKey.Zero() || b.cfg.EmbedBaseURL == "" {
+		return ""
+	}
+
+	token, err := submissionbus.MintAnswerLink(b.cfg.AnswerKey, f.ID, sub.ID)
+	if err != nil {
+		b.cfg.Log.Error("an answer link could not be built",
+			"form", f.ID.String(), "submission_id", sub.ID.String(), "error", err)
+
+		return ""
+	}
+
+	return b.cfg.EmbedBaseURL + "/f/" + f.ID.String() + "/mine?t=" + token
 }
 
 // forOffice is the message to whoever has to act on a submission.
@@ -79,16 +120,8 @@ func (b *Business) forSubmitter(f formbus.Form, sub submissionbus.Submission, pa
 func (b *Business) forOffice(f formbus.Form, sub submissionbus.Submission, paid bool, to recipient) mail.Message {
 	var body strings.Builder
 
-	who := sub.Email.String()
-	if name, ok := sub.Answers.Field("name"); ok && name.Value() != "" {
-		who = name.Value()
-		if sub.Email.String() != "" {
-			who += " <" + sub.Email.String() + ">"
-		}
-	}
-
 	fmt.Fprintf(&body, "%s submitted %q on %s.\n\n",
-		who, f.Title, b.when(sub.CreatedAt))
+		whoSent(sub), f.Title, b.when(sub.CreatedAt))
 
 	if sub.Answers.Total > 0 {
 		state := "not paid yet"
