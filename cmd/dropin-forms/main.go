@@ -262,6 +262,8 @@ func run() error {
 		MuteKey:      muteKey,
 		Office:       cfg.Mail.Notify,
 		AdminBaseURL: cfg.Server.AdminBaseURL,
+		AnswerKey:    answerKey,
+		EmbedBaseURL: cfg.Server.EmbedBaseURL,
 	})
 	if err != nil {
 		return err

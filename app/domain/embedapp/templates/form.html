@@ -133,6 +133,14 @@ until {{.Until}}.</p>
 {{with .Form.PaymentNote}}<p class="note">{{.}}</p>{{end}}
 </form>
 
+{{/* For somebody who answered weeks ago and has come back through the printed
+     invitation rather than the email: sending the form again would make a
+     second answer, and this is the way to their first one. _top, because it
+     is a page of its own rather than something for the frame. */}}
+{{if and .LinkAgain (not .Mine)}}
+<p class="note">Already answered? <a href="{{.LinkAgain}}" target="_top">Get the link to change your answers</a>.</p>
+{{end}}
+
 {{/* Inside #dropin-root, so the height the script posts to the parent
      includes it -- otherwise the frame would end at the button and cut the
      list off. After the form rather than beside it, because the frame may be
