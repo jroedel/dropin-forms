@@ -36,6 +36,10 @@ const (
 
 // fieldView is one field, ready to render.
 type fieldView struct {
+	// Section is set, and nothing else is, on the entry for a section
+	// heading. viewGroups consumes those; the template never sees one.
+	Section *sectionView
+
 	Name     string
 	Label    string
 	Help     string
@@ -140,12 +144,79 @@ type itemView struct {
 // unit separator, 0x1F, which no option value can contain.
 const conditionSeparator = "\x1f"
 
-// viewFields turns the definition's fields into what the template renders.
+// groupView is a run of questions: the ones under one section heading, or the
+// ones above the first heading, which have none.
+//
+// Grouped here rather than in the template so that the template opens and
+// closes each section's element in one place -- a fieldset the browser's
+// script can hide as a whole, carrying the section's condition.
+type groupView struct {
+	Section *sectionView
+	Fields  []fieldView
+}
+
+// sectionView is a section heading, ready to render.
+type sectionView struct {
+	Name    string
+	Heading string
+	Intro   string
+
+	// ShowIfField and ShowIfValues are the section's condition, in the same
+	// form a question's are.
+	ShowIfField  string
+	ShowIfValues string
+}
+
+// viewGroups turns the definition's fields into what the template renders,
+// grouped under their section headings.
+func viewGroups(f formbus.Form, values formbus.Values, problems formbus.Invalid) []groupView {
+	var out []groupView
+
+	current := groupView{}
+
+	for _, v := range viewFields(f, values, problems) {
+		if v.Section == nil {
+			current.Fields = append(current.Fields, v)
+
+			continue
+		}
+
+		// A new heading closes the group before it, unless that group is the
+		// empty one above a form's first heading.
+		if current.Section != nil || len(current.Fields) > 0 {
+			out = append(out, current)
+		}
+
+		current = groupView{Section: v.Section}
+	}
+
+	if current.Section != nil || len(current.Fields) > 0 {
+		out = append(out, current)
+	}
+
+	return out
+}
+
+// viewFields turns the definition's fields into what the template renders,
+// in order, with each section heading as an entry carrying only its Section.
 func viewFields(f formbus.Form, values formbus.Values, problems formbus.Invalid) []fieldView {
 	out := make([]fieldView, 0, len(f.Fields))
 	public := f.Listed()
 
 	for _, fld := range f.Fields {
+		if fld.Kind == formbus.KindSection {
+			s := &sectionView{Name: fld.Name, Heading: fld.Label, Intro: fld.Help}
+
+			if c := fld.ShowIf; c != nil {
+				s.ShowIfField = c.Field
+				s.ShowIfValues = strings.Join(c.Is, conditionSeparator)
+			}
+
+			out = append(out, fieldView{Section: s})
+
+			continue
+		}
+
 		v := fieldView{
 			Public:       public[fld.Name],
 			Name:         fld.Name,

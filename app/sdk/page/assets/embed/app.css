@@ -122,6 +122,45 @@ body.embedded {
   font-weight: 600;
 }
 
+/* A section: a heading and a rule above a run of questions.
+ *
+ * The browser's fieldset border and padding are removed, because a box
+ * around every section makes a long form look longer -- the opposite of what
+ * sections are for. The rule above the heading is enough to say "a new part
+ * starts here". [hidden] is restated because a display rule on fieldset
+ * would otherwise beat the attribute in some browsers.
+ */
+fieldset.section {
+  margin: 1.5rem 0 0;
+  padding: 1rem 0 0;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  min-width: 0;
+}
+
+fieldset.section[hidden] {
+  display: none;
+}
+
+fieldset.section > legend {
+  float: left;
+  width: 100%;
+  margin: 0 0 .35rem;
+  padding: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+fieldset.section > legend + * {
+  clear: both;
+}
+
+fieldset.section > .help {
+  margin: 0 0 1rem;
+  font-size: .875rem;
+  color: var(--muted);
+}
+
 .field .help {
   margin: .2rem 0 .35rem;
   font-size: .875rem;

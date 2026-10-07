@@ -663,7 +663,7 @@ const longWhen = "Monday 2 January 2006, 15:04"
 func answersOf(f formbus.Form, a formbus.Answers) []answerView {
 	out := make([]answerView, 0, len(f.Fields))
 
-	for _, fld := range f.Fields {
+	for _, fld := range f.Questions() {
 		ans, answered := a.Field(fld.Name)
 
 		out = append(out, answerView{
@@ -833,7 +833,7 @@ func (a app) export(w http.ResponseWriter, r *http.Request) {
 func columnsOf(f formbus.Form) []string {
 	out := make([]string, 0, len(f.Fields)+len(f.Items))
 
-	for _, fld := range f.Fields {
+	for _, fld := range f.Questions() {
 		out = append(out, fld.Label)
 	}
 
@@ -848,7 +848,7 @@ func columnsOf(f formbus.Form) []string {
 func cellsOf(f formbus.Form, s submissionbus.Submission) []string {
 	out := make([]string, 0, len(f.Fields)+len(f.Items))
 
-	for _, fld := range f.Fields {
+	for _, fld := range f.Questions() {
 		ans, ok := s.Answers.Field(fld.Name)
 		if !ok {
 			// Not asked, or left blank. Empty either way in a spreadsheet;

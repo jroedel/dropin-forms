@@ -394,6 +394,56 @@ required = true
 // The daily cap reaches the domain type, which is the whole job of the wire
 // type: a setting that parses and then goes nowhere is a rule switched off
 // with nothing to say so.
+// A section is a [[field]] of kind "section", with a heading, a sentence and
+// a condition, and nothing else.
+func TestASectionIsRead(t *testing.T) {
+	store, err := formtoml.Load(fstest.MapFS{"alpha.toml": {Data: []byte(minimal("alpha") + `
+[[field]]
+name = "plans"
+label = "Plans"
+kind = "radio"
+
+[[field.option]]
+value = "coming"
+label = "Coming"
+
+[[field.option]]
+value = "maybe"
+label = "Maybe"
+
+[[field]]
+name = "travel"
+label = "Travel"
+kind = "section"
+help = "Once you have tickets."
+show_if = { field = "plans", is = ["coming"] }
+
+[[field]]
+name = "flight"
+label = "Arrival flight"
+kind = "text"
+`)}})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	alpha, _ := types.ParseSlug("alpha")
+
+	f, err := store.ByID(alpha)
+	if err != nil {
+		t.Fatalf("ByID: %v", err)
+	}
+
+	sec, ok := f.Field("travel")
+	if !ok || sec.Kind != formbus.KindSection || sec.Help != "Once you have tickets." || sec.ShowIf == nil {
+		t.Fatalf("travel = %+v", sec)
+	}
+
+	if in, ok := f.SectionOf("flight"); !ok || in.Name != "travel" {
+		t.Errorf("flight is not in the travel section")
+	}
+}
+
 // The date answers can be changed until is read as an instant, with the
 // offset closes_at insists on, for the same reason.
 func TestTheChangeDateIsRead(t *testing.T) {

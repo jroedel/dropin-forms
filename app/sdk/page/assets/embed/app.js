@@ -208,6 +208,16 @@
     for (var i = 0; i < inputs.length; i++) {
       var el = inputs[i];
 
+      /* A question that is hidden -- by its own condition or by its
+         section's -- has no answer as far as anything below it is
+         concerned. The server reads it the same way: it takes no value for
+         a hidden field, so a condition naming one is false. Without this, a
+         question two levels down stays on screen after the one above it
+         has gone, and the server ignores whatever is typed into it. */
+      if (el.closest && el.closest("[hidden]")) {
+        continue;
+      }
+
       if (el.type === "checkbox" || el.type === "radio") {
         if (el.checked) {
           out.push(el.value);
@@ -246,6 +256,14 @@
       var show = false;
       for (var j = 0; j < have.length && !show; j++) {
         show = wanted.indexOf(have[j]) !== -1;
+      }
+
+      /* Inside a hidden section, hidden whatever its own condition says.
+         The wrappers are walked in document order, so the section has been
+         decided by the time the questions in it are reached. */
+      if (show && wrapper.parentNode && wrapper.parentNode.closest &&
+          wrapper.parentNode.closest("[hidden]")) {
+        show = false;
       }
 
       wrapper.hidden = !show;

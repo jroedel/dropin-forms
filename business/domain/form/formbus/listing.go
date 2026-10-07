@@ -186,6 +186,8 @@ func (f *Form) checkListing() []string {
 			add("names {%s}, an email address; an address shown on a public page is collected by spam robots", s.field)
 		case fld.Kind == KindTel:
 			add("names {%s}, a telephone number, which is not something to show on a public page", s.field)
+		case fld.Kind == KindSection:
+			add("names {%s}, a section heading, which has no answer to show", s.field)
 		}
 	}
 
