@@ -14,8 +14,10 @@ import (
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/domain/form/stores/formtoml"
+	"github.com/jroedel/dropin-forms/business/domain/notify/notifybus"
 	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
 	"github.com/jroedel/dropin-forms/business/types"
+	"github.com/jroedel/dropin-forms/foundation/mail"
 )
 
 // Changing answers already given, through the link we hand out, on the
@@ -76,6 +78,20 @@ type retreatHarness struct {
 	now  *time.Time
 	subs *submissionbus.Business
 	cfg  muxer.Config
+	sent *mail.Recorder
+}
+
+// mailTo is everything sent to one address, in order.
+func (rh retreatHarness) mailTo(address string) []mail.Message {
+	var out []mail.Message
+
+	for _, m := range rh.sent.Sent {
+		if m.To == address {
+			out = append(out, m)
+		}
+	}
+
+	return out
 }
 
 type formAt struct{ f *formbus.Form }
@@ -108,7 +124,28 @@ func retreatSurface(t *testing.T) retreatHarness {
 
 	cfg.Forms = formAt{&f}
 
-	return retreatHarness{h: embedOf(t, cfg), form: &f, now: &now, subs: subs, cfg: cfg}
+	sent := &mail.Recorder{}
+
+	notifier, err := notifybus.NewBusiness(notifybus.Config{
+		Log:          cfg.Log,
+		Mail:         sent,
+		Forms:        cfg.Embed.Forms,
+		Submissions:  subs,
+		Grants:       cfg.Access,
+		Accounts:     cfg.Users,
+		Office:       "office@schoenstatt.test",
+		AdminBaseURL: "https://forms.test",
+		AnswerKey:    answerKey,
+		EmbedBaseURL: "https://f.forms.test",
+		Now:          func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("notifybus.NewBusiness: %v", err)
+	}
+
+	cfg.Notify = notifier
+
+	return retreatHarness{h: embedOf(t, cfg), form: &f, now: &now, subs: subs, cfg: cfg, sent: sent}
 }
 
 // answerKey signs the test's answer links. Not a secret, as grantKey is not.
@@ -501,5 +538,104 @@ func TestTheOfficeSeesWhatTheAnswersSaidBeforeTheyChanged(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("the submission page does not say %q:\n%s", want, short(body))
 		}
+	}
+}
+
+// The email is the way back: the link in the first message opens the
+// person's own answers, and a change sends the office what changed.
+func TestTheLinkInTheEmailIsTheWayBack(t *testing.T) {
+	rh := retreatSurface(t)
+
+	rh.answer(t, "considering")
+
+	first := rh.mailTo("hector@example.org")
+	if len(first) != 1 {
+		t.Fatalf("%d messages to the person, want 1", len(first))
+	}
+
+	m := regexp.MustCompile(`https://f\.forms\.test(/f/retreat/mine\?t=\S+)`).FindStringSubmatch(first[0].Text)
+	if m == nil {
+		t.Fatalf("no link in the first message:\n%s", first[0].Text)
+	}
+
+	// Weeks later, and before the form's date.
+	*rh.now = rh.now.Add(30 * 24 * time.Hour)
+
+	page := getPage(t, rh.h, m[1])
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), `value="considering" checked`) {
+		t.Fatalf("following the emailed link = %d:\n%s", page.Code, short(page.Body.String()))
+	}
+
+	rh.sent.Sent = nil
+
+	code, body := rh.save(t, page.Body.String(), url.Values{
+		"name": {"Fr. Hector"}, "email": {"hector@example.org"}, "plans": {"booked"},
+	})
+	if code != http.StatusOK || !strings.Contains(body, "A copy is on its way") {
+		t.Fatalf("save = %d:\n%s", code, short(body))
+	}
+
+	office := rh.mailTo("office@schoenstatt.test")
+	if len(office) != 1 || !strings.Contains(office[0].Text, "Plans: booked (was: considering)") {
+		t.Errorf("the office was not told what changed: %v", subjects(rh.sent.Sent))
+	}
+
+	if mine := rh.mailTo("hector@example.org"); len(mine) != 1 || !strings.Contains(mine[0].Text, "/f/retreat/mine?t=") {
+		t.Errorf("the person's copy of the change does not carry the link again")
+	}
+}
+
+func TestALostLinkIsSentOnlyToTheAddressThatAnswered(t *testing.T) {
+	rh := retreatSurface(t)
+
+	rh.answer(t, "considering")
+	rh.sent.Sent = nil
+
+	ask := func(email string) string {
+		t.Helper()
+
+		page := getPage(t, rh.h, retreatPath+"/link")
+		if page.Code != http.StatusOK {
+			t.Fatalf("the lost-link page = %d:\n%s", page.Code, short(page.Body.String()))
+		}
+
+		w := postTo(t, rh.h, retreatPath+"/link", url.Values{
+			embedapp.GrantField: {grantIn(t, page.Body.String())},
+			"email":             {email},
+		})
+		if w.Code != http.StatusOK {
+			t.Fatalf("asking = %d:\n%s", w.Code, short(w.Body.String()))
+		}
+
+		return w.Body.String()
+	}
+
+	known := ask("Hector@Example.org")
+	unknown := ask("stranger@example.org")
+
+	// The same page either way, apart from the address echoed back.
+	if strings.ReplaceAll(known, "hector@example.org", "X") != strings.ReplaceAll(unknown, "stranger@example.org", "X") {
+		t.Errorf("the page differs for an address that answered and one that did not")
+	}
+
+	if got := rh.mailTo("hector@example.org"); len(got) != 1 || !strings.Contains(got[0].Text, "/f/retreat/mine?t=") {
+		t.Errorf("the link was not sent to the address that answered")
+	}
+	if got := rh.mailTo("stranger@example.org"); len(got) != 0 {
+		t.Errorf("mail was sent to an address that never answered")
+	}
+}
+
+func TestTheFormOffersTheLinkAgainOnlyWhenItTakesChanges(t *testing.T) {
+	rh := retreatSurface(t)
+
+	if !strings.Contains(getPage(t, rh.h, retreatPath).Body.String(), `href="/f/retreat/link"`) {
+		t.Error("a form that takes changes does not offer the link again")
+	}
+
+	*rh.now = rh.form.ChangeableUntil
+
+	if w := getPage(t, rh.h, retreatPath+"/link"); !strings.Contains(w.Body.String(), "can no longer be changed here") {
+		t.Errorf("the lost-link page after the date = %d:\n%s", w.Code, short(w.Body.String()))
 	}
 }

@@ -170,6 +170,20 @@ func (b *Business) Revisions(ctx context.Context, s Submission) ([]Revision, err
 	return revs, nil
 }
 
+// Yours lists the submissions on a form whose answers a person at this
+// address could change: not hidden, and not an order. For answering "send me
+// my link again", which is answered by mail to the address and never on the
+// page -- so that typing somebody else's address into it tells you nothing and
+// gets you nothing.
+func (b *Business) Yours(ctx context.Context, form types.Slug, email types.Email) ([]Submission, error) {
+	subs, err := b.store.ByEmail(ctx, form, email)
+	if err != nil {
+		return nil, fmt.Errorf("reading the submissions from an address: %w", err)
+	}
+
+	return slices.DeleteFunc(subs, func(s Submission) bool { return s.Status != StatusReceived }), nil
+}
+
 // sameAnswers compares what was said, and nothing else.
 //
 // Labels are left out on purpose: a question reworded since somebody answered

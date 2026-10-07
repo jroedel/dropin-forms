@@ -43,6 +43,9 @@ type submissions struct {
 	// different things: one is a lookup by identifier and the other is a scan.
 	unpaid    []submissionbus.Submission
 	unpaidErr error
+
+	// yours is what a request for one's links again finds.
+	yours []submissionbus.Submission
 }
 
 func (s submissions) ByID(context.Context, types.ID) (submissionbus.Submission, error) {
@@ -51,6 +54,10 @@ func (s submissions) ByID(context.Context, types.ID) (submissionbus.Submission, 
 
 func (s submissions) Unpaid(context.Context, time.Time, time.Duration) ([]submissionbus.Submission, error) {
 	return s.unpaid, s.unpaidErr
+}
+
+func (s submissions) Yours(context.Context, types.Slug, types.Email) ([]submissionbus.Submission, error) {
+	return s.yours, nil
 }
 
 // reports is notifybus.Reports in a map: which orders have been claimed, and

@@ -300,6 +300,10 @@ type Storer interface {
 	// Revisions reads the answers a submission has held and no longer does,
 	// oldest first.
 	Revisions(ctx context.Context, sub Submission) ([]Revision, error)
+
+	// ByEmail lists a form's submissions from one address, not hidden,
+	// newest first.
+	ByEmail(ctx context.Context, form types.Slug, email types.Email) ([]Submission, error)
 }
 
 // Business is the set of operations on submissions.
