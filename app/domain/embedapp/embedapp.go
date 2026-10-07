@@ -414,7 +414,9 @@ type formView struct {
 	// it on the body and the script reads it from there; it is never '*'.
 	ParentOrigin string
 
-	Fields []fieldView
+	// Groups are the questions, in order, gathered under their section
+	// headings.
+	Groups []groupView
 	Items  []itemView
 
 	// MinPerOrder and MaxPerOrder are the order's own bounds, as a sentence
@@ -1001,7 +1003,7 @@ func (a app) formView(
 		Action:        withParent("/f/"+f.ID.String(), origin),
 		ParentOrigin:  origin,
 		Symbol:        formbus.Symbol(f.Currency),
-		Fields:        viewFields(f, values, problems),
+		Groups:        viewGroups(f, values, problems),
 		Items:         viewItems(f, values, problems),
 		OrderNote:     orderNote(f),
 		OrderProblems: problems.For(""),

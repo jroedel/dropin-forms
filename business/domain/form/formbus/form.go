@@ -59,6 +59,20 @@ const (
 	KindDate      Kind = "date"     // a calendar day, with no time of day
 	KindTime      Kind = "time"     // a time of day, with no day
 	KindDateTime  Kind = "datetime" // a day and a time of day, on a wall clock
+
+	// KindSection is not a question. It is a heading, with its Help as a
+	// sentence beneath it, and every question after it belongs to it until
+	// the next section. Its ShowIf hides the heading and all of those
+	// questions at once -- "Travel" shown only to somebody who has said they
+	// are coming -- which is the point of it: a form stays as short as the
+	// person's answers so far allow, without the same condition being set,
+	// and later changed, on every question it governs.
+	//
+	// It has a Name, like a question, because the builder addresses entries
+	// by name and Retired keeps names from being reused. It never has an
+	// answer: [Form.Questions] leaves it out, and that is what everything
+	// that reads answers walks.
+	KindSection Kind = "section"
 )
 
 // kinds is every Kind, in the order a builder UI should offer them.
@@ -66,6 +80,7 @@ var kinds = []Kind{
 	KindText, KindParagraph, KindEmail, KindTel, KindNumber,
 	KindDate, KindTime, KindDateTime,
 	KindSelect, KindRadio, KindCheckbox, KindChoices, KindAmount,
+	KindSection,
 }
 
 // Kinds returns every field kind this service can validate, for a builder UI
@@ -76,6 +91,10 @@ func Kinds() []Kind { return slices.Clone(kinds) }
 // naming an unknown kind is refused at load time rather than rendered as a
 // text box, because silently downgrading a field is how a rule disappears.
 func (k Kind) Known() bool { return slices.Contains(kinds, k) }
+
+// Asks reports whether the kind is a question -- something with an answer --
+// rather than a section heading.
+func (k Kind) Asks() bool { return k != KindSection }
 
 // HasOptions reports whether the kind draws its permitted values from a list.
 // Such a field is validated by membership, so the list is what the person can
@@ -475,8 +494,11 @@ func (f *Form) Check() error {
 				f.ChangeableUntil.Format(time.RFC3339), f.OpensAt.Format(time.RFC3339))
 		}
 	}
-	if len(f.Fields) == 0 {
+	switch {
+	case len(f.Fields) == 0:
 		add("it has no fields")
+	case len(f.Questions()) == 0:
+		add("it has only section headings, and no question to answer")
 	}
 	if f.MinPerOrder < 0 {
 		add("its per-order minimum is negative")
@@ -642,12 +664,43 @@ func (f *Form) checkFields() []string {
 			continue
 		}
 
+		if fld.Kind == KindSection {
+			p = append(p, fld.checkSection(where)...)
+			p = append(p, f.checkCondition(fld, where, i)...)
+
+			continue
+		}
+
 		p = append(p, fld.checkOptions(where)...)
 		p = append(p, fld.checkBounds(where)...)
 		p = append(p, fld.checkPattern(where)...)
 		p = append(p, fld.checkLimits(where)...)
 		p = append(p, f.checkCondition(fld, where, i)...)
 	}
+
+	return p
+}
+
+// checkSection refuses everything on a section heading that only a question
+// can use. Each would be a rule written down and silently ignored, which is
+// worse than a refusal: the author believes something is enforced.
+func (fld Field) checkSection(where string) []string {
+	var p []string
+
+	set := func(what string, is bool) {
+		if is {
+			p = append(p, fmt.Sprintf("%s: it is a section heading, which cannot have %s", where, what))
+		}
+	}
+
+	set("an answer that is required", fld.Required)
+	set("choices", len(fld.Options) > 0)
+	set("a placeholder", fld.Placeholder != "")
+	set("an autocomplete hint", fld.Autocomplete != "")
+	set("a length limit", fld.MinLen != 0 || fld.MaxLen != 0)
+	set("a lowest or highest value", fld.Min != nil || fld.Max != nil)
+	set("a pattern", fld.Pattern != "" || fld.PatternNote != "")
+	set("an earliest or latest date", fld.Earliest != "" || fld.Latest != "")
 
 	return p
 }
@@ -841,10 +894,17 @@ func (f *Form) checkCondition(fld *Field, where string, at int) []string {
 		return p
 	}
 
+	on := f.Fields[i]
+
+	if on.Kind == KindSection {
+		add("%s: it is shown depending on %q, which is a section heading and has no answer; name a question instead", where, cond.Field)
+
+		return p
+	}
+
 	// A typo in a condition's value is invisible at runtime -- the field
 	// simply never appears -- so it is caught here, where the list of
 	// possible values is known.
-	on := f.Fields[i]
 	if on.Kind.HasOptions() {
 		for _, want := range cond.Is {
 			if !slices.ContainsFunc(on.Options, func(o Option) bool { return o.Value == want }) {
@@ -954,6 +1014,31 @@ func (f Form) Open(now time.Time) bool {
 	}
 
 	return true
+}
+
+// Questions is the form's fields without its section headings: everything
+// that can have an answer, in order. Whatever reads answers -- a CSV's
+// columns, a notification, the feed -- walks this rather than Fields, so
+// that a heading never becomes an empty column.
+func (f Form) Questions() []Field {
+	return slices.DeleteFunc(slices.Clone(f.Fields), func(fld Field) bool { return !fld.Kind.Asks() })
+}
+
+// SectionOf is the section a field sits in, and whether it sits in one: the
+// nearest section heading above it. A section heading is not in a section.
+func (f Form) SectionOf(name string) (Field, bool) {
+	at := slices.IndexFunc(f.Fields, func(c Field) bool { return c.Name == name })
+	if at < 0 || f.Fields[at].Kind == KindSection {
+		return Field{}, false
+	}
+
+	for i := at - 1; i >= 0; i-- {
+		if f.Fields[i].Kind == KindSection {
+			return f.Fields[i], true
+		}
+	}
+
+	return Field{}, false
 }
 
 // Changeable reports whether answers already given may be changed at this

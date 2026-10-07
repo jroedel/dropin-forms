@@ -298,8 +298,22 @@ func (f Form) judge(in Values) (Answers, error) {
 
 	var typed types.Money
 
+	// open is whether the section the loop is in is showing. A form with no
+	// sections is one long open one.
+	open := true
+
 	for i, fld := range f.Fields {
-		visible[i] = shown(fld, index, visible, taken)
+		if fld.Kind == KindSection {
+			// Its own condition decides it, and it decides every question up
+			// to the next heading. A heading has no answer and nothing to
+			// take; Check refuses a condition that names one.
+			visible[i] = shown(fld, index, visible, taken)
+			open = visible[i]
+
+			continue
+		}
+
+		visible[i] = open && shown(fld, index, visible, taken)
 		if !visible[i] {
 			// Ignored, not refused. A value arriving for a hidden field is
 			// what happens when somebody fills a field in and then changes the

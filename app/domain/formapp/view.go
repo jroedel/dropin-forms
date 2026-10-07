@@ -76,6 +76,12 @@ type fieldRow struct {
 	// always shown.
 	ShownWhen string
 
+	// Section marks a heading row, and InSection a question under one, so
+	// that the list reads as the form does: a heading, and its questions
+	// set in beneath it.
+	Section   bool
+	InSection bool
+
 	First bool
 	Last  bool
 }
@@ -198,6 +204,8 @@ func (a app) show(w http.ResponseWriter, r *http.Request, status int, s formbus.
 	}
 
 	for i, fld := range f.Fields {
+		_, inSection := f.SectionOf(fld.Name)
+
 		view.Fields = append(view.Fields, fieldRow{
 			Name:      fld.Name,
 			Label:     fld.Label,
@@ -205,6 +213,8 @@ func (a app) show(w http.ResponseWriter, r *http.Request, status int, s formbus.
 			Required:  fld.Required,
 			Detail:    detailOf(fld, f.Currency),
 			ShownWhen: shownWhen(fld),
+			Section:   fld.Kind == formbus.KindSection,
+			InSection: inSection,
 			First:     i == 0,
 			Last:      i == len(f.Fields)-1,
 		})

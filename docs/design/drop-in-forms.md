@@ -1997,6 +1997,36 @@ taking a row out of the totals changes the number somebody orders food
 against. The id in the path is checked against the form in the path, as the
 will-call table checks it.
 
+### Sections, as built
+
+A form that asks a priest for his flight before he has decided to come is a
+form that looks like work. Conditions already hid one question at a time, but
+six travel questions meant setting the same condition six times and, when the
+rule changed, finding all six. So a form can have **sections**: a heading, an
+optional sentence beneath it, and an optional condition, governing every
+question after it down to the next heading.
+
+**A section is an entry in the field list, of kind `section`.** That is how
+the builder already thinks — a row with a name that moves up and down — and
+it means the order of headings and questions is one list rather than two kept
+in step. The price is that a heading is not a question, and everything that
+reads answers must not treat it as one: `Form.Questions()` is the list
+without headings, and the CSV, the admin page, the notifications and the
+feed all walk it. `Check` refuses on a heading everything only a question can
+use — required, choices, bounds, a pattern — and refuses a condition that
+names a heading, because a heading has no answer to test.
+
+**Visibility is the section's and the question's, both.** A question shows
+when its section shows and its own condition, if it has one, holds. The
+server decides it in the same forward pass as before. The browser hides the
+section's `<fieldset>` as a whole and, in the same pass, now treats any input
+inside something hidden as unanswered — which also fixed a gap in plain
+nested conditions, where a question two levels down could stay on screen
+after the one above it had gone.
+
+**Sections are in the fingerprint**, as conditions are: which questions a
+person is shown is part of what their answers mean.
+
 ### Changing an answer, as built
 
 Written for the ordination of Dcn. Hector Islas on 6 February 2027. The

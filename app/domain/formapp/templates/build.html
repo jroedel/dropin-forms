@@ -54,7 +54,7 @@ configuration file.</p>
 </thead>
 <tbody>
 {{range .Fields}}
-<tr>
+<tr{{if .Section}} class="section-row"{{else if .InSection}} class="in-section"{{end}}>
 <th scope="row">
 <a href="/forms/{{$.FormID}}/edit/fields/{{.Name}}">{{.Label}}</a>
 {{if .Required}} <span class="ref">required</span>{{end}}

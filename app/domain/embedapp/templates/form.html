@@ -36,7 +36,19 @@ until {{.Until}}.</p>
 {{with .Mine}}<input type="hidden" name="_answers" value="{{.Token}}">
 <input type="hidden" name="_seen" value="{{.Seen}}">{{end}}
 
-{{range $fld := .Fields}}
+{{range $g := .Groups}}
+{{/* A section is a fieldset, so that the browser's script hides it -- and
+     everything in it -- as one, and a screen reader announces its heading
+     as the name of the group. Its condition is on the fieldset in the same
+     two attributes a question's is on its wrapper. */}}
+{{with $g.Section}}
+<fieldset class="section" data-section="{{.Name}}"
+  {{- with .ShowIfField}} data-show-if-field="{{.}}"{{end}}
+  {{- with .ShowIfValues}} data-show-if-values="{{.}}"{{end}}>
+<legend>{{.Heading}}</legend>
+{{with .Intro}}<p class="help">{{.}}</p>{{end}}
+{{end}}
+{{range $fld := $g.Fields}}
 <div class="field{{if eq $fld.Shape "amount"}} amount-field{{end}}"
   {{- with $fld.ShowIfField}} data-show-if-field="{{.}}"{{end}}
   {{- with $fld.ShowIfValues}} data-show-if-values="{{.}}"{{end}}>
@@ -100,6 +112,8 @@ until {{.Until}}.</p>
 {{if $fld.Public}}<p class="help public-note">What you put here is shown in the list below this form, where anybody visiting the page can read it.</p>{{end}}
 {{range $fld.Problems}}<p class="problem" data-problem-for="{{$fld.Name}}">{{.Message}}</p>{{end}}
 </div>
+{{end}}
+{{if $g.Section}}</fieldset>{{end}}
 {{end}}
 
 {{if .Items}}

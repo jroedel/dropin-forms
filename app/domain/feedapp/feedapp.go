@@ -386,7 +386,7 @@ func feedOf(f formbus.Form, subs []submissionbus.Submission, counts map[types.ID
 		Responses:   make([]responseDoc, 0, len(subs)),
 	}
 
-	for _, fld := range f.Fields {
+	for _, fld := range f.Questions() {
 		doc.Fields = append(doc.Fields, fieldDoc{
 			Name:     fld.Name,
 			Label:    fld.Label,
@@ -403,7 +403,7 @@ func feedOf(f formbus.Form, subs []submissionbus.Submission, counts map[types.ID
 	for _, s := range subs {
 		answers := make(map[string]any, len(f.Fields))
 
-		for _, fld := range f.Fields {
+		for _, fld := range f.Questions() {
 			ans, ok := s.Answers.Field(fld.Name)
 
 			switch {

@@ -62,6 +62,10 @@ type fieldView struct {
 	// what guarantees there is no cycle to resolve.
 	Earlier []string
 
+	// InSection says this question sits under a section heading, so the page
+	// can say that it is hidden whenever the section is.
+	InSection bool
+
 	Problems []string
 	Problem  string
 }
@@ -87,6 +91,10 @@ type kindChoice struct {
 	Textual    bool
 	Money      bool
 	Temporal   bool
+
+	// Section is a heading rather than a question: the page offers a heading,
+	// a sentence and a condition, and nothing an answer would need.
+	Section bool
 }
 
 // addField appends a field and goes to its page.
@@ -213,9 +221,16 @@ func fieldOf(s formbus.Stored, fld formbus.Field, at int) fieldView {
 	// condition naming a later field -- one forward pass, no cycle. Offering
 	// the others in the dropdown would be offering a choice that is then
 	// refused.
+	//
+	// Questions only: a section heading has no answer, and formbus refuses a
+	// condition that names one.
 	for _, earlier := range s.Form.Fields[:at] {
-		v.Earlier = append(v.Earlier, earlier.Name)
+		if earlier.Kind.Asks() {
+			v.Earlier = append(v.Earlier, earlier.Name)
+		}
 	}
+
+	_, v.InSection = s.Form.SectionOf(fld.Name)
 
 	return v
 }
@@ -530,6 +545,7 @@ func kindOf(k formbus.Kind) kindChoice {
 		Textual:    k.Textual(),
 		Temporal:   k.Temporal(),
 		Money:      k == formbus.KindAmount,
+		Section:    k == formbus.KindSection,
 	}
 }
 
@@ -564,6 +580,8 @@ func describeKind(k formbus.Kind) string {
 		return "Tick boxes: any number of a list"
 	case formbus.KindAmount:
 		return "An amount of money somebody types"
+	case formbus.KindSection:
+		return "A section heading, which can hide the questions under it"
 	default:
 		return string(k)
 	}

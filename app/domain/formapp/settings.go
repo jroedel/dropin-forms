@@ -115,7 +115,7 @@ func settingsOf(s formbus.Stored) settingsView {
 		ListMax:         formbus.ListingMax,
 	}
 
-	for _, fld := range f.Fields {
+	for _, fld := range f.Questions() {
 		if fld.Kind == formbus.KindEmail || fld.Kind == formbus.KindTel {
 			continue
 		}

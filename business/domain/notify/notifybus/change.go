@@ -267,7 +267,7 @@ func changes(f formbus.Form, before, after formbus.Answers) []string {
 
 	seen := make(map[string]bool, len(f.Fields))
 
-	for _, fld := range f.Fields {
+	for _, fld := range f.Questions() {
 		seen[fld.Name] = true
 
 		was, hadWas := before.Field(fld.Name)

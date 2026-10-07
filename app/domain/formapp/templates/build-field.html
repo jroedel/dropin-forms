@@ -21,7 +21,7 @@
 <form method="post" action="/forms/{{.FormID}}/edit/fields/{{.Name}}">
 
   <div class="field">
-    <label for="label">What it asks</label>
+    <label for="label">{{if .Uses.Section}}The heading{{else}}What it asks{{end}}</label>
     <input type="text" id="label" name="label" value="{{.Label}}"
            autocomplete="off" required maxlength="200">
   </div>
@@ -33,6 +33,14 @@
     answer, remove this question and add a new one.</p>
   </div>
 
+  {{if .Uses.Section}}
+  <div class="field">
+    <label for="help">A sentence under the heading</label>
+    <p class="help">Optional: what this part of the form is for, or when to
+    fill it in &mdash; &ldquo;Once you have your tickets.&rdquo;</p>
+    <textarea id="help" name="help" rows="2">{{.Help}}</textarea>
+  </div>
+  {{else}}
   <p class="choice">
     <input type="checkbox" id="required" name="required" value="yes"
            {{if .Required}}checked{{end}}>
@@ -60,6 +68,7 @@
     <input type="text" id="autocomplete" name="autocomplete" value="{{.Autocomplete}}"
            autocomplete="off" maxlength="60">
   </div>
+  {{end}}
 
   {{/* Only this kind's own settings. The kind cannot be changed once a
        question exists -- formapp's saveField says why -- so there is nothing
@@ -175,9 +184,17 @@
   <h2>When it is shown</h2>
 
   {{if .Earlier}}
+  {{if .Uses.Section}}
+  <p class="help">This section &mdash; the heading and every question under it,
+  down to the next section &mdash; can be hidden until an earlier question is
+  answered a particular way. A question in it can still have a condition of its
+  own as well.</p>
+  {{else}}
   <p class="help">This question can be hidden until an earlier one is answered
   a particular way. Only the questions above it are offered: that is what makes
-  it possible to work out what is showing in one pass down the page.</p>
+  it possible to work out what is showing in one pass down the page.{{if .InSection}}
+  It is also hidden whenever its section is.{{end}}</p>
+  {{end}}
 
   <div class="field">
     <label for="show_if_field">Show it only when this question</label>

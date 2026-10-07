@@ -460,6 +460,20 @@ button:disabled {
 
 /* A field's own rules. Quieter than the thing it describes, and never the
    only way something is said. */
+/* The builder's list of questions, read as the form reads: a section heading
+   with a tint across its row, and the questions under it set in beneath it. */
+.listing tr.section-row > * {
+  background: var(--tint);
+}
+
+.listing tr.section-row th[scope="row"] a {
+  font-weight: 600;
+}
+
+.listing tr.in-section th[scope="row"] {
+  padding-left: 1.5rem;
+}
+
 .aside {
   color: var(--muted);
   font-size: 0.85rem;
