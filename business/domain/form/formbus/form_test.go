@@ -94,6 +94,22 @@ func TestCheckRefuses(t *testing.T) {
 			want:   "has no fields",
 		},
 		{
+			name: "answers that can change on a form that takes money",
+			break_: func(f *formbus.Form) {
+				f.ChangeableUntil = time.Date(2027, 2, 7, 0, 0, 0, 0, time.UTC)
+				f.Items = []formbus.Item{{ID: "ticket", Label: "Ticket", Price: types.Money(1000)}}
+			},
+			want: "an order cannot be changed once it is paid for",
+		},
+		{
+			name: "answers that can change only until before it opens",
+			break_: func(f *formbus.Form) {
+				f.OpensAt = time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+				f.ChangeableUntil = time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+			},
+			want: "can be changed until",
+		},
+		{
 			name: "closes before it opens",
 			break_: func(f *formbus.Form) {
 				f.OpensAt = time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)

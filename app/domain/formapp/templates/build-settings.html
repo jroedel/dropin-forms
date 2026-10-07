@@ -53,6 +53,15 @@
     <textarea id="closed_note" name="closed_note" rows="2">{{.ClosedNote}}</textarea>
   </div>
 
+  <div class="field">
+    <label for="changeable_until">Answers can be changed until</label>
+    <p class="help">Every email sent to somebody who answers carries a link
+    back to their own answers, which works until this date. Useful when people
+    know a little now and more later. Empty means answers are final once
+    sent. Not for a form that takes money.</p>
+    <input type="datetime-local" id="changeable_until" name="changeable_until" value="{{.ChangeableUntil}}">
+  </div>
+
   <h2>Where it can be used</h2>
 
   <div class="field">

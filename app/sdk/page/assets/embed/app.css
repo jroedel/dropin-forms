@@ -417,6 +417,22 @@ a.button:hover { filter: brightness(1.08); }
   color: var(--ink);
 }
 
+/* The link back to somebody's own answers, on a form that takes changes.
+ *
+ * Set apart with a rule rather than a box: it is not the outcome, it is the
+ * thing to keep from it, and a second coloured panel would compete with the
+ * one saying the answers were received.
+ */
+.change-link {
+  margin: 1rem 0 0;
+  padding: .75rem 0 0;
+  border-top: 1px solid var(--rule);
+}
+
+.change-link p {
+  margin: 0 0 .4rem;
+}
+
 .outcome h1 {
   margin: 0 0 .5rem;
   font-size: 1.2rem;

@@ -89,6 +89,22 @@ func (c Closed) Error() string {
 	return "This form is not accepting submissions."
 }
 
+// Unchangeable is a submission whose answers can no longer be changed: the
+// form never allowed it, or the date it allowed it until has passed.
+//
+// Its own type rather than [Closed], because the sentence is different and so
+// is what to do about it. A closed form has nothing to offer; somebody whose
+// changes are too late can still reply to the message they followed, and a
+// person at the other end can put it right.
+type Unchangeable struct {
+	FormID types.Slug
+	Until  time.Time
+}
+
+func (u Unchangeable) Error() string {
+	return "These answers can no longer be changed here."
+}
+
 // NotYetOpen distinguishes "too early" from "too late", which want different
 // sentences: one is worth coming back for.
 func (c Closed) NotYetOpen(now time.Time) bool {
@@ -192,6 +208,27 @@ func (a Answers) SubmitterEmail() (types.Email, bool) {
 	return types.Email{}, false
 }
 
+// Values turns accepted answers back into the body that would produce them,
+// so that a form can be rendered with somebody's own answers already in it.
+//
+// The inverse of what judge does to a body, and it can be because judge keeps
+// every value as typed apart from trimming and the one canonical shape a date
+// or time is rewritten into -- which is the shape its input box takes. A field
+// that was not answered is absent here as it is in Answers, and renders blank.
+func (a Answers) Values() Values {
+	out := make(Values, len(a.Fields)+len(a.Lines))
+
+	for _, f := range a.Fields {
+		out[f.Name] = slices.Clone(f.Values)
+	}
+
+	for _, l := range a.Lines {
+		out[QuantityField(l.ItemID)] = []string{strconv.Itoa(l.Qty)}
+	}
+
+	return out
+}
+
 // Validate decides whether a submission is acceptable and, if it is, what it
 // comes to.
 //
@@ -212,6 +249,34 @@ func (f Form) Validate(now time.Time, in Values) (Answers, error) {
 		}
 	}
 
+	return f.judge(in)
+}
+
+// ValidateChange is [Form.Validate] for somebody changing answers they have
+// already given, through the link in a message we sent them.
+//
+// The rules are the same rules, applied to the definition as it stands now
+// rather than as it stood when they first answered. That is the mechanism by
+// which a form collects things a little at a time: a question added in
+// December is blank, and askable, the next time somebody follows a link from
+// October.
+//
+// The window is not. A form that has stopped taking new responses may still be
+// taking changes to the ones it has -- "tell us by January if you are coming,
+// and send flights whenever you have them" -- so OpensAt and ClosesAt are not
+// consulted, and [Form.Changeable] is. It returns [Unchangeable] when that
+// says no.
+func (f Form) ValidateChange(now time.Time, in Values) (Answers, error) {
+	if !f.Changeable(now) {
+		return Answers{}, Unchangeable{FormID: f.ID, Until: f.ChangeableUntil}
+	}
+
+	return f.judge(in)
+}
+
+// judge is everything Validate and ValidateChange have in common: every rule
+// the definition states, applied to one body, with no opinion about the clock.
+func (f Form) judge(in Values) (Answers, error) {
 	ans := Answers{
 		FormID:   f.ID,
 		Version:  f.Version,

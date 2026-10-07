@@ -276,6 +276,7 @@ func settingsSummary(f formbus.Form) []settingRow {
 		set("Introduction", f.Intro),
 		when("Opens", f.OpensAt),
 		when("Closes", f.ClosesAt),
+		when("Answers can be changed until", f.ChangeableUntil),
 		set("When closed, it says", f.ClosedNote),
 		set("Confirmation", f.Confirmation),
 	}

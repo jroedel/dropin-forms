@@ -25,6 +25,14 @@
 //	                       stores nothing: it renders the form again with what
 //	                       was typed still in it. That is the Back button on
 //	                       the confirmation page.
+//	GET /f/{slug}/mine     the answer link in its query, which names one
+//	                       submission and is signed; then the form's own
+//	                       ChangeableUntil. It shows somebody their own
+//	                       answers and mints a grant. See mine.go.
+//	POST /f/{slug}/mine    the same-origin gate, the answer link (from a
+//	                       hidden field), the submission grant, and the
+//	                       definition's rules -- submit's chain, with the link
+//	                       in front of it.
 //	GET /f/{slug}/return   nothing, and it must stay that way: this is where
 //	                       a browser lands after Stripe, and the one thing it
 //	                       carries is a word saying what happened. It decides
@@ -99,9 +107,14 @@ type Forms interface {
 // here for a form whose list of earlier answers is on: submissionbus decides
 // which submissions count as settled enough to show, and formbus decides what
 // of each is shown. This app renders what those two hand it.
+//
+// Mine and Change are the way back to answers already given, on a form that
+// allows it; mine.go has the routes.
 type Submissions interface {
 	Accept(ctx context.Context, now time.Time, g formbus.Grant, ns submissionbus.New) (submissionbus.Submission, error)
 	Recent(ctx context.Context, form types.Slug, limit int) ([]submissionbus.Submission, error)
+	Mine(ctx context.Context, form types.Slug, id types.ID) (submissionbus.Submission, error)
+	Change(ctx context.Context, now time.Time, g formbus.Grant, e submissionbus.Edit) (submissionbus.Submission, submissionbus.Submission, error)
 }
 
 // Payments is the slice of the payment domain this app needs: it starts a
@@ -155,6 +168,11 @@ type Config struct {
 
 	// GrantKey signs the submission grants this app mints and redeems.
 	GrantKey formbus.GrantKey
+
+	// AnswerKey signs the links back to somebody's own answers. A zero one is
+	// a working service in which no answer can be changed, whatever a form
+	// says: no link is offered, and any presented is refused.
+	AnswerKey submissionbus.AnswerKey
 
 	// Now is the clock, injectable so that the open and close windows can be
 	// tested without waiting for a date to pass -- and so that the tests
@@ -334,6 +352,13 @@ func Routes(mux *http.ServeMux, cfg Config, writes func(http.Handler) http.Handl
 	// changing their mind twice.
 	mux.Handle("POST /f/{slug}/edit", reads(writes(http.HandlerFunc(a.edit))))
 
+	// Somebody's own answers, through the link we sent them. The GET is a
+	// page view and reads like one. The POST stores something, so it is held
+	// to the submit allowance -- which is also what makes guessing at tokens
+	// a search one request every few seconds long.
+	mux.Handle("GET /f/{slug}/mine", reads(http.HandlerFunc(a.mine)))
+	mux.Handle("POST /f/{slug}/mine", submits(writes(http.HandlerFunc(a.change))))
+
 	// Where Stripe sends the browser back to. Strictly speaking Stripe sends
 	// it to the *hosting* page and embed.js brings it here, which is the only
 	// reason this can be a page inside the frame rather than a redirect.
@@ -401,6 +426,10 @@ type formView struct {
 	// Listing is the earlier answers shown beneath the form, or nil when the
 	// form has no list -- or has one that could not be read this time.
 	Listing *listingView
+
+	// Mine is set when the page is showing somebody their own answers,
+	// through the link we sent them, rather than a blank form.
+	Mine *mineView
 }
 
 // listingView is the list of earlier answers, each already written out as the
@@ -591,6 +620,8 @@ func (a app) submit(w http.ResponseWriter, r *http.Request) {
 		ParentOrigin: parentOrigin(f, r),
 		Lines:        viewLines(order, f.Currency),
 		Total:        totalOf(sub.Answers, f.Currency),
+		ChangeURL:    a.changeURL(f, sub),
+		ChangeUntil:  untilWords(f.ChangeableUntil),
 	}
 
 	if view.Owed() {
@@ -787,6 +818,18 @@ type doneView struct {
 	// BackTo is where Back posts, carrying the parent origin onward for the
 	// same reason Action does.
 	BackTo string
+
+	// ChangeURL is the link back to these answers, on a form that takes
+	// changes, and ChangeUntil is until when, in words. Shown on the page as
+	// well as sent by mail, because the page is the one place the person is
+	// certainly looking, and a mail can go to a spam folder.
+	ChangeURL   string
+	ChangeUntil string
+
+	// Changed and Unchanged are the outcome of following that link and
+	// saving: the answers were replaced, or nothing in them was different.
+	Changed   bool
+	Unchanged bool
 }
 
 // answerView is one posted name and value, on its way back into a hidden
@@ -908,18 +951,32 @@ func (a app) render(
 	w http.ResponseWriter, r *http.Request, status int,
 	f formbus.Form, values formbus.Values, problems formbus.Invalid, note string,
 ) {
+	view, ok := a.formView(w, r, f, values, problems, note)
+	if !ok {
+		return
+	}
+
+	a.cfg.Render.Render(w, r, status, "form", view)
+}
+
+// formView builds the form page and mints its grant, answering the request
+// itself when the grant cannot be minted.
+func (a app) formView(
+	w http.ResponseWriter, r *http.Request,
+	f formbus.Form, values formbus.Values, problems formbus.Invalid, note string,
+) (formView, bool) {
 	grant, err := formbus.Mint(a.cfg.GrantKey, f, a.now())
 	if err != nil {
 		a.cfg.Log.Error("a grant could not be minted",
 			"request_id", web.RequestIDFrom(r.Context()), "form", f.ID.String(), "error", err)
 		a.oops(w, r)
 
-		return
+		return formView{}, false
 	}
 
 	origin := parentOrigin(f, r)
 
-	a.cfg.Render.Render(w, r, status, "form", formView{
+	return formView{
 		Form:          f,
 		Grant:         grant,
 		Action:        withParent("/f/"+f.ID.String(), origin),
@@ -932,7 +989,7 @@ func (a app) render(
 		Problems:      problems,
 		Note:          note,
 		Listing:       a.listing(r, f),
-	})
+	}, true
 }
 
 // listing reads the earlier answers a form shows beneath itself.

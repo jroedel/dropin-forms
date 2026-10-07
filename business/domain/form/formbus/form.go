@@ -260,6 +260,22 @@ type Form struct {
 	OpensAt  time.Time
 	ClosesAt time.Time
 
+	// ChangeableUntil is the instant until which somebody who has answered
+	// may change their answers, through the link in every message we send
+	// them. Zero, the usual answer, means answers are final once given.
+	//
+	// A date on the form rather than a lifetime on each link: see
+	// submissionbus/answerlink.go for why the links do not expire and this
+	// does. Independent of ClosesAt, because "no new responses after the
+	// 15th" and "send your flight whenever you have it" are both true of the
+	// same form at once.
+	//
+	// Left out of the fingerprint. It changes nothing about what a new
+	// submission means or which answers are acceptable -- it decides who may
+	// come back later -- and moving it in a hurry must not throw away every
+	// half-filled tab, which is the line DailyCap and ReturnURL are on.
+	ChangeableUntil time.Time
+
 	// ClosedNote is shown instead of the form when it is not taking
 	// submissions -- where to write, or when it will open. Empty gets a
 	// generic sentence.
@@ -446,6 +462,18 @@ func (f *Form) Check() error {
 	if !f.OpensAt.IsZero() && !f.ClosesAt.IsZero() && !f.ClosesAt.After(f.OpensAt) {
 		add("it closes at %s, which is not after it opens at %s",
 			f.ClosesAt.Format(time.RFC3339), f.OpensAt.Format(time.RFC3339))
+	}
+	if !f.ChangeableUntil.IsZero() {
+		// Money is the line. An order is a record of what somebody agreed to
+		// pay, and a payment was taken against it; letting the answers that
+		// priced it move afterwards is how a charge stops matching its order.
+		if f.Sells() {
+			add("it lets answers be changed and it takes money; an order cannot be changed once it is paid for")
+		}
+		if !f.OpensAt.IsZero() && !f.ChangeableUntil.After(f.OpensAt) {
+			add("its answers can be changed until %s, which is not after it opens at %s",
+				f.ChangeableUntil.Format(time.RFC3339), f.OpensAt.Format(time.RFC3339))
+		}
 	}
 	if len(f.Fields) == 0 {
 		add("it has no fields")
@@ -926,6 +954,12 @@ func (f Form) Open(now time.Time) bool {
 	}
 
 	return true
+}
+
+// Changeable reports whether answers already given may be changed at this
+// instant. Never, on a form that has no ChangeableUntil.
+func (f Form) Changeable(now time.Time) bool {
+	return !f.ChangeableUntil.IsZero() && now.Before(f.ChangeableUntil)
 }
 
 // symbols is how an amount is written for a person, per currency.

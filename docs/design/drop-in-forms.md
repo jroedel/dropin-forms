@@ -1997,6 +1997,68 @@ taking a row out of the totals changes the number somebody orders food
 against. The id in the path is checked against the form in the path, as the
 will-call table checks it.
 
+### Changing an answer, as built
+
+Written for the ordination of Dcn. Hector Islas on 6 February 2027. The
+invitation goes out on paper, and what the office needs from each priest
+arrives over months: in October, "I am seriously considering it"; in
+December, a flight; in January, which nights he needs a bed. A form that
+takes one answer and then forgets the person asks them to wait until they
+know everything, and they will not.
+
+So a form may say **"answers can be changed until"** a date. Somebody who
+answers is handed a link back to their own answers — on the thank-you page,
+and in every message sent to them — and following it shows the form filled
+in with what they said, to change and save. Questions added to the form since
+they answered appear blank on that page; that is how the form asks for more
+as the event comes closer, without a second form.
+
+**Holding our email is the credential.** These people have no account and
+never will. The link is an HMAC over the form and the submission
+(`submissionbus/answerlink.go`), signed with a key derived from the grant
+secret under a label of its own, as the unsubscribe link's is. Nobody can
+construct one for somebody else's row; whoever holds one was sent it, or was
+shown it by somebody who was.
+
+**The link does not expire; the form's date does.** A per-link lifetime was
+the obvious design and the wrong one: it makes the oldest message in somebody's
+inbox the first to stop working, months before the office stops wanting
+changes, and the whole point is that a reply to October's email still works in
+January. One date on the form, checked on every use, which the office can
+move. It is left out of the fingerprint, so moving it throws away nobody's
+half-filled tab. It is independent of the closing date: "no new responses
+after the 15th" and "send your flight whenever you have it" are both true of
+the same form at once.
+
+**Withdrawing one link is hiding its submission.** A hidden submission cannot
+be reached through any link. Rotating the secret withdraws every link at once,
+along with every grant and unsubscribe link, which is the right size of hammer
+for a leaked key.
+
+**Nothing is overwritten.** The `submissions` row holds the current answers,
+so every list, the CSV and the public listing read one row per submission as
+before. What it held before each change is kept in `submission_revisions` —
+the answers, the address, the version they were checked against, and the
+stretch of time they were current — and the submission's admin page shows
+them, newest first. A save that changes nothing writes nothing.
+
+**Two tabs.** The page carries the moment the answers it shows were current.
+A save drawn from answers that have since changed is refused, and the person
+is shown the answers as they now stand rather than having their other tab's
+change silently undone. The store's write is conditional on the same thing,
+inside the transaction that spends the grant, so the check cannot be raced.
+
+**Not on a form that takes money.** `Check` refuses the combination. An order
+is a record of what somebody agreed to pay, and a payment was taken against
+it; letting the answers that priced it move afterwards is how a charge stops
+matching its order.
+
+**Where the token travels.** In the query string of the GET, because that is
+what a link in an email is. This service's request log records the path and
+never the query; Apache's access log on the same host does record it, which is
+the same trust boundary as the database the token unlocks a row of. The POST
+carries it in a hidden field, not in its address.
+
 ## 10. Dependencies
 
 A dependency needs a comment naming the standard-library answer that was

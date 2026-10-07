@@ -1,11 +1,17 @@
-{{define "title"}}{{if .Duplicate}}Already received{{else}}Thank you{{end}}{{end}}
+{{define "title"}}{{if .Duplicate}}Already received{{else if .Unchanged}}Nothing changed{{else if .Changed}}Saved{{else}}Thank you{{end}}{{end}}
 
 {{define "content"}}
 <div id="dropin-root" data-parent-origin="{{.ParentOrigin}}" class="outcome">
-<div class="said">
+<div class="said{{if .Unchanged}} unfinished{{end}}">
 {{if .Duplicate}}
 <h1>We already have this</h1>
 <p>It looks like this was sent twice. Only one has been recorded, so there is nothing more to do.</p>
+{{else if .Unchanged}}
+<h1>Nothing has changed</h1>
+<p>Your answers are exactly as they were, so there was nothing to save.</p>
+{{else if .Changed}}
+<h1>Your changes are saved</h1>
+<p>We have your answers as they now stand.</p>
 {{else if .Owed}}
 <h1>Almost done</h1>
 <p>Your answers are saved. The last step is the payment.</p>
@@ -14,6 +20,18 @@
 <p>{{if .Form.Confirmation}}{{.Form.Confirmation}}{{else}}This has been received.{{end}}</p>
 {{end}}
 </div>
+
+{{with .ChangeURL}}
+{{/* The link back, on the page as well as in the mail, because this page is
+     certainly being read and a mail may land in a spam folder. _top, because
+     this may be inside a frame on somebody else's site and the form it opens
+     is a page of its own. */}}
+<div class="change-link">
+<p>Know more later? You can change these answers until {{$.ChangeUntil}}.
+Every email we send you has this link, or keep it from here:</p>
+<p><a href="{{.}}" target="_top">Change my answers</a></p>
+</div>
+{{end}}
 
 {{if .Lines}}
 <table class="receipt">

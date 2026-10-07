@@ -394,6 +394,32 @@ required = true
 // The daily cap reaches the domain type, which is the whole job of the wire
 // type: a setting that parses and then goes nowhere is a rule switched off
 // with nothing to say so.
+// The date answers can be changed until is read as an instant, with the
+// offset closes_at insists on, for the same reason.
+func TestTheChangeDateIsRead(t *testing.T) {
+	store, err := formtoml.Load(fstest.MapFS{"alpha.toml": {Data: []byte(
+		minimal("alpha", `changeable_until = "2027-02-07T00:00:00-06:00"`))}})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	alpha, _ := types.ParseSlug("alpha")
+
+	f, err := store.ByID(alpha)
+	if err != nil {
+		t.Fatalf("ByID: %v", err)
+	}
+
+	if got, want := f.ChangeableUntil.UTC().Format(time.RFC3339), "2027-02-07T06:00:00Z"; got != want {
+		t.Errorf("ChangeableUntil = %s, want %s", got, want)
+	}
+
+	if _, err := formtoml.Load(fstest.MapFS{"beta.toml": {Data: []byte(
+		minimal("beta", `changeable_until = "2027-02-07"`))}}); err == nil {
+		t.Error("a change date with no offset was accepted")
+	}
+}
+
 func TestTheDailyCapIsRead(t *testing.T) {
 	store, err := formtoml.Load(fstest.MapFS{"alpha.toml": {Data: []byte(
 		minimal("alpha", "daily_cap = 400"))}})
