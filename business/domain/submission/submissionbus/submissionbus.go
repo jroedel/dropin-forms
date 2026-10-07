@@ -304,6 +304,10 @@ type Storer interface {
 	// ByEmail lists a form's submissions from one address, not hidden,
 	// newest first.
 	ByEmail(ctx context.Context, form types.Slug, email types.Email) ([]Submission, error)
+
+	// ChangeCounts is how many times each of a form's submissions has been
+	// changed, absent for none.
+	ChangeCounts(ctx context.Context, form types.Slug) (map[types.ID]int, error)
 }
 
 // Business is the set of operations on submissions.

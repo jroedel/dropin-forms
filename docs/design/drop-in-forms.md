@@ -2082,6 +2082,48 @@ answered, or the page would be a way to send our mail to anybody. It sits
 behind the submit allowance and a grant. It is synchronous, like sign-in, and
 accepts the same small timing difference sign-in does.
 
+### The spreadsheet feed, as built
+
+The office keeps its own Google Sheets — rooming, rides, the vesting list —
+and wants them to follow the answers without anybody downloading a CSV. So a
+form's administrator can make a **key** on the form's Spreadsheet page
+(`/forms/{slug}/feed`, linked from the submissions list), and a Google Apps
+Script holding it reads `GET /forms/{slug}/feed.json` on a timer and rewrites a
+tab of its own. The page carries the script, with the address filled in, and
+the five steps to install it.
+
+**A key, on a service that left key management behind.** CLAUDE.md says so,
+and this is a deliberate, narrow exception. A sheet's script cannot hold a
+session: it cannot follow an emailed sign-in link, and it would have to every
+fourteen days. What keeps it narrow is what a key cannot do. It reads one form
+and is refused on every other. It writes nothing: no route anywhere accepts a
+key for a write. It has no scopes, no roles and no expiry. An administrator
+revokes it from the page that made it, and the page shows when each key was
+last used.
+
+**Shown once, stored as a hash.** A key is `dfk_` and 32 random bytes; the
+prefix makes one pasted somewhere it should not be recognisable. Only its
+SHA-256 is stored, and the lookup is by that hash. A fast hash is right for 256
+bits of randomness: there is nothing to stretch. The page tells the person to
+put the key in the script's properties rather than in the script, so that
+whoever can read the script cannot read the key.
+
+**Behind the key alone.** The JSON route sits on the admin listener behind the
+ordinary chain, which refuses nothing a script sends: no Sec-Fetch-Site and
+no Origin pass the same-origin gate, the form-encoding gate looks only at
+writes, and Authenticate never refuses. A session is not a key: an
+administrator's cookie reads nothing there. Every refusal is the same 401, and
+the key is checked before the form is looked up, so a stranger learns nothing
+about which forms exist.
+
+**Everything, every time.** The feed holds the same rows as the CSV — not
+hidden — oldest first, so a person keeps their row from one pull to the next,
+with a key for every question the form now asks (`null` when unanswered) and
+how many times each has been changed. An incremental `?since=` was designed
+and dropped: hiding a submission does not change it, so a script asking "what
+is new" would never hear that a row should go. At a parish form's size, all of
+it is a few kilobytes.
+
 ## 10. Dependencies
 
 A dependency needs a comment naming the standard-library answer that was

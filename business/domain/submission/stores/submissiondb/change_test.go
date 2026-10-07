@@ -55,6 +55,11 @@ func TestAChangeReplacesTheRowAndKeepsTheOldAnswers(t *testing.T) {
 		t.Fatalf("second Change: %v, %v", ok, err)
 	}
 
+	counts, err := store.ChangeCounts(ctx, first.Form)
+	if err != nil || counts[first.ID] != 2 || len(counts) != 1 {
+		t.Errorf("ChangeCounts = %v, %v; want this submission changed twice", counts, err)
+	}
+
 	got, err := store.ByID(ctx, first.ID)
 	if err != nil {
 		t.Fatalf("ByID: %v", err)

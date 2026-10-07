@@ -61,6 +61,18 @@ func (m *memStore) ByEmail(_ context.Context, form types.Slug, email types.Email
 	return out, nil
 }
 
+func (m *memStore) ChangeCounts(_ context.Context, form types.Slug) (map[types.ID]int, error) {
+	out := map[types.ID]int{}
+
+	for id, revs := range m.revs {
+		if m.subs[id].Form == form {
+			out[id] = len(revs)
+		}
+	}
+
+	return out, nil
+}
+
 // accepted stores one free submission and returns it.
 func accepted(t *testing.T, b *submissionbus.Business, form types.Slug) submissionbus.Submission {
 	t.Helper()

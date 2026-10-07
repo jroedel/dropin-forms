@@ -145,6 +145,11 @@ type Config struct {
 	// them the page draws no button, rather than one that answers 404.
 	CanHide bool
 
+	// CanFeed says the spreadsheet feed is mounted, for the same reason: the
+	// list links to it only for a reader who may use it and only when it is
+	// there.
+	CanFeed bool
+
 	// Notifications is optional. Without it the list simply does not mention
 	// email, which is right for an installation that cannot record the
 	// preference: a column offering a choice that will not stick is worse than
@@ -430,6 +435,10 @@ type listView struct {
 	// so somebody who cannot find an order is told where it might be.
 	Hidden        int
 	ShowingHidden bool
+
+	// Feed is whether to link to the spreadsheet page: mounted, and this
+	// reader administers the form.
+	Feed bool
 }
 
 type rowView struct {
@@ -496,6 +505,16 @@ func (a app) list(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("hidden") != "" {
 		view.ShowingHidden = true
 		subs = hidden
+	}
+
+	if me, ok := mid.UserFrom(r.Context()); ok && a.cfg.CanFeed {
+		allowed, err := a.cfg.Grants.Allowed(r.Context(), me.ID, f.ID, accessbus.RoleAdmin)
+		if err != nil {
+			a.cfg.Log.Error("whether the reader may manage the feed could not be read",
+				"request_id", web.RequestIDFrom(r.Context()), "form", f.ID.String(), "error", err)
+		}
+
+		view.Feed = allowed
 	}
 
 	for _, s := range subs {

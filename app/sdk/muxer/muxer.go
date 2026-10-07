@@ -75,6 +75,7 @@ import (
 
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
+	"github.com/jroedel/dropin-forms/app/domain/feedapp"
 	"github.com/jroedel/dropin-forms/app/domain/formapp"
 	"github.com/jroedel/dropin-forms/app/domain/hideapp"
 	"github.com/jroedel/dropin-forms/app/domain/notifyapp"
@@ -145,6 +146,13 @@ type Config struct {
 	// being handed the wider value. Optional: without it the routes are not
 	// mounted and the page for one submission draws no button to them.
 	Hiding hideapp.Submissions
+
+	// Feeds and FeedRows are the spreadsheet feed: the keys, and the
+	// submissions it reads -- the latter its own field for the reason Hiding
+	// is, a narrower value than the read surface's. Optional, both: without
+	// them the routes are not mounted and no key can be made.
+	Feeds    feedapp.Keys
+	FeedRows feedapp.Submissions
 
 	// Builder is the write half of the form domain, and the one dependency
 	// here that only one app has. Optional: without it the service serves
@@ -401,6 +409,7 @@ func Admin(cfg Config) (http.Handler, error) {
 		Accounts:    cfg.Users,
 		Render:      cfg.Render,
 		CanHide:     cfg.Hiding != nil,
+		CanFeed:     cfg.Feeds != nil && cfg.FeedRows != nil,
 	}
 
 	if cfg.Notify != nil {
@@ -464,6 +473,21 @@ func Admin(cfg Config) (http.Handler, error) {
 			Log:         cfg.Log,
 			Forms:       cfg.Forms,
 			Submissions: cfg.Hiding,
+		}, guard, admins)
+	}
+
+	// The spreadsheet feed. Making and revoking a key is behind admin on the
+	// form; the JSON is behind the key alone, and feedapp says why the chain
+	// in front of it refuses nothing a script sends.
+	if cfg.Feeds != nil && cfg.FeedRows != nil {
+		feedapp.Routes(mux, feedapp.Config{
+			Log:         cfg.Log,
+			Forms:       cfg.Forms,
+			Submissions: cfg.FeedRows,
+			Keys:        cfg.Feeds,
+			Render:      cfg.Render,
+			BaseURL:     cfg.AdminBaseURL,
+			TrustProxy:  cfg.TrustProxy,
 		}, guard, admins)
 	}
 
