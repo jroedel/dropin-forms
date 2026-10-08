@@ -62,6 +62,7 @@ func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 var Expected = sqldb.Expected{
 	"users":         {"id", "email", "name", "enabled", "created_at", "updated_at"},
 	"signin_tokens": {"id", "user_id", "hash", "created_at", "expires_at", "used_at"},
+	"signin_codes":  {"token_id", "user_id", "hash", "tries", "created_at", "expires_at", "used_at"},
 	"backup_codes":  {"id", "user_id", "hash", "created_at", "used_at"},
 	"sessions":      {"id", "user_id", "hash", "created_at", "expires_at", "last_seen_at"},
 	"bootstrap":     {"id", "claimed_at"},
@@ -96,6 +97,24 @@ CREATE TABLE IF NOT EXISTS signin_tokens (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS signin_tokens_expires_at ON signin_tokens (expires_at);
+
+-- The six digits sent with each link (userbus/code.go). A table of their own
+-- rather than columns on signin_tokens, because this repository's migration is
+-- CREATE ... IF NOT EXISTS and a new table is the change that needs nothing
+-- more. No reference to signin_tokens either: a code's row outlives its link
+-- by a day, so that the wrong codes an account has had are still counted after
+-- the link has been pruned.
+CREATE TABLE IF NOT EXISTS signin_codes (
+    token_id    TEXT    PRIMARY KEY,
+    user_id     TEXT    NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    hash        BLOB    NOT NULL,
+    tries       INTEGER NOT NULL DEFAULT 0,
+    created_at  INTEGER NOT NULL,
+    expires_at  INTEGER NOT NULL,
+    used_at     INTEGER
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS signin_codes_user_id_created_at ON signin_codes (user_id, created_at);
 
 CREATE TABLE IF NOT EXISTS backup_codes (
     id          TEXT    PRIMARY KEY,
@@ -286,6 +305,101 @@ func (s *Store) UseToken(ctx context.Context, id types.ID, at time.Time) (bool, 
 	}
 
 	return affected(res)
+}
+
+// CreateSignInCode records the code sent with a sign-in link.
+func (s *Store) CreateSignInCode(ctx context.Context, c userbus.SignInCode) error {
+	const q = `
+INSERT INTO signin_codes (token_id, user_id, hash, created_at, expires_at)
+VALUES (?, ?, ?, ?, ?)`
+
+	if _, err := s.db.ExecContext(ctx, q,
+		c.TokenID.String(), c.UserID.String(), c.Hash, msOf(c.CreatedAt), msOf(c.ExpiresAt)); err != nil {
+		return fmt.Errorf("inserting the sign-in code: %w", err)
+	}
+
+	return nil
+}
+
+// LatestSignInCode finds an account's newest code. rowid breaks a tie between
+// two asked for in the same millisecond, in the order they were stored.
+func (s *Store) LatestSignInCode(ctx context.Context, userID types.ID) (userbus.SignInCode, error) {
+	const q = `
+SELECT token_id, user_id, hash, tries, created_at, expires_at, used_at
+FROM signin_codes WHERE user_id = ?
+ORDER BY created_at DESC, rowid DESC LIMIT 1`
+
+	var (
+		c      userbus.SignInCode
+		rawID  string
+		rawUID string
+		used   sql.NullInt64
+		made   int64
+		expiry int64
+	)
+
+	err := s.db.QueryRowContext(ctx, q, userID.String()).
+		Scan(&rawID, &rawUID, &c.Hash, &c.Tries, &made, &expiry, &used)
+
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return userbus.SignInCode{}, userbus.ErrNotFound
+	case err != nil:
+		return userbus.SignInCode{}, fmt.Errorf("reading the sign-in code: %w", err)
+	}
+
+	if c.TokenID, err = types.ParseID(rawID); err != nil {
+		return userbus.SignInCode{}, fmt.Errorf("the stored sign-in code has a bad identifier: %w", err)
+	}
+	if c.UserID, err = types.ParseID(rawUID); err != nil {
+		return userbus.SignInCode{}, fmt.Errorf("the stored sign-in code names a bad account: %w", err)
+	}
+
+	c.CreatedAt = timeOf(made)
+	c.ExpiresAt = timeOf(expiry)
+	c.UsedAt = timeOfNull(used)
+
+	return c, nil
+}
+
+// TrySignInCode reserves one attempt at a code, reporting false when limit
+// have already been made. One statement, for the reason UseToken is.
+func (s *Store) TrySignInCode(ctx context.Context, tokenID types.ID, limit int) (bool, error) {
+	const q = `UPDATE signin_codes SET tries = tries + 1 WHERE token_id = ? AND tries < ?`
+
+	res, err := s.db.ExecContext(ctx, q, tokenID.String(), limit)
+	if err != nil {
+		return false, fmt.Errorf("recording a sign-in code attempt: %w", err)
+	}
+
+	return affected(res)
+}
+
+// UseSignInCode records that somebody signed in with a code.
+func (s *Store) UseSignInCode(ctx context.Context, tokenID types.ID, at time.Time) error {
+	const q = `UPDATE signin_codes SET used_at = ? WHERE token_id = ? AND used_at IS NULL`
+
+	if _, err := s.db.ExecContext(ctx, q, msOf(at), tokenID.String()); err != nil {
+		return fmt.Errorf("marking the sign-in code used: %w", err)
+	}
+
+	return nil
+}
+
+// SignInCodeFailures counts the attempts on an account's codes since a time
+// that did not sign anybody in: every attempt, less the one that worked on
+// each code somebody signed in with.
+func (s *Store) SignInCodeFailures(ctx context.Context, userID types.ID, since time.Time) (int, error) {
+	const q = `
+SELECT COALESCE(SUM(tries), 0) - COUNT(used_at)
+FROM signin_codes WHERE user_id = ? AND created_at >= ?`
+
+	var n int
+	if err := s.db.QueryRowContext(ctx, q, userID.String(), msOf(since)).Scan(&n); err != nil {
+		return 0, fmt.Errorf("counting the wrong sign-in codes: %w", err)
+	}
+
+	return n, nil
 }
 
 // ReplaceBackupCodes swaps a user's whole set of codes for a new one, in a
@@ -499,6 +613,13 @@ func (s *Store) PruneExpired(ctx context.Context, before time.Time) error {
 		if _, err := s.db.ExecContext(ctx, q, cutoff); err != nil {
 			return fmt.Errorf("removing expired credentials: %w", err)
 		}
+	}
+
+	// A code is kept for the window its wrong attempts are counted over, not
+	// just until it expires. See the table's comment.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM signin_codes WHERE expires_at < ?`,
+		msOf(before.Add(-userbus.CodeBudgetWindow))); err != nil {
+		return fmt.Errorf("removing old sign-in codes: %w", err)
 	}
 
 	return nil

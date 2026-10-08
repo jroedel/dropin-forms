@@ -795,6 +795,16 @@ Two gaps in the inherited `foundation/web` to fix while bootstrapping:
 - **The emailed link must not sign you in on `GET`.** Mail scanners and link
   previewers prefetch URLs and would burn the token before the person clicks. The
   link opens a page with a "Sign in" button that **POSTs** the token.
+- **The same mail carries a six-digit code** (added later), typed on the page
+  that said to check your email, because the link opens in whichever browser
+  the mail app picks and that is often not the one somebody was signing in on.
+  The mail is worded the way Gmail recognises a verification code, so it offers
+  "Copy code". Six digits are guessable where the link is not, so only the
+  newest code for an account works, each allows five attempts reserved before
+  comparing, and an account allows fifteen wrong codes a day; past that, codes
+  stop working and the link and backup codes do not. The code and the link
+  redeem one token, so either spends both. `userbus/code.go` has the reasoning,
+  including what a hash of six digits does not protect.
 - Rate-limit per address, and answer identically whether or not the address
   exists, or the login form is an account-enumeration oracle.
 - **"Answer identically" includes when sending the mail fails**, and that is a

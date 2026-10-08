@@ -693,3 +693,97 @@ func TestAStoredRowThatCannotBeParsedIsRefused(t *testing.T) {
 		t.Errorf("the error does not say what is wrong: %v", err)
 	}
 }
+
+// The SQL behind the sign-in code rules: which code is the newest, the
+// reservation that bounds the attempts, the arithmetic of the daily count, and
+// a code outliving its link by the window it is counted over.
+func TestSignInCodes(t *testing.T) {
+	_, s := open(t)
+	u := mustUser(t, s, "frjeff@schoenstatt.us")
+	other := mustUser(t, s, "other@schoenstatt.us")
+
+	if _, err := s.LatestSignInCode(t.Context(), u.ID); !errors.Is(err, userbus.ErrNotFound) {
+		t.Fatalf("LatestSignInCode with none = %v, want ErrNotFound", err)
+	}
+
+	code := func(who types.ID) userbus.SignInCode {
+		t.Helper()
+
+		c := userbus.SignInCode{
+			TokenID:   types.NewID(),
+			UserID:    who,
+			Hash:      []byte("a thirty-two byte hash goes here"),
+			CreatedAt: now,
+			ExpiresAt: now.Add(15 * time.Minute),
+		}
+
+		if err := s.CreateSignInCode(t.Context(), c); err != nil {
+			t.Fatalf("CreateSignInCode: %v", err)
+		}
+
+		return c
+	}
+
+	// Two in the same millisecond: the later one stored is the newest.
+	first := code(u.ID)
+	second := code(u.ID)
+	code(other.ID)
+
+	got, err := s.LatestSignInCode(t.Context(), u.ID)
+	switch {
+	case err != nil:
+		t.Fatalf("LatestSignInCode: %v", err)
+	case got.TokenID != second.TokenID:
+		t.Errorf("newest = %s, want the second (%s), not the first (%s)", got.TokenID, second.TokenID, first.TokenID)
+	case got.Tries != 0 || !got.UsedAt.IsZero() || !got.ExpiresAt.Equal(second.ExpiresAt):
+		t.Errorf("newest = %+v", got)
+	}
+
+	for i := range 4 {
+		ok, err := s.TrySignInCode(t.Context(), second.TokenID, 3)
+
+		switch {
+		case err != nil:
+			t.Fatalf("TrySignInCode: %v", err)
+		case ok != (i < 3):
+			t.Errorf("attempt %d reserved = %v, want %v", i+1, ok, i < 3)
+		}
+	}
+
+	if _, err := s.TrySignInCode(t.Context(), first.TokenID, 3); err != nil {
+		t.Fatalf("TrySignInCode: %v", err)
+	}
+
+	// Four attempts, one of which signed somebody in.
+	if err := s.UseSignInCode(t.Context(), first.TokenID, now); err != nil {
+		t.Fatalf("UseSignInCode: %v", err)
+	}
+
+	for since, want := range map[time.Time]int{
+		now:                  3,
+		now.Add(time.Minute): 0,
+	} {
+		if n, err := s.SignInCodeFailures(t.Context(), u.ID, since); err != nil || n != want {
+			t.Errorf("SignInCodeFailures(since %s) = %d, %v; want %d", since, n, err, want)
+		}
+	}
+
+	if n, _ := s.SignInCodeFailures(t.Context(), other.ID, now); n != 0 {
+		t.Errorf("another account's failures = %d, want 0", n)
+	}
+
+	// Pruned only once the window it is counted over has passed its expiry.
+	if err := s.PruneExpired(t.Context(), now.Add(time.Hour)); err != nil {
+		t.Fatalf("PruneExpired: %v", err)
+	}
+	if _, err := s.LatestSignInCode(t.Context(), u.ID); err != nil {
+		t.Errorf("a code was pruned an hour after it was made: %v", err)
+	}
+
+	if err := s.PruneExpired(t.Context(), now.Add(15*time.Minute+userbus.CodeBudgetWindow+time.Second)); err != nil {
+		t.Fatalf("PruneExpired: %v", err)
+	}
+	if _, err := s.LatestSignInCode(t.Context(), u.ID); !errors.Is(err, userbus.ErrNotFound) {
+		t.Errorf("a code outlived its window: %v", err)
+	}
+}

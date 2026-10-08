@@ -1,7 +1,8 @@
 // Package userbus holds accounts and how somebody proves they hold one.
 //
-// Sign-in is by emailed link, with backup codes for when mail is not working
-// and a one-time bootstrap secret for when nothing is working yet. There is no
+// Sign-in is by emailed link -- or the six-digit code in the same mail, see
+// code.go -- with backup codes for when mail is not working and a one-time
+// bootstrap secret for when nothing is working yet. There is no
 // password, which removes password storage, password reset, password reuse and
 // password strength from this service entirely -- the mailbox is the factor,
 // and it is a factor the person already maintains.
@@ -145,6 +146,17 @@ type Storer interface {
 	TokenByID(ctx context.Context, id types.ID) (Token, error)
 	UseToken(ctx context.Context, id types.ID, at time.Time) (bool, error)
 
+	// The codes of code.go. LatestSignInCode is the account's newest code
+	// whatever its state, or ErrNotFound. TrySignInCode reserves one attempt
+	// and reports false when limit have been made: it is the claim, so it
+	// must be one statement. SignInCodeFailures is how many attempts on the
+	// account's codes made since then did not sign anybody in.
+	CreateSignInCode(ctx context.Context, c SignInCode) error
+	LatestSignInCode(ctx context.Context, userID types.ID) (SignInCode, error)
+	TrySignInCode(ctx context.Context, tokenID types.ID, limit int) (bool, error)
+	UseSignInCode(ctx context.Context, tokenID types.ID, at time.Time) error
+	SignInCodeFailures(ctx context.Context, userID types.ID, since time.Time) (int, error)
+
 	ReplaceBackupCodes(ctx context.Context, userID types.ID, codes []BackupCode) error
 	BackupCodes(ctx context.Context, userID types.ID) ([]BackupCode, error)
 	UseBackupCode(ctx context.Context, id types.ID, at time.Time) (bool, error)
@@ -237,6 +249,10 @@ func (b *Business) All(ctx context.Context) ([]User, error) {
 type SignInRequest struct {
 	User   User
 	Secret string // empty means: send nothing, say the same thing
+
+	// Code is the six digits that go in the same mail, and redeem the same
+	// link. See code.go.
+	Code string
 }
 
 // Sendable reports whether there is actually a link to mail.
@@ -284,7 +300,19 @@ func (b *Business) RequestSignIn(ctx context.Context, now time.Time, email types
 		return SignInRequest{}, fmt.Errorf("the sign-in link could not be saved: %w", err)
 	}
 
-	return SignInRequest{User: u, Secret: cred.String()}, nil
+	code := mintCode()
+
+	if err := b.store.CreateSignInCode(ctx, SignInCode{
+		TokenID:   t.ID,
+		UserID:    u.ID,
+		Hash:      hashSecret(codeSecret(t.ID, code)),
+		CreatedAt: now,
+		ExpiresAt: t.ExpiresAt,
+	}); err != nil {
+		return SignInRequest{}, fmt.Errorf("the sign-in code could not be saved: %w", err)
+	}
+
+	return SignInRequest{User: u, Secret: cred.String(), Code: code}, nil
 }
 
 // SignIn redeems a sign-in link and returns a session credential.

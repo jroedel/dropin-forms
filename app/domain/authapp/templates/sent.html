@@ -2,8 +2,29 @@
 {{define "content"}}
 <h1>Check your email</h1>
 
-<p>If there is an account for <strong>{{.Email}}</strong>, a sign-in link is on
-its way to it. The link works once and stops working in fifteen minutes.</p>
+{{with .Problem}}<p class="problem">{{.}}</p>{{end}}
+
+<p>If there is an account for <strong>{{.Email}}</strong>, an email with a
+six-digit code and a sign-in link is on its way to it. Either one works once,
+for fifteen minutes.</p>
+
+{{/* The box is here whether or not the address has an account, for the
+     reason the sentence above is: a page that varied would say which
+     addresses do. one-time-code is what lets a phone offer the code from
+     the mail it just received; numeric brings up the number pad. */}}
+<form method="post" action="/signin/verify">
+  <input type="hidden" name="email" value="{{.Email}}">
+  <input type="hidden" name="next" value="{{.Next}}">
+
+  <div class="field">
+    <label for="code">The code from the email</label>
+    <input id="code" name="code" type="text" required autofocus
+           inputmode="numeric" autocomplete="one-time-code"
+           maxlength="9" spellcheck="false">
+  </div>
+
+  <button type="submit">Sign in</button>
+</form>
 
 <p class="lede">We do not say whether an account exists, so this page looks the
 same either way.</p>

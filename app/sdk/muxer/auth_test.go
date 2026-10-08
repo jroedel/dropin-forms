@@ -353,6 +353,73 @@ func TestSignInFromLinkToAccount(t *testing.T) {
 	}
 }
 
+var codePattern = regexp.MustCompile(`(?m)^(\d{6})\r?$`)
+
+// The six digits in the mail sign somebody in from the page that said to check
+// it, through the mounted chain, and the mail is shaped the way Gmail
+// recognises a verification code: the phrase, then the code alone on its line.
+func TestSignInWithTheCodeInTheMail(t *testing.T) {
+	a := newAdmin(t, "")
+
+	if _, err := a.users.Create(t.Context(), time.Now(), userbus.NewUser{
+		Email: mustEmail(t, "frjeff@schoenstatt.us"),
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	w := a.post(t, "/signin", url.Values{"email": {"frjeff@schoenstatt.us"}, "next": {"/forms"}}, "")
+	switch body := w.Body.String(); {
+	case w.Code != http.StatusOK:
+		t.Fatalf("POST /signin = %d, want 200:\n%s", w.Code, body)
+	case !strings.Contains(body, `action="/signin/verify"`), !strings.Contains(body, `autocomplete="one-time-code"`):
+		t.Fatalf("the page has no box for the code:\n%s", body)
+	}
+
+	m, _ := a.sent.Last()
+
+	found := codePattern.FindStringSubmatch(m.Text)
+	switch {
+	case found == nil:
+		t.Fatalf("no code alone on a line in the message:\n%s", m.Text)
+	case !strings.Contains(m.Text, "Your verification code is:"):
+		t.Errorf("the message does not say what the code is:\n%s", m.Text)
+	case !strings.Contains(m.Subject, "verification code"):
+		t.Errorf("subject = %q", m.Subject)
+	}
+
+	code := found[1]
+	wrong := "000000"
+	if code == wrong {
+		wrong = "111111"
+	}
+
+	w = a.post(t, "/signin/verify", url.Values{"email": {"frjeff@schoenstatt.us"}, "code": {wrong}, "next": {"/forms"}}, "")
+	switch {
+	case w.Code != http.StatusUnauthorized:
+		t.Fatalf("a wrong code = %d, want 401", w.Code)
+	case sessionCookie(t, w) != "":
+		t.Fatal("a wrong code set a session")
+	case !strings.Contains(w.Body.String(), "That code did not work"),
+		!strings.Contains(w.Body.String(), `action="/signin/verify"`):
+		t.Errorf("a wrong code does not offer the box again:\n%s", w.Body)
+	}
+
+	w = a.post(t, "/signin/verify", url.Values{"email": {"frjeff@schoenstatt.us"}, "code": {code}, "next": {"/forms"}}, "")
+	switch {
+	case w.Code != http.StatusSeeOther:
+		t.Fatalf("the right code = %d, want 303:\n%s", w.Code, w.Body)
+	case sessionCookie(t, w) == "":
+		t.Fatal("the right code set no session")
+	case w.Header().Get("Location") != "/forms":
+		t.Errorf("Location = %q, want where the person was going", w.Header().Get("Location"))
+	}
+
+	// One credential: the link in the same mail is spent with the code.
+	if w := a.post(t, "/signin/link", url.Values{"token": {signInLink(t, a)}}, ""); w.Code != http.StatusUnauthorized {
+		t.Errorf("the link after its code was used = %d, want 401", w.Code)
+	}
+}
+
 // Asking for a link must look the same whether or not an account exists. This
 // compares the two responses directly, because "looks the same" is easy to
 // believe and easy to get wrong.
@@ -843,7 +910,7 @@ func TestAuthPagesCarryTheAdminPolicy(t *testing.T) {
 func TestCrossSiteWritesAreRefused(t *testing.T) {
 	a := newAdmin(t, bootstrapSecret)
 
-	for _, target := range []string{"/signin", "/signin/link", "/signin/code", "/signin/bootstrap", "/signout"} {
+	for _, target := range []string{"/signin", "/signin/link", "/signin/verify", "/signin/code", "/signin/bootstrap", "/signout"} {
 		t.Run(target, func(t *testing.T) {
 			r := httptest.NewRequest(http.MethodPost, target, strings.NewReader("email=a%40b.co"))
 			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
