@@ -1,0 +1,84 @@
+{{define "title"}}API keys{{end}}
+
+{{define "masthead"}}<a href="/forms">Forms</a>{{end}}
+
+{{define "content"}}
+<h1>API keys</h1>
+
+<p class="crumb"><a href="/account">Your account</a></p>
+
+<p class="help">An API key lets a program build forms and read their answers
+for you — Claude, for instance, when you ask it to make a form. When you
+connect Claude on claude.ai, it is given a key of its own, which is listed
+here and can be revoked here like any other. A key acts as
+<strong>{{.Email}}</strong>: it can reach exactly the forms you can, and do
+exactly what you can do with them, and nothing else. It cannot make another
+key.</p>
+
+{{with .Secret}}
+<div class="notice">
+<p><strong>Copy this key now.</strong> It will not be shown again. Anyone who
+has it can do whatever you can do here until you revoke it, so give it only to
+the program that needs it.</p>
+<pre class="snippet">{{.}}</pre>
+</div>
+{{end}}
+
+<h2>Your keys</h2>
+{{if .Keys}}
+<table class="listing">
+<thead>
+<tr>
+<th scope="col">Called</th>
+<th scope="col">Made</th>
+<th scope="col">Last used</th>
+<th scope="col">Ends</th>
+<th scope="col"><span class="visually-hidden">Revoke</span></th>
+</tr>
+</thead>
+<tbody>
+{{range .Keys}}
+<tr>
+<th scope="row">{{.Label}}</th>
+<td class="when">{{.Made}}</td>
+<td class="when">{{.LastUsed}}</td>
+<td class="when">{{.Ends}}</td>
+<td>
+{{if .Live}}
+<form method="post" action="/account/keys/{{.ID}}/revoke" class="inline">
+  <button type="submit" class="quiet">Revoke</button>
+</form>
+{{else if .Revoked}}
+<span class="absent">revoked</span>
+{{else}}
+<span class="absent">ended</span>
+{{end}}
+</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p class="help">None yet.</p>
+{{end}}
+
+<form method="post" action="/account/keys">
+<div class="field">
+  <label for="label">Make a key called</label>
+  <p class="help">So that you can tell which one to revoke later.</p>
+  <input type="text" id="label" name="label" placeholder="Claude on my laptop" maxlength="80">
+</div>
+<button type="submit">Make a key</button>
+</form>
+
+<h2>Using it</h2>
+<p class="help">On claude.ai, you do not need a key at all: add a custom
+connector with the address <code>{{.BaseURL}}/api/mcp</code>, and Claude will
+send you here to agree.</p>
+<p class="help">Anywhere else, send the key with every request, as a header:</p>
+<pre class="snippet">curl -H "Authorization: Bearer $DROPIN_KEY" {{.BaseURL}}/api/v1/forms</pre>
+<p class="help">To have Claude build a form, give it the key and the API
+reference (<code>docs/api.md</code> in the service's repository), and describe
+the form you want. New forms are made unpublished: look at one in the builder
+before you put it on the web.</p>
+{{end}}

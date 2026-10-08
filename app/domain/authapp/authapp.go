@@ -89,6 +89,10 @@ type Config struct {
 	// Limit is how often one address may try to sign in. The zero value is
 	// [DefaultSignInRate].
 	Limit web.Rate
+
+	// KeysPage says whether the page for API keys is mounted, so that the
+	// account page links to it only when it is there.
+	KeysPage bool
 }
 
 // DefaultSignInRate is what the sign-in routes are held to.
@@ -507,6 +511,8 @@ func (a app) signOut(w http.ResponseWriter, r *http.Request) {
 type accountView struct {
 	Email string
 	Codes []string
+
+	KeysPage bool
 }
 
 func (a app) account(w http.ResponseWriter, r *http.Request) {
@@ -520,7 +526,7 @@ func (a app) account(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.cfg.Render.Render(w, r, http.StatusOK, "account", accountView{Email: u.Email.String()})
+	a.cfg.Render.Render(w, r, http.StatusOK, "account", accountView{Email: u.Email.String(), KeysPage: a.cfg.KeysPage})
 }
 
 func (a app) issueCodes(w http.ResponseWriter, r *http.Request) {
@@ -544,8 +550,9 @@ func (a app) issueCodes(w http.ResponseWriter, r *http.Request) {
 	// will ever be shown. A redirect would need them in a session or a query
 	// string, and both of those are places a one-time secret should not go.
 	a.cfg.Render.Render(w, r, http.StatusOK, "account", accountView{
-		Email: u.Email.String(),
-		Codes: codes,
+		Email:    u.Email.String(),
+		Codes:    codes,
+		KeysPage: a.cfg.KeysPage,
 	})
 }
 

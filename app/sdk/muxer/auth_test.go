@@ -14,9 +14,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jroedel/dropin-forms/app/domain/apiapp"
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/domain/formapp"
 	"github.com/jroedel/dropin-forms/app/domain/notifyapp"
+	"github.com/jroedel/dropin-forms/app/domain/oauthapp"
 	"github.com/jroedel/dropin-forms/app/domain/peopleapp"
 	"github.com/jroedel/dropin-forms/app/domain/siteapp"
 	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
@@ -26,6 +28,8 @@ import (
 	"github.com/jroedel/dropin-forms/app/sdk/page"
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/access/stores/accessdb"
+	"github.com/jroedel/dropin-forms/business/domain/apikey/apikeybus"
+	"github.com/jroedel/dropin-forms/business/domain/apikey/stores/apikeydb"
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/domain/form/stores/formdb"
 	"github.com/jroedel/dropin-forms/business/domain/notify/notifybus"
@@ -67,6 +71,11 @@ type harness struct {
 	// seed a paid order for the will-call table without going through a
 	// payment.
 	orders *submissionbus.Business
+
+	// keys is the personal API key domain, so that a test can hold a key
+	// without signing in for it -- signing in is throttled, and most API
+	// tests are about what a key reaches rather than how it was made.
+	keys *apikeybus.Business
 }
 
 func newAdmin(t *testing.T, bootstrap string) harness {
@@ -97,16 +106,20 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 	if err := formdb.Init(t.Context(), db); err != nil {
 		t.Fatalf("formdb.Init: %v", err)
 	}
+	if err := apikeydb.Init(t.Context(), db); err != nil {
+		t.Fatalf("apikeydb.Init: %v", err)
+	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	users := userbus.NewBusiness(log, userdb.NewStore(db))
+	keys := apikeybus.NewBusiness(log, apikeydb.NewStore(db), users)
 	access := accessbus.NewBusiness(log, accessdb.NewStore(db))
 	submissions := submissionbus.NewBusiness(log, submissiondb.NewStore(db))
 	sent := &mail.Recorder{}
 
 	renderer, err := page.NewRenderer(log, page.AdminChrome(),
 		authapp.Templates, submissionapp.Templates, notifyapp.Templates, peopleapp.Templates,
-		formapp.Templates, willcallapp.Templates, siteapp.Templates)
+		formapp.Templates, willcallapp.Templates, siteapp.Templates, apiapp.Templates, oauthapp.Templates)
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
 	}
@@ -155,6 +168,9 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 	for table, columns := range formdb.Expected {
 		expected[table] = columns
 	}
+	for table, columns := range apikeydb.Expected {
+		expected[table] = columns
+	}
 
 	h, err := muxer.Admin(muxer.Config{
 		Log:          log,
@@ -172,6 +188,8 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 		Notify:       notifier,
 		AdminBaseURL: "https://forms.test",
 		Bootstrap:    bootstrap,
+		APIKeys:      keys,
+		OAuthClients: claudeDocs{t: t},
 	})
 	if err != nil {
 		t.Fatalf("muxer.Admin: %v", err)
@@ -180,6 +198,7 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 	return harness{
 		h: h, users: users, access: access, sent: sent,
 		notify: notifier, muteKey: muteKey, catalogue: catalogue, orders: submissions,
+		keys: keys,
 	}
 }
 

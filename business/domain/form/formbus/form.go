@@ -408,6 +408,11 @@ type Form struct {
 // below at the same time.
 var currencies = []string{"usd"}
 
+// DefaultCurrency is what a form is given when whoever made it named none.
+// The first of the list above, so that the list stays the one authority and
+// this is a starting value rather than a second opinion about what is allowed.
+func DefaultCurrency() string { return currencies[0] }
+
 // stripeMinimum is the smallest charge Stripe accepts, per currency, in minor
 // units. Verify against Stripe's published table before adding a currency --
 // these differ per currency and Stripe has changed them.

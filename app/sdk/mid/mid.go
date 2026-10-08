@@ -13,6 +13,11 @@
 //	    RequireSiteAdmin refuses an account that does not hold the service
 //	      the app
 //
+// Under /api/ the admin listener has a second chain, in which [Bearer] stands
+// in for Authenticate and Require together and the same permission gates
+// follow it. The gates write their refusals as JSON for a request that came
+// with a key; see refuse.
+//
 // The last two are alternatives rather than a pair: a route names a form in
 // its path and takes the first, or it does not and takes the second. Only the
 // routes that create a form are in the second case, because a form that does
@@ -31,6 +36,7 @@ package mid
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -39,6 +45,7 @@ import (
 	"time"
 
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
+	"github.com/jroedel/dropin-forms/business/domain/apikey/apikeybus"
 	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/business/types"
 	"github.com/jroedel/dropin-forms/foundation/web"
@@ -69,9 +76,14 @@ type ctxKey int
 const principalKey ctxKey = iota + 1
 
 // Principal is who is making this request.
+//
+// Exactly one of SessionID and KeyID is set: a browser arrives with a session
+// and a program with a personal key, and nothing arrives with both, because
+// the two are established on different chains -- see app/sdk/muxer.
 type Principal struct {
 	User      userbus.User
 	SessionID types.ID
+	KeyID     types.ID
 }
 
 // UserFrom returns the account behind this request.
@@ -86,11 +98,58 @@ func UserFrom(ctx context.Context) (userbus.User, bool) {
 }
 
 // SessionFrom returns the session this request arrived with, for signing out
-// and for showing somebody their own devices.
+// and for showing somebody their own devices. False for a request made with a
+// key, which has no session to end.
 func SessionFrom(ctx context.Context) (types.ID, bool) {
 	p, ok := ctx.Value(principalKey).(Principal)
 
-	return p.SessionID, ok
+	return p.SessionID, ok && !p.SessionID.Zero()
+}
+
+// byKey reports whether this request was made with a personal key rather
+// than from a browser, which decides how a refusal is written.
+func byKey(ctx context.Context) bool {
+	p, ok := ctx.Value(principalKey).(Principal)
+
+	return ok && !p.KeyID.Zero()
+}
+
+// refuse answers a request a gate has turned away.
+//
+// The same sentence whichever way the request came, written as the body a
+// caller can read: plain text to a browser, which shows it, and JSON to a
+// program, which was promised JSON for every answer the API gives -- a
+// client that has to sniff whether an error is an object or a line of prose
+// is a client that eventually prints "[object Object]" at somebody.
+func refuse(w http.ResponseWriter, r *http.Request, status int, msg string) {
+	if !byKey(r.Context()) {
+		http.Error(w, msg, status)
+
+		return
+	}
+
+	WriteJSONError(w, status, msg)
+}
+
+// WriteJSONError is the API's one shape of error: an object with a sentence
+// in it. Here rather than in the API's own package, because the gates in this
+// one answer the API's requests too and must answer them the same way.
+func WriteJSONError(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// as is how a refusal names the account it is refusing. A person in a browser
+// is told who they are signed in as, because the usual cause is the wrong
+// account; a program is told whose key it is holding, for the same reason.
+func as(r *http.Request, u userbus.User) string {
+	if byKey(r.Context()) {
+		return "this key belongs to " + u.Email.String() + ","
+	}
+
+	return "you are signed in as " + u.Email.String() + ","
 }
 
 // Authenticate establishes who is asking, and refuses nobody.
@@ -155,6 +214,90 @@ func Authenticate(log *slog.Logger, auth Authenticator) web.Middleware {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// KeyAuthenticator is what [Bearer] needs: whose personal key this is.
+type KeyAuthenticator interface {
+	Authenticate(ctx context.Context, now time.Time, presented string) (userbus.User, apikeybus.Key, error)
+}
+
+// Bearer establishes who is asking from a personal key in the Authorization
+// header, and refuses a request that does not carry one that works.
+//
+// It is Authenticate and Require at once, which the session chain keeps
+// apart for a reason that does not apply here: the session chain has a
+// sign-in page that must be reachable while signed out, and the API has no
+// route anybody may use without a key. So there is no state in which a
+// request gets past this without a principal, and the gates beneath it can
+// assume one exactly as they do behind Require.
+//
+// It never reads a cookie, and that is the property the API's whole CSRF
+// story rests on. A browser attaches a session cookie to a cross-site request
+// whether or not the person meant to send it; it never attaches an
+// Authorization header that page script has not set, and page script on
+// another site cannot set one here without a CORS preflight this service
+// never answers. A chain that fell back to the session when there was no key
+// would be a JSON write that any website could make on a signed-in person's
+// behalf -- which is why the API is not behind SameOriginOnly and does not
+// need to be, and why that would stop being true the day this read a cookie.
+//
+// Every refusal is the same 401 with a challenge, so a request with a bad key
+// learns nothing about which keys or accounts exist.
+//
+// challenge is the WWW-Authenticate value for a request, without the error
+// parameter, which is added here for a key that was sent and refused. It is a
+// function because the MCP endpoint's says where to sign in -- RFC 9728's
+// resource_metadata, which is what makes claude.ai start OAuth -- and the
+// plain API's does not need to. Nil means Bearer realm="api".
+func Bearer(log *slog.Logger, keys KeyAuthenticator, challenge func(*http.Request) string) web.Middleware {
+	if challenge == nil {
+		challenge = func(*http.Request) string { return `Bearer realm="api"` }
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			scheme, presented, _ := strings.Cut(r.Header.Get("Authorization"), " ")
+			presented = strings.TrimSpace(presented)
+
+			if !strings.EqualFold(scheme, "Bearer") || presented == "" {
+				refuseKey(w, challenge(r))
+
+				return
+			}
+
+			u, k, err := keys.Authenticate(r.Context(), time.Now(), presented)
+
+			switch {
+			case errors.Is(err, apikeybus.ErrRefused):
+				// error="invalid_token" is what tells an OAuth client that
+				// the key it holds has run out or been revoked, and that it
+				// should sign in again rather than give up.
+				refuseKey(w, challenge(r)+`, error="invalid_token"`)
+
+				return
+
+			case err != nil:
+				// Not a refusal, for the reason Authenticate gives: an
+				// unreadable database must not present as a bad key, or
+				// somebody spends the afternoon making new ones.
+				log.Error("an api key could not be checked",
+					"request_id", web.RequestIDFrom(r.Context()), "error", err)
+				WriteJSONError(w, http.StatusInternalServerError, "Something went wrong at our end. Try again shortly.")
+
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), principalKey, Principal{User: u, KeyID: k.ID})
+
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+func refuseKey(w http.ResponseWriter, challenge string) {
+	w.Header().Set("WWW-Authenticate", challenge)
+	WriteJSONError(w, http.StatusUnauthorized,
+		"This needs a working API key. Make one on your account page and send it as: Authorization: Bearer <key>")
 }
 
 // Require refuses a request with no account behind it.
@@ -230,7 +373,7 @@ func RequireFormRole(log *slog.Logger, auth Authorizer, want accessbus.Role) web
 			if !ok {
 				log.Error("a route behind RequireFormRole is not behind Require",
 					"request_id", requestID, "path", r.URL.Path)
-				http.Error(w, "you need to be signed in to do that.", http.StatusForbidden)
+				refuse(w, r, http.StatusForbidden, "you need to be signed in to do that.")
 
 				return
 			}
@@ -242,14 +385,14 @@ func RequireFormRole(log *slog.Logger, auth Authorizer, want accessbus.Role) web
 				// send somebody looking in the wrong place.
 				log.Error("a route behind RequireFormRole has no {"+FormSlugParam+"} in its pattern",
 					"request_id", requestID, "path", r.URL.Path)
-				http.Error(w, "something went wrong at our end. Please try again shortly.", http.StatusInternalServerError)
+				refuse(w, r, http.StatusInternalServerError, "something went wrong at our end. Please try again shortly.")
 
 				return
 			}
 
 			form, err := types.ParseSlug(raw)
 			if err != nil {
-				http.Error(w, "there is no form by that name.", http.StatusNotFound)
+				refuse(w, r, http.StatusNotFound, "there is no form by that name.")
 
 				return
 			}
@@ -258,7 +401,7 @@ func RequireFormRole(log *slog.Logger, auth Authorizer, want accessbus.Role) web
 			if err != nil {
 				log.Error("the grant could not be checked",
 					"request_id", requestID, "user_id", u.ID, "form", form.String(), "error", err)
-				http.Error(w, "something went wrong at our end. Please try again shortly.", http.StatusInternalServerError)
+				refuse(w, r, http.StatusInternalServerError, "something went wrong at our end. Please try again shortly.")
 
 				return
 			}
@@ -269,7 +412,7 @@ func RequireFormRole(log *slog.Logger, auth Authorizer, want accessbus.Role) web
 				// are told apart by how many lines there are.
 				log.Info("refused for want of a grant",
 					"request_id", requestID, "user_id", u.ID, "form", form.String(), "want", want)
-				http.Error(w, "you are signed in as "+u.Email.String()+", which does not have access to this form.", http.StatusForbidden)
+				refuse(w, r, http.StatusForbidden, as(r, u)+" which does not have access to this form.")
 
 				return
 			}
@@ -301,7 +444,7 @@ func RequireSiteAdmin(log *slog.Logger, auth Authorizer, want accessbus.Role) we
 			if !ok {
 				log.Error("a route behind RequireSiteAdmin is not behind Require",
 					"request_id", requestID, "path", r.URL.Path)
-				http.Error(w, "you need to be signed in to do that.", http.StatusForbidden)
+				refuse(w, r, http.StatusForbidden, "you need to be signed in to do that.")
 
 				return
 			}
@@ -314,7 +457,7 @@ func RequireSiteAdmin(log *slog.Logger, auth Authorizer, want accessbus.Role) we
 			if err != nil {
 				log.Error("the site-wide grant could not be checked",
 					"request_id", requestID, "user_id", u.ID, "error", err)
-				http.Error(w, "something went wrong at our end. Please try again shortly.", http.StatusInternalServerError)
+				refuse(w, r, http.StatusInternalServerError, "something went wrong at our end. Please try again shortly.")
 
 				return
 			}
@@ -322,7 +465,7 @@ func RequireSiteAdmin(log *slog.Logger, auth Authorizer, want accessbus.Role) we
 			if !allowed {
 				log.Info("refused for want of a site-wide grant",
 					"request_id", requestID, "user_id", u.ID, "want", want)
-				http.Error(w, "you are signed in as "+u.Email.String()+", which does not administer this service. Whoever does can make a form for you, or give you the run of the place.", http.StatusForbidden)
+				refuse(w, r, http.StatusForbidden, as(r, u)+" which does not administer this service. Whoever does can make a form for you, or give you the run of the place.")
 
 				return
 			}
@@ -355,7 +498,7 @@ func RequireFormCreator(log *slog.Logger, can FormCreator) web.Middleware {
 			if !ok {
 				log.Error("a route behind RequireFormCreator is not behind Require",
 					"request_id", requestID, "path", r.URL.Path)
-				http.Error(w, "you need to be signed in to do that.", http.StatusForbidden)
+				refuse(w, r, http.StatusForbidden, "you need to be signed in to do that.")
 
 				return
 			}
@@ -364,7 +507,7 @@ func RequireFormCreator(log *slog.Logger, can FormCreator) web.Middleware {
 			if err != nil {
 				log.Error("the site-wide grant could not be checked",
 					"request_id", requestID, "user_id", u.ID, "error", err)
-				http.Error(w, "something went wrong at our end. Please try again shortly.", http.StatusInternalServerError)
+				refuse(w, r, http.StatusInternalServerError, "something went wrong at our end. Please try again shortly.")
 
 				return
 			}
@@ -372,7 +515,7 @@ func RequireFormCreator(log *slog.Logger, can FormCreator) web.Middleware {
 			if !allowed {
 				log.Info("refused for want of a form-creator grant",
 					"request_id", requestID, "user_id", u.ID)
-				http.Error(w, "you are signed in as "+u.Email.String()+", which may not create a new form. Whoever administers this service can give you that.", http.StatusForbidden)
+				refuse(w, r, http.StatusForbidden, as(r, u)+" which may not create a new form. Whoever administers this service can give you that.")
 
 				return
 			}
