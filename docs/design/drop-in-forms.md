@@ -2235,7 +2235,11 @@ Claude. The page's CSP widens `form-action` to that one checked origin, or
 Allow silently does nothing in Chrome.
 
 Apache's `.well-known` rule, which keeps certificate renewal away from the
-app, now lets exactly the two OAuth documents through. Verified against the
+app, now lets exactly the two OAuth documents through. That change reached
+the server only when `deploy/deploy.sh install` was run by hand after the
+merge, because a deploy did not touch the `.htaccess`. A deploy now installs
+each one when the template has changed: after the new binary is healthy,
+keeping the old one, and putting it back if the public URLs stop answering. Verified against the
 real binary with Claude Code's own metadata document, fetched from claude.ai.
 
 **Left out on purpose:** access management, hiding, the will-call table and

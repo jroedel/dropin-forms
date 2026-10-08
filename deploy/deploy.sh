@@ -11,7 +11,8 @@
 #   deploy/deploy.sh install      directories, .htaccess, cron. Safe to re-run,
 #                                 and required after changing a port.
 #   deploy/deploy.sh deploy       switch to main, pull it, build, upload,
-#                                 restart, health-check
+#                                 restart, health-check, and bring each
+#                                 .htaccess up to date
 #   deploy/deploy.sh --skip-tests skip `make test` (do not make a habit of it)
 #   deploy/deploy.sh restart      restart without shipping a new binary
 #   deploy/deploy.sh backup       back up the database, app left running
@@ -225,6 +226,97 @@ check_htaccess_port() {
 	fi
 }
 
+# --- the front end ----------------------------------------------------------
+
+# install_front_end puts each host's .htaccess on the server when the one there
+# is not what htaccess.template renders, and leaves it alone when it is.
+#
+# Part of every deploy, not only of `install`, and that is the fix for a real
+# miss. The .htaccess used to be written by `install` alone, which a merge
+# never runs -- so the release that taught Apache to pass the OAuth discovery
+# documents through to the app went out with every line of the new template
+# sitting in the repository and none of it on the server. claude.ai could not
+# connect until somebody noticed the 404s and ran `install` by hand. A
+# template change is a change to what is deployed, and it should arrive the
+# same way the binary does.
+#
+# Compared by content, fetched with cat, rather than by a hash, because the
+# server's base system is not this one's and sha256sum is not a tool to assume
+# there. The outgoing file is kept beside it as .htaccess.prev -- Apache
+# refuses every .ht* file to the web, so it is not served -- and the new one is
+# swapped in by rename, so Apache never reads half of it.
+#
+# FRONT_END_CHANGED is the document roots it changed, which is what
+# restore_front_end puts back and forget_front_end_prev tidies up.
+FRONT_END_CHANGED=()
+
+install_front_end() {
+	local tmp rc=0
+	tmp=$(mktemp -d)
+
+	FRONT_END_CHANGED=()
+
+	install_htaccess "$tmp" "$EMBED_DOCROOT" "$EMBED_PORT" embed || rc=1
+	if [ "$rc" -eq 0 ]; then
+		install_htaccess "$tmp" "$ADMIN_DOCROOT" "$ADMIN_PORT" admin || rc=1
+	fi
+
+	rm -rf "$tmp"
+
+	return "$rc"
+}
+
+install_htaccess() {
+	local tmp=$1 docroot=$2 port=$3 name=$4
+
+	sed "s/__APP_PORT__/$port/" "$SCRIPT_DIR/htaccess.template" >"$tmp/$name.htaccess"
+
+	if remote "cat '$docroot/.htaccess'" 2>/dev/null | cmp -s - "$tmp/$name.htaccess"; then
+		log "the $name .htaccess is already current"
+
+		return 0
+	fi
+
+	log "installing the $name .htaccess"
+
+	push "$tmp/$name.htaccess" "$docroot/.htaccess.new" || return 1
+
+	# 644: Apache must be able to read it, and a mode it cannot read produces
+	# a body saying "unable to read htaccess file" rather than anything useful.
+	remote_script <<FRONT || return 1
+set -euo pipefail
+cd '$docroot'
+chmod 644 .htaccess.new
+if [ -f .htaccess ]; then cp -p .htaccess .htaccess.prev; fi
+mv -f .htaccess.new .htaccess
+FRONT
+
+	FRONT_END_CHANGED+=("$docroot")
+}
+
+# restore_front_end puts back the .htaccess each changed document root had
+# before install_front_end, for a deploy whose new one stops the public URLs
+# answering.
+restore_front_end() {
+	local docroot
+
+	for docroot in ${FRONT_END_CHANGED[@]+"${FRONT_END_CHANGED[@]}"}; do
+		if remote "cd '$docroot' && test -f .htaccess.prev && mv -f .htaccess.prev .htaccess"; then
+			warn "put the previous .htaccess back in $docroot"
+		else
+			warn "could not put the previous .htaccess back in $docroot -- it had none, or the move failed"
+		fi
+	done
+}
+
+forget_front_end_prev() {
+	local docroot
+
+	for docroot in ${FRONT_END_CHANGED[@]+"${FRONT_END_CHANGED[@]}"}; do
+		remote "rm -f '$docroot/.htaccess.prev'" || true
+	done
+}
+
 # --- one-time setup ---------------------------------------------------------
 
 cmd_install() {
@@ -248,19 +340,8 @@ chmod 755 '$EMBED_DOCROOT' '$ADMIN_DOCROOT'
 chmod 700 '$APP_DIR/backups'
 EOF
 
-	local tmp
-	tmp=$(mktemp -d)
-	trap 'rm -rf "$tmp"' RETURN
-
-	sed "s/__APP_PORT__/$EMBED_PORT/" "$SCRIPT_DIR/htaccess.template" >"$tmp/embed.htaccess"
-	sed "s/__APP_PORT__/$ADMIN_PORT/" "$SCRIPT_DIR/htaccess.template" >"$tmp/admin.htaccess"
-
-	push "$tmp/embed.htaccess" "$EMBED_DOCROOT/.htaccess"
-	push "$tmp/admin.htaccess" "$ADMIN_DOCROOT/.htaccess"
-
-	# 644. Apache must be able to read it, and a mode it cannot read produces a
-	# body saying "unable to read htaccess file" rather than anything useful.
-	remote "chmod 644 '$EMBED_DOCROOT/.htaccess' '$ADMIN_DOCROOT/.htaccess'"
+	install_front_end || die "the .htaccess could not be installed"
+	forget_front_end_prev
 
 	push "$SCRIPT_DIR/run.sh" "$APP_DIR/run.sh"
 	push "$SCRIPT_DIR/supervise.sh" "$APP_DIR/supervise.sh"
@@ -777,9 +858,38 @@ EOF
 
 	remote_in_app "printf '%s\\n' '$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || echo unknown)' > deployed-commit.txt" || true
 
+	# The front end, now that the binary it routes to is the new one, so that
+	# at no moment does Apache send a path to an app that has no route for it.
+	# Not before the swap for the same reason, and not at all when the swap
+	# was rolled back above: a release that did not go out takes its
+	# .htaccess with it. See install_front_end.
+	log "bringing each .htaccess up to date"
+	if ! install_front_end; then
+		warn "a .htaccess could not be installed; the one already there is still serving"
+	fi
+
 	local public_ok=yes
 	health_public "$EMBED_HOST" || public_ok=no
 	health_public "$ADMIN_HOST" || public_ok=no
+
+	# A new .htaccess is the likeliest thing to have broken the public URLs
+	# when the app is healthy on the loopback, so it is the first thing undone
+	# -- and the only thing: the binary is kept, for the reason below.
+	if [ "$public_ok" = no ] && [ ${#FRONT_END_CHANGED[@]} -gt 0 ]; then
+		warn "a public URL does not answer after the .htaccess changed; putting the previous one back"
+		restore_front_end
+
+		public_ok=yes
+		health_public "$EMBED_HOST" || public_ok=no
+		health_public "$ADMIN_HOST" || public_ok=no
+
+		if [ "$public_ok" = yes ]; then
+			warn "the public URLs answer again with the previous .htaccess."
+			warn "the new binary has been KEPT. The new htaccess.template is what is wrong;"
+			warn "fix it and deploy again."
+			exit 1
+		fi
+	fi
 
 	if [ "$public_ok" = no ]; then
 		# The release is KEPT. The binary is fine; the web front end is not,
@@ -799,6 +909,7 @@ EOF
 	fi
 
 	remote_in_app "rm -f $APP.prev config.toml.prev" || true
+	forget_front_end_prev
 	log "deployed"
 }
 
@@ -893,7 +1004,7 @@ read-only:
 
 changes the server:
   install     one-time: directories, .htaccess, cron
-  deploy      build, ship the binary and its config, health-check, roll back on failure
+  deploy      build, ship the binary, its config and the .htaccess, health-check, roll back on failure
   restart     stop and start, no new build
   rollback    put the previous binary and config back
   backup      back up the database, leaving the app running
