@@ -244,11 +244,13 @@ func sessionCookie(t *testing.T, w *httptest.ResponseRecorder) string {
 	return ""
 }
 
-var linkPattern = regexp.MustCompile(`https://forms\.test/signin/link\?t=([^\s]+)`)
+// codePattern finds the six digits alone on a line, which is where the mail
+// puts them and part of what Gmail recognises.
+var codePattern = regexp.MustCompile(`(?m)^(\d{6})\r?$`)
 
-// signInLink pulls the link out of the message that was recorded, the way the
+// signInCode pulls the code out of the message that was recorded, the way the
 // person receiving it would read it out of their inbox.
-func signInLink(t *testing.T, a harness) string {
+func signInCode(t *testing.T, a harness) string {
 	t.Helper()
 
 	m, ok := a.sent.Last()
@@ -256,9 +258,9 @@ func signInLink(t *testing.T, a harness) string {
 		t.Fatal("no mail was sent")
 	}
 
-	found := linkPattern.FindStringSubmatch(m.Text)
+	found := codePattern.FindStringSubmatch(m.Text)
 	if found == nil {
-		t.Fatalf("no sign-in link in the message:\n%s", m.Text)
+		t.Fatalf("no code alone on a line in the message:\n%s", m.Text)
 	}
 
 	return found[1]
@@ -275,9 +277,9 @@ func mustEmail(t *testing.T, s string) types.Email {
 	return e
 }
 
-// The whole journey, through the mounted chain, with the assertion that
-// matters most in the middle of it.
-func TestSignInFromLinkToAccount(t *testing.T) {
+// The whole journey, through the mounted chain: ask, read the mail, type the
+// code, land where you were going with a session that works.
+func TestSignInFromCodeToAccount(t *testing.T) {
 	a := newAdmin(t, "")
 
 	u, err := a.users.Create(t.Context(), time.Now(), userbus.NewUser{
@@ -294,40 +296,50 @@ func TestSignInFromLinkToAccount(t *testing.T) {
 		t.Fatalf("GET /signin = %d, want 200", w.Code)
 	}
 
-	w := a.post(t, "/signin", url.Values{"email": {"frjeff@schoenstatt.us"}}, "")
-	if w.Code != http.StatusOK {
-		t.Fatalf("POST /signin = %d, want 200:\n%s", w.Code, w.Body)
-	}
-	if !strings.Contains(w.Body.String(), "Check your email") {
-		t.Errorf("the page does not say to check your email:\n%s", w.Body)
-	}
-
-	token := signInLink(t, a)
-
-	// Opening the emailed link must not sign anybody in. Mail scanners and
-	// link previewers fetch URLs found in messages without anybody clicking,
-	// so a token redeemed on GET is a token spent by software before the
-	// person ever sees it.
-	w = a.get(t, "/signin/link?t="+token, "")
-	switch {
+	w := a.post(t, "/signin", url.Values{"email": {"frjeff@schoenstatt.us"}, "next": {"/account"}}, "")
+	switch body := w.Body.String(); {
 	case w.Code != http.StatusOK:
-		t.Fatalf("GET the link = %d, want 200:\n%s", w.Code, w.Body)
+		t.Fatalf("POST /signin = %d, want 200:\n%s", w.Code, body)
+	case !strings.Contains(body, "Check your email"):
+		t.Errorf("the page does not say to check your email:\n%s", body)
+	case !strings.Contains(body, `action="/signin/verify"`), !strings.Contains(body, `autocomplete="one-time-code"`):
+		t.Fatalf("the page has no box for the code:\n%s", body)
+	}
+
+	// The mail is shaped the way Gmail recognises a verification code: the
+	// phrase, then the code alone on its line. And it carries no link.
+	m, _ := a.sent.Last()
+
+	switch {
+	case !strings.Contains(m.Text, "Your verification code is:"):
+		t.Errorf("the message does not say what the code is:\n%s", m.Text)
+	case !strings.Contains(m.Subject, "verification code"):
+		t.Errorf("subject = %q", m.Subject)
+	case strings.Contains(m.Text, "http"):
+		t.Errorf("the message carries a link:\n%s", m.Text)
+	}
+
+	code := signInCode(t, a)
+	wrong := "000000"
+	if code == wrong {
+		wrong = "111111"
+	}
+
+	w = a.post(t, "/signin/verify", url.Values{"email": {"frjeff@schoenstatt.us"}, "code": {wrong}, "next": {"/account"}}, "")
+	switch {
+	case w.Code != http.StatusUnauthorized:
+		t.Fatalf("a wrong code = %d, want 401", w.Code)
 	case sessionCookie(t, w) != "":
-		t.Fatal("opening the emailed link set a session cookie; it must only render a button")
-	case !strings.Contains(w.Body.String(), `action="/signin/link"`):
-		t.Errorf("the page has no form to submit:\n%s", w.Body)
+		t.Fatal("a wrong code set a session")
+	case !strings.Contains(w.Body.String(), "That code did not work"),
+		!strings.Contains(w.Body.String(), `action="/signin/verify"`):
+		t.Errorf("a wrong code does not offer the box again:\n%s", w.Body)
 	}
 
-	// Opening it again, as a previewer and then the person would: still not
-	// spent.
-	if w := a.get(t, "/signin/link?t="+token, ""); w.Code != http.StatusOK {
-		t.Fatalf("opening the link twice = %d; opening it must never spend it", w.Code)
-	}
-
-	// Now the button.
-	w = a.post(t, "/signin/link", url.Values{"token": {token}}, "")
+	// As somebody might type it off a phone: in two halves.
+	w = a.post(t, "/signin/verify", url.Values{"email": {"frjeff@schoenstatt.us"}, "code": {code[:3] + " " + code[3:]}, "next": {"/account"}}, "")
 	if w.Code != http.StatusSeeOther {
-		t.Fatalf("POST the token = %d, want 303:\n%s", w.Code, w.Body)
+		t.Fatalf("the right code = %d, want 303:\n%s", w.Code, w.Body)
 	}
 
 	cookie := sessionCookie(t, w)
@@ -347,83 +359,21 @@ func TestSignInFromLinkToAccount(t *testing.T) {
 		t.Errorf("the account page does not name the account:\n%s", w.Body)
 	}
 
-	// Single use: the same token again is refused.
-	if w := a.post(t, "/signin/link", url.Values{"token": {token}}, ""); w.Code != http.StatusUnauthorized {
-		t.Errorf("reusing the token = %d, want 401", w.Code)
+	// Single use: the same code again is refused.
+	if w := a.post(t, "/signin/verify", url.Values{"email": {"frjeff@schoenstatt.us"}, "code": {code}}, ""); w.Code != http.StatusUnauthorized {
+		t.Errorf("reusing the code = %d, want 401", w.Code)
+	}
+
+	// The retired link is gone, not quietly still there.
+	if w := a.get(t, "/signin/link?t=x", ""); w.Code != http.StatusNotFound {
+		t.Errorf("GET /signin/link = %d, want 404", w.Code)
 	}
 }
 
-var codePattern = regexp.MustCompile(`(?m)^(\d{6})\r?$`)
-
-// The six digits in the mail sign somebody in from the page that said to check
-// it, through the mounted chain, and the mail is shaped the way Gmail
-// recognises a verification code: the phrase, then the code alone on its line.
-func TestSignInWithTheCodeInTheMail(t *testing.T) {
-	a := newAdmin(t, "")
-
-	if _, err := a.users.Create(t.Context(), time.Now(), userbus.NewUser{
-		Email: mustEmail(t, "frjeff@schoenstatt.us"),
-	}); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-
-	w := a.post(t, "/signin", url.Values{"email": {"frjeff@schoenstatt.us"}, "next": {"/forms"}}, "")
-	switch body := w.Body.String(); {
-	case w.Code != http.StatusOK:
-		t.Fatalf("POST /signin = %d, want 200:\n%s", w.Code, body)
-	case !strings.Contains(body, `action="/signin/verify"`), !strings.Contains(body, `autocomplete="one-time-code"`):
-		t.Fatalf("the page has no box for the code:\n%s", body)
-	}
-
-	m, _ := a.sent.Last()
-
-	found := codePattern.FindStringSubmatch(m.Text)
-	switch {
-	case found == nil:
-		t.Fatalf("no code alone on a line in the message:\n%s", m.Text)
-	case !strings.Contains(m.Text, "Your verification code is:"):
-		t.Errorf("the message does not say what the code is:\n%s", m.Text)
-	case !strings.Contains(m.Subject, "verification code"):
-		t.Errorf("subject = %q", m.Subject)
-	}
-
-	code := found[1]
-	wrong := "000000"
-	if code == wrong {
-		wrong = "111111"
-	}
-
-	w = a.post(t, "/signin/verify", url.Values{"email": {"frjeff@schoenstatt.us"}, "code": {wrong}, "next": {"/forms"}}, "")
-	switch {
-	case w.Code != http.StatusUnauthorized:
-		t.Fatalf("a wrong code = %d, want 401", w.Code)
-	case sessionCookie(t, w) != "":
-		t.Fatal("a wrong code set a session")
-	case !strings.Contains(w.Body.String(), "That code did not work"),
-		!strings.Contains(w.Body.String(), `action="/signin/verify"`):
-		t.Errorf("a wrong code does not offer the box again:\n%s", w.Body)
-	}
-
-	w = a.post(t, "/signin/verify", url.Values{"email": {"frjeff@schoenstatt.us"}, "code": {code}, "next": {"/forms"}}, "")
-	switch {
-	case w.Code != http.StatusSeeOther:
-		t.Fatalf("the right code = %d, want 303:\n%s", w.Code, w.Body)
-	case sessionCookie(t, w) == "":
-		t.Fatal("the right code set no session")
-	case w.Header().Get("Location") != "/forms":
-		t.Errorf("Location = %q, want where the person was going", w.Header().Get("Location"))
-	}
-
-	// One credential: the link in the same mail is spent with the code.
-	if w := a.post(t, "/signin/link", url.Values{"token": {signInLink(t, a)}}, ""); w.Code != http.StatusUnauthorized {
-		t.Errorf("the link after its code was used = %d, want 401", w.Code)
-	}
-}
-
-// Asking for a link must look the same whether or not an account exists. This
+// Asking for a code must look the same whether or not an account exists. This
 // compares the two responses directly, because "looks the same" is easy to
 // believe and easy to get wrong.
-func TestRequestingALinkRevealsNothingAboutWhoExists(t *testing.T) {
+func TestRequestingACodeRevealsNothingAboutWhoExists(t *testing.T) {
 	a := newAdmin(t, "")
 
 	if _, err := a.users.Create(t.Context(), time.Now(), userbus.NewUser{
@@ -880,7 +830,7 @@ func TestStylesheetIsServedWithoutASession(t *testing.T) {
 func TestAuthPagesCarryTheAdminPolicy(t *testing.T) {
 	a := newAdmin(t, bootstrapSecret)
 
-	for _, target := range []string{"/signin", "/signin/code", "/signin/bootstrap", "/signin/link?t=x"} {
+	for _, target := range []string{"/signin", "/signin/code", "/signin/bootstrap"} {
 		t.Run(target, func(t *testing.T) {
 			w := a.get(t, target, "")
 
@@ -910,7 +860,7 @@ func TestAuthPagesCarryTheAdminPolicy(t *testing.T) {
 func TestCrossSiteWritesAreRefused(t *testing.T) {
 	a := newAdmin(t, bootstrapSecret)
 
-	for _, target := range []string{"/signin", "/signin/link", "/signin/verify", "/signin/code", "/signin/bootstrap", "/signout"} {
+	for _, target := range []string{"/signin", "/signin/verify", "/signin/code", "/signin/bootstrap", "/signout"} {
 		t.Run(target, func(t *testing.T) {
 			r := httptest.NewRequest(http.MethodPost, target, strings.NewReader("email=a%40b.co"))
 			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")

@@ -23,8 +23,8 @@
 // stop, for no reason anybody can see, with nothing in a log that looks wrong.
 //
 // So the GET renders a page with a button and the POST does the work, which is
-// the same split authapp uses for the emailed sign-in link and for the same
-// reason.
+// the only safe shape for a link in a mail that does something. Sign-in used
+// it too, until sign-in became a code typed by a person.
 package notifyapp
 
 import (

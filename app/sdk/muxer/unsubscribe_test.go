@@ -58,12 +58,12 @@ func sessionFor(t *testing.T, a harness, u userbus.User) string {
 	t.Helper()
 
 	if w := a.post(t, "/signin", url.Values{"email": {u.Email.String()}}, ""); w.Code != http.StatusOK {
-		t.Fatalf("asking for a link = %d", w.Code)
+		t.Fatalf("asking for a code = %d", w.Code)
 	}
 
-	w := a.post(t, "/signin/link", url.Values{"token": {signInLink(t, a)}}, "")
+	w := a.post(t, "/signin/verify", url.Values{"email": {u.Email.String()}, "code": {signInCode(t, a)}}, "")
 	if w.Code != http.StatusSeeOther {
-		t.Fatalf("redeeming the link = %d:\n%s", w.Code, w.Body)
+		t.Fatalf("typing the code = %d:\n%s", w.Code, w.Body)
 	}
 
 	cookie := sessionCookie(t, w)

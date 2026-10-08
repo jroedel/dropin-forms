@@ -12,7 +12,7 @@ import (
 
 // The messages are plain text and there is no HTML alternative.
 //
-// The same reasoning as the sign-in link: a message that survives every
+// The same reasoning as the sign-in code: a message that survives every
 // client, every screen reader and every spam filter is the one that has to be
 // right, and a second rendering of the same facts is a second thing to keep in
 // step. Bare newlines are fine -- foundation/mail turns them into CRLF, so the

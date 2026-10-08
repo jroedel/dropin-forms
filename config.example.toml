@@ -133,11 +133,11 @@ webhook_secret = ""
 
 
 [mail]
-# The relay that sends sign-in links and receipts.
+# The relay that sends sign-in codes and receipts.
 #
 # It has to be a relay that already passes SPF and DKIM for the sending
 # domain. Mail sent straight from a small host lands in spam, and for a
-# sign-in link that means nobody can log in.
+# sign-in code that means nobody can log in.
 #
 # Leave host empty to record messages instead of sending them, which is what a
 # local run wants. The process says so loudly in its log rather than failing to

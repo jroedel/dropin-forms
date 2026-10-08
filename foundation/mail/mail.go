@@ -61,7 +61,7 @@ type Config struct {
 	// From is the envelope sender and the From header. It must be an address
 	// the relay is willing to send as, and one whose domain passes SPF and
 	// DKIM -- mail sent from a domain that does not authorise the relay lands
-	// in spam, and for a sign-in link that means nobody can log in.
+	// in spam, and for a sign-in code that means nobody can log in.
 	From string
 
 	// FromName is the display name, optional.
@@ -71,7 +71,7 @@ type Config struct {
 // Message is one message to one recipient.
 //
 // One recipient, deliberately. Every message this service sends is personal --
-// a sign-in link, a receipt, a notification -- and a list of recipients on one
+// a sign-in code, a receipt, a notification -- and a list of recipients on one
 // envelope is how everybody learns who else is on it.
 type Message struct {
 	To      string
@@ -80,7 +80,7 @@ type Message struct {
 	// Text is required. HTML is optional, and when present the message goes
 	// out as multipart/alternative.
 	//
-	// Text is not a fallback nobody reads. A sign-in link in a plain-text
+	// Text is not a fallback nobody reads. A sign-in code in a plain-text
 	// message is the version that survives every client, every screen reader
 	// and every spam filter, so it is the one that has to be right.
 	Text string
@@ -268,7 +268,7 @@ func (s *SMTP) build(m Message) ([]byte, error) {
 		{"Message-ID", s.messageID()},
 		{"MIME-Version", "1.0"},
 
-		// Not a marketing message, and saying so is what keeps a sign-in link
+		// Not a marketing message, and saying so is what keeps a sign-in code
 		// out of a "promotions" tab and stops an out-of-office reply bouncing
 		// back at the mailbox this service sends from.
 		{"Auto-Submitted", "auto-generated"},
@@ -373,7 +373,7 @@ func isLoopback(host string) bool {
 // and for a development run with no relay configured.
 //
 // Deliberately in this package rather than in a test file: a service whose
-// only way in is an emailed link needs a way to run without a relay, and
+// only way in is an emailed code needs a way to run without a relay, and
 // hiding that in _test.go means the development path and the tested path are
 // different code.
 type Recorder struct {

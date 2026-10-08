@@ -15,32 +15,25 @@ import (
 // memStore is a userbus.Storer in a map, so the rules can be tested without a
 // database.
 //
-// The mutex is not decoration. Three of the Storer methods are contracted to
-// be a single atomic claim -- UseToken, UseBackupCode and ClaimBootstrap --
-// and a test double that claims twice would let a real bug pass. Everything
-// here holds the lock for the whole operation, which is the strongest version
-// of that contract and therefore the one a racing test should be checked
-// against.
+// The mutex is not decoration. Four of the Storer methods are contracted to
+// be a single atomic claim -- TrySignInCode, UseSignInCode, UseBackupCode and
+// ClaimBootstrap -- and a test double that claims twice would let a real bug
+// pass. Everything here holds the lock for the whole operation, which is the
+// strongest version of that contract and therefore the one a racing test
+// should be checked against.
 type memStore struct {
 	mu sync.Mutex
 
 	users     map[types.ID]userbus.User
-	tokens    map[types.ID]userbus.Token
 	sessions  map[types.ID]userbus.Session
 	codes     map[types.ID]userbus.BackupCode
 	signin    []userbus.SignInCode // in the order they were made
 	bootstrap bool
-
-	// Counters, so a test can assert that a lookup happened at all -- the
-	// enumeration-safety tests care that an unknown address does no more work
-	// than a known one.
-	tokensCreated int
 }
 
 func newMemStore() *memStore {
 	return &memStore{
 		users:    map[types.ID]userbus.User{},
-		tokens:   map[types.ID]userbus.Token{},
 		sessions: map[types.ID]userbus.Session{},
 		codes:    map[types.ID]userbus.BackupCode{},
 	}
@@ -104,46 +97,6 @@ func (m *memStore) Users(_ context.Context) ([]userbus.User, error) {
 	return out, nil
 }
 
-func (m *memStore) CreateToken(_ context.Context, t userbus.Token) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.tokens[t.ID] = t
-	m.tokensCreated++
-
-	return nil
-}
-
-func (m *memStore) TokenByID(_ context.Context, id types.ID) (userbus.Token, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	t, ok := m.tokens[id]
-	if !ok {
-		return userbus.Token{}, userbus.ErrNotFound
-	}
-
-	return t, nil
-}
-
-// UseToken is the atomic claim: it succeeds for an unused row and fails for
-// every subsequent caller, which is what a real UPDATE ... WHERE used_at IS
-// NULL does.
-func (m *memStore) UseToken(_ context.Context, id types.ID, at time.Time) (bool, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	t, ok := m.tokens[id]
-	if !ok || !t.UsedAt.IsZero() {
-		return false, nil
-	}
-
-	t.UsedAt = at
-	m.tokens[id] = t
-
-	return true, nil
-}
-
 func (m *memStore) CreateSignInCode(_ context.Context, c userbus.SignInCode) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -168,12 +121,12 @@ func (m *memStore) LatestSignInCode(_ context.Context, userID types.ID) (userbus
 
 // TrySignInCode is the atomic reservation, held under the lock like the
 // other claims.
-func (m *memStore) TrySignInCode(_ context.Context, tokenID types.ID, limit int) (bool, error) {
+func (m *memStore) TrySignInCode(_ context.Context, id types.ID, limit int) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	for i, c := range m.signin {
-		if c.TokenID == tokenID {
+		if c.ID == id {
 			if c.Tries >= limit {
 				return false, nil
 			}
@@ -187,17 +140,26 @@ func (m *memStore) TrySignInCode(_ context.Context, tokenID types.ID, limit int)
 	return false, nil
 }
 
-func (m *memStore) UseSignInCode(_ context.Context, tokenID types.ID, at time.Time) error {
+// UseSignInCode is the atomic claim: it succeeds for an unused code and fails
+// for every subsequent caller, which is what a real UPDATE ... WHERE used_at
+// IS NULL does.
+func (m *memStore) UseSignInCode(_ context.Context, id types.ID, at time.Time) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	for i, c := range m.signin {
-		if c.TokenID == tokenID && c.UsedAt.IsZero() {
+		if c.ID == id {
+			if !c.UsedAt.IsZero() {
+				return false, nil
+			}
+
 			m.signin[i].UsedAt = at
+
+			return true, nil
 		}
 	}
 
-	return nil
+	return false, nil
 }
 
 func (m *memStore) SignInCodeFailures(_ context.Context, userID types.ID, since time.Time) (int, error) {
@@ -347,11 +309,9 @@ func (m *memStore) PruneExpired(_ context.Context, before time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	for id, t := range m.tokens {
-		if t.ExpiresAt.Before(before) {
-			delete(m.tokens, id)
-		}
-	}
+	m.signin = slices.DeleteFunc(m.signin, func(c userbus.SignInCode) bool {
+		return c.ExpiresAt.Before(before.Add(-userbus.CodeBudgetWindow))
+	})
 	for id, s := range m.sessions {
 		if s.ExpiresAt.Before(before) {
 			delete(m.sessions, id)
@@ -369,9 +329,6 @@ func (m *memStore) storedSecrets() []string {
 
 	var out []string
 
-	for _, t := range m.tokens {
-		out = append(out, string(t.Hash))
-	}
 	for _, s := range m.sessions {
 		out = append(out, string(s.Hash))
 	}

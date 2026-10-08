@@ -26,7 +26,7 @@ import (
 //
 // # Why it does not expire, and what does
 //
-// A sign-in link expires because it grants a session. This grants one thing,
+// A sign-in code expires because it grants a session. This grants one thing,
 // changing one submission, and the form already says until when: its
 // ChangeableUntil, checked on every use. Putting a second clock in the token
 // would make the oldest message in somebody's inbox the one that has quietly

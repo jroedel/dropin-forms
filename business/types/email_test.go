@@ -198,7 +198,7 @@ func TestEmailDomain(t *testing.T) {
 }
 
 // A header injection attempt must not survive parsing, because this address is
-// interpolated into an SMTP envelope to send a sign-in link.
+// interpolated into an SMTP envelope to send a sign-in code.
 func TestParseEmailRefusesHeaderInjection(t *testing.T) {
 	for _, in := range []string{
 		"frjeff@schoenstatt.us\r\nBcc: someone@else.org",

@@ -245,7 +245,7 @@ func TestSendDeliversAMessage(t *testing.T) {
 		`Content-Type: text/plain; charset="utf-8"`,
 		"MIME-Version: 1.0",
 
-		// Not a marketing message. This is what keeps a sign-in link out of a
+		// Not a marketing message. This is what keeps a sign-in code out of a
 		// promotions tab and stops an out-of-office reply bouncing back at
 		// the mailbox this service sends from.
 		"Auto-Submitted: auto-generated",
@@ -354,7 +354,7 @@ func TestSendRefusesHeaderInjection(t *testing.T) {
 
 		// A message with only HTML is refused, because the plain text version
 		// is the one that survives every client and every spam filter, and for
-		// a sign-in link it is the one that has to be right.
+		// a sign-in code it is the one that has to be right.
 		{name: "no plain text", m: mail.Message{To: "a@b.co", Subject: "Hello", HTML: "<p>Hello</p>"}},
 	}
 

@@ -137,9 +137,9 @@ func (o office) reader(t *testing.T, email string) (userbus.User, string) {
 		t.Fatalf("RequestSignIn: %v", err)
 	}
 
-	_, cookie, err := o.cfg.Users.SignIn(t.Context(), time.Now(), req.Secret)
+	_, cookie, err := o.cfg.Users.SignInWithCode(t.Context(), time.Now(), u.Email, req.Code)
 	if err != nil {
-		t.Fatalf("SignIn: %v", err)
+		t.Fatalf("SignInWithCode: %v", err)
 	}
 
 	return u, cookie

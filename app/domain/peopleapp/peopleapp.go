@@ -27,19 +27,19 @@
 // deliberately refuses to create one, so that a stranger cannot make an account
 // by trying to sign in.
 //
-// # Why the invitation is not a sign-in link
+// # Why the invitation carries no way in
 //
-// The obvious invitation mail carries a link that signs the person in. The
-// sign-in tokens this service mints last fifteen minutes, which is right for a
-// link somebody asked for thirty seconds ago and wrong for one sent to a
+// The obvious invitation mail carries something that signs the person in. The
+// sign-in codes this service mints last fifteen minutes, which is right for a
+// code somebody asked for thirty seconds ago and wrong for one sent to a
 // volunteer who reads their email in the evening: most such invitations would
-// be dead on arrival, and a dead link looks like a broken service rather than
-// an expired credential. A longer-lived token for this one case would be a
-// second credential lifetime to reason about, sitting in a mailbox forever.
+// be dead on arrival, and a dead credential looks like a broken service rather
+// than an expired one. A longer-lived credential for this one case would be a
+// second lifetime to reason about, sitting in a mailbox forever.
 //
 // So the invitation names the sign-in page instead and the person asks for
-// their own link, which is fifteen minutes old when they use it. One credential
-// shape, no expiry to explain.
+// their own code, which is minutes old when they use it. One credential shape,
+// no expiry to explain.
 package peopleapp
 
 import (
@@ -116,9 +116,9 @@ type Config struct {
 	Render   *page.Renderer
 
 	// BaseURL is this service's own admin origin, which goes into the
-	// invitation. Configured rather than taken from the request, for the same
-	// reason the sign-in link is: a link built from a Host header is one a
-	// stranger can aim at their own host, and whoever receives it cannot tell.
+	// invitation. Configured rather than taken from the request: a link built
+	// from a Host header is one a stranger can aim at their own host, and
+	// whoever receives it cannot tell.
 	BaseURL string
 
 	// Notifications is optional, and without it the page simply does not

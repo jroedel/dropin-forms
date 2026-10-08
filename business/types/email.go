@@ -35,7 +35,7 @@ const (
 // bare bracketed address, and a quoted local part with spaces in it. All three
 // are correct for a mail header and wrong for a field labelled "Email": a
 // display name means storing something that is not an address, and then
-// mailing a sign-in link to a string nobody can read.
+// mailing a sign-in code to a string nobody can read.
 //
 // # Why the whole address is lower-cased
 //

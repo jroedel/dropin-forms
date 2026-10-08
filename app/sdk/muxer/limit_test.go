@@ -243,7 +243,7 @@ func TestAFormTakingSubmissionsTooFastSaysSoWithoutRefusingAny(t *testing.T) {
 // --- signing in ------------------------------------------------------------------
 
 // Four ways of presenting one credential, one allowance. A limit that let
-// somebody exhaust the backup codes and then start on the sign-in links would
+// somebody exhaust the backup codes and then start on the sign-in codes would
 // be four limits and no limit.
 func TestSignInAttemptsAreThrottled(t *testing.T) {
 	a := newAdmin(t, "")

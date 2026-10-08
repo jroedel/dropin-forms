@@ -419,9 +419,9 @@ func TestSessionCookieAttributes(t *testing.T) {
 		t.Error("the cookie is readable by script")
 
 	// Lax rather than Strict. Strict withholds the cookie on a cross-site
-	// top-level navigation, which is exactly what following a sign-in link
-	// out of a mail client is -- so Strict means signing in and arriving
-	// signed out.
+	// top-level navigation, which is exactly what following a link to this
+	// site out of a mail client is -- a notification, an invitation -- so
+	// Strict means a signed-in person arriving signed out.
 	case c.SameSite != http.SameSiteLaxMode:
 		t.Errorf("SameSite = %v, want Lax", c.SameSite)
 	}

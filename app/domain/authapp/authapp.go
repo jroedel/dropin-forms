@@ -1,21 +1,20 @@
-// Package authapp is the sign-in surface: asking for a link, redeeming one or
-// the code that comes with it, backup codes, the one-time bootstrap, and the
-// account page.
+// Package authapp is the sign-in surface: asking for a code by email,
+// redeeming it, backup codes, the one-time bootstrap, and the account page.
 //
-// # The emailed link does not sign anybody in
+// # A code, and no link
 //
-// GET /signin/link renders a page with a button. POST /signin/link redeems
-// the token. That split is the single most important thing in this package and
-// it is not caution for its own sake: mail scanners, corporate security
-// gateways and the link previewers built into chat clients all fetch URLs
-// found in messages, without anybody clicking. A single-use token redeemed on
-// GET is a token spent by software before the person ever sees it -- and the
-// symptom is "the link says it has already been used", every time, for
-// everybody, with nothing in a log to explain it.
+// The mail carries six digits, typed on the page that said to check for it.
+// There is no sign-in link, and there used to be: userbus/code.go says why it
+// went. One thing it took with it is worth knowing about, so that nobody
+// brings it back by accident. A link had to open a page with a button rather
+// than sign anybody in, because mail scanners and link previewers fetch every
+// URL in a message before anybody clicks, and a single-use link redeemed on
+// GET is a link spent by software. A code is typed into a POST by a person,
+// and nothing fetches it.
 //
 // # What the sign-in page will not tell you
 //
-// Asking for a link renders the same page whether or not an account exists.
+// Asking for a code renders the same page whether or not an account exists.
 // userbus enforces that by returning no error for an unknown address; this
 // package holds up the other end by never varying the response, including
 // when sending the mail fails. That last one is a deliberate trade: somebody
@@ -32,7 +31,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"time"
 
 	"github.com/jroedel/dropin-forms/app/sdk/mid"
@@ -70,12 +68,6 @@ type Config struct {
 	Mail   mail.Sender
 	Render *page.Renderer
 
-	// BaseURL is this surface's own origin, used to build the link that goes
-	// in an email. It cannot be taken from the request: a link built from a
-	// Host header is a link an attacker can point at their own host by sending
-	// one request, and the person who receives it has no way to tell.
-	BaseURL string
-
 	// Bootstrap is the one-time secret from the config file. Empty means the
 	// bootstrap route is not mounted at all, which is the right answer once a
 	// service has accounts.
@@ -100,7 +92,7 @@ type Config struct {
 //
 // Five attempts at once and then one every thirty seconds. Generous for a
 // person -- who signs in perhaps twice a day, and whose worst case is
-// mistyping their address twice and then asking for a second link -- and
+// mistyping their address twice and then asking for a second code -- and
 // ungenerous for anything working through a list of addresses or of backup
 // codes.
 //
@@ -108,7 +100,7 @@ type Config struct {
 // thing to key on and needs the request body read in a middleware to do. That
 // is a rule this service does not want to relax anywhere: nothing above a
 // handler touches a body. What the per-address key would buy is protection
-// against somebody mailing one person a hundred sign-in links from a hundred
+// against somebody mailing one person a hundred sign-in codes from a hundred
 // hosts, and what stands there instead is userbus, which logs every request
 // for an address that has no account and never says whether one does.
 func DefaultSignInRate() web.Rate {
@@ -128,9 +120,9 @@ func Routes(mux *http.ServeMux, cfg Config, guard func(http.Handler) http.Handle
 
 	a := app{cfg: cfg}
 
-	// One allowance across all five of these, deliberately. They are five ways
+	// One allowance across all four of these, deliberately. They are four ways
 	// of presenting one credential, and a limit that let somebody exhaust the
-	// backup codes and then start on the sign-in codes would be five limits
+	// backup codes and then start on the sign-in codes would be four limits
 	// and no limit.
 	//
 	// The GETs are not behind it. They render a form and read nothing, and a
@@ -145,9 +137,7 @@ func Routes(mux *http.ServeMux, cfg Config, guard func(http.Handler) http.Handle
 	})
 
 	mux.HandleFunc("GET /signin", a.signInForm)
-	mux.Handle("POST /signin", tries(http.HandlerFunc(a.requestLink)))
-	mux.HandleFunc("GET /signin/link", a.confirmLink)
-	mux.Handle("POST /signin/link", tries(http.HandlerFunc(a.redeemLink)))
+	mux.Handle("POST /signin", tries(http.HandlerFunc(a.requestCode)))
 	mux.Handle("POST /signin/verify", tries(http.HandlerFunc(a.redeemSignInCode)))
 	mux.HandleFunc("GET /signin/code", a.codeForm)
 	mux.Handle("POST /signin/code", tries(http.HandlerFunc(a.redeemCode)))
@@ -212,7 +202,7 @@ func (a app) signInForm(w http.ResponseWriter, r *http.Request) {
 	a.cfg.Render.Render(w, r, http.StatusOK, "signin", view)
 }
 
-func (a app) requestLink(w http.ResponseWriter, r *http.Request) {
+func (a app) requestCode(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		a.cfg.Render.Render(w, r, http.StatusBadRequest, "signin", signInView{
 			Problem:       "We could not read that. Please try again.",
@@ -242,7 +232,7 @@ func (a app) requestLink(w http.ResponseWriter, r *http.Request) {
 
 	req, err := a.cfg.Users.RequestSignIn(r.Context(), time.Now(), email)
 	if err != nil {
-		a.cfg.Log.Error("a sign-in link could not be prepared",
+		a.cfg.Log.Error("a sign-in code could not be prepared",
 			"request_id", web.RequestIDFrom(r.Context()), "error", err)
 		a.cfg.Render.Render(w, r, http.StatusInternalServerError, "signin", signInView{
 			Next:          next,
@@ -255,7 +245,7 @@ func (a app) requestLink(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Sendable() {
-		a.send(r, req, next)
+		a.send(r, req)
 	}
 
 	// The same page either way, including when the send above failed. See the
@@ -307,29 +297,21 @@ func (a app) redeemSignInCode(w http.ResponseWriter, r *http.Request) {
 		Email: email.String(),
 		Next:  next,
 		Problem: "That code did not work. Check it against the newest email we sent, " +
-			"or use the link in that email instead.",
+			"or ask for a new one.",
 	})
 }
 
-// send mails the link, and treats a failure as something to record rather than
+// send mails the code, and treats a failure as something to record rather than
 // something to report.
-func (a app) send(r *http.Request, req userbus.SignInRequest, next string) {
-	link := a.cfg.BaseURL + "/signin/link?t=" + url.QueryEscape(req.Secret)
-	if next != "" {
-		link += "&next=" + url.QueryEscape(next)
-	}
-
+func (a app) send(r *http.Request, req userbus.SignInRequest) {
 	// The code first, alone on its line, under the words a verification mail
 	// uses. That is what Gmail recognises to offer "Copy code" -- there is no
 	// markup for it, only the shape of the message, copied here from one it
-	// was seen to work on. The link follows for anybody reading on the device
-	// they are signing in on.
+	// was seen to work on.
 	text := "Your verification code is:\r\n\r\n" +
 		req.Code + "\r\n\r\n" +
-		"This code will expire in 15 minutes. Type it on the page where you asked to sign in.\r\n\r\n" +
-		"Or open this link and press the button to sign in:\r\n\r\n" +
-		link + "\r\n\r\n" +
-		"The code and the link work once, and using either one uses both.\r\n\r\n" +
+		"This code will expire in 15 minutes. Type it on the page where you asked to sign in. " +
+		"It works once.\r\n\r\n" +
 		"Somebody asked to sign in to the Schoenstatt Austin forms admin as " +
 		req.User.Email.String() + ". If this was not you, nothing has happened " +
 		"and you can ignore this message.\r\n"
@@ -342,53 +324,11 @@ func (a app) send(r *http.Request, req userbus.SignInRequest, next string) {
 		// Loud, because this is the failure that leaves somebody staring at a
 		// page telling them to check an inbox nothing will arrive in, and the
 		// log is the only place it can be said.
-		a.cfg.Log.Error("a sign-in link could not be sent",
+		a.cfg.Log.Error("a sign-in code could not be sent",
 			"request_id", web.RequestIDFrom(r.Context()),
 			"user_id", req.User.ID.String(),
 			"error", err)
 	}
-}
-
-// linkView carries the token through the page that offers the button.
-type linkView struct {
-	Token   string
-	Next    string
-	Problem string
-}
-
-// confirmLink renders the page the emailed link opens. It redeems nothing.
-func (a app) confirmLink(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-
-	token := q.Get("t")
-	if token == "" {
-		a.cfg.Render.Render(w, r, http.StatusBadRequest, "link", linkView{
-			Problem: "That link is not complete. Please ask for a new one.",
-		})
-
-		return
-	}
-
-	a.cfg.Render.Render(w, r, http.StatusOK, "link", linkView{
-		Token: token,
-		Next:  mid.SafeNext(q.Get("next")),
-	})
-}
-
-func (a app) redeemLink(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		a.cfg.Render.Render(w, r, http.StatusBadRequest, "link", linkView{
-			Problem: "We could not read that. Please ask for a new link.",
-		})
-
-		return
-	}
-
-	user, cookie, err := a.cfg.Users.SignIn(r.Context(), time.Now(), r.PostFormValue("token"))
-	a.finish(w, r, user, cookie, err, "link", linkView{
-		Next:    mid.SafeNext(r.PostFormValue("next")),
-		Problem: "That link did not work. It may have been used already, or it may have expired. Please ask for a new one.",
-	})
 }
 
 type codeView struct {
@@ -626,8 +566,6 @@ func (a app) next(want string) string {
 // this was, so that finish can stay one function across four pages.
 func nextOf(view any) string {
 	switch v := view.(type) {
-	case linkView:
-		return v.Next
 	case codeView:
 		return v.Next
 	case bootstrapView:

@@ -9,8 +9,8 @@
 // narrow exception: a read-only key on one form, for a spreadsheet. This is the
 // second, made on purpose and for the same underlying reason. Somebody who
 // builds forms wants to have a program build them, and a program cannot hold a
-// session: it cannot follow an emailed sign-in link, and it would have to every
-// fourteen days.
+// session: it cannot read a sign-in code out of a mailbox, and it would have
+// to every fourteen days.
 //
 // What keeps it ordinary rather than a return of the parent project's
 // credential domain is that it adds no authority of its own:
