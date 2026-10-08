@@ -150,6 +150,12 @@ type Config struct {
 	// there.
 	CanFeed bool
 
+	// CanEdit and CanWillCall say the builder and the will-call table are
+	// mounted, which decides whether a form's page links to them. The people
+	// page is always mounted and needs no flag.
+	CanEdit     bool
+	CanWillCall bool
+
 	// Notifications is optional. Without it the list simply does not mention
 	// email, which is right for an installation that cannot record the
 	// preference: a column offering a choice that will not stick is worse than
@@ -439,6 +445,15 @@ type listView struct {
 	// Feed is whether to link to the spreadsheet page: mounted, and this
 	// reader administers the form.
 	Feed bool
+
+	// The other pages of this form this reader may open, linked under its
+	// title: the same three the forms list offers beneath it, by the same
+	// rules -- will-call from door upwards, the builder and the people page
+	// for an administrator. Without them, somebody who opened a form to read
+	// it had to go back to the list to do anything else with it.
+	Edit     bool
+	People   bool
+	WillCall bool
 }
 
 type rowView struct {
@@ -507,14 +522,26 @@ func (a app) list(w http.ResponseWriter, r *http.Request) {
 		subs = hidden
 	}
 
-	if me, ok := mid.UserFrom(r.Context()); ok && a.cfg.CanFeed {
-		allowed, err := a.cfg.Grants.Allowed(r.Context(), me.ID, f.ID, accessbus.RoleAdmin)
-		if err != nil {
-			a.cfg.Log.Error("whether the reader may manage the feed could not be read",
-				"request_id", web.RequestIDFrom(r.Context()), "form", f.ID.String(), "error", err)
+	// A failure to read a grant costs a link and not the page: the
+	// submissions are what somebody came for, and the gate in front of every
+	// linked page asks the same question again.
+	if me, ok := mid.UserFrom(r.Context()); ok {
+		may := func(role accessbus.Role) bool {
+			allowed, err := a.cfg.Grants.Allowed(r.Context(), me.ID, f.ID, role)
+			if err != nil {
+				a.cfg.Log.Error("whether the reader may open this form's other pages could not be read",
+					"request_id", web.RequestIDFrom(r.Context()), "form", f.ID.String(), "role", role.String(), "error", err)
+			}
+
+			return allowed
 		}
 
-		view.Feed = allowed
+		admin := may(accessbus.RoleAdmin)
+
+		view.Feed = admin && a.cfg.CanFeed
+		view.Edit = admin && a.cfg.CanEdit
+		view.People = admin
+		view.WillCall = a.cfg.CanWillCall && (admin || may(accessbus.RoleDoor))
 	}
 
 	for _, s := range subs {

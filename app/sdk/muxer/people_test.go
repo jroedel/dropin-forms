@@ -3,6 +3,7 @@ package muxer_test
 import (
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -668,5 +669,62 @@ func TestGivingAccessToNobodyIsRefused(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("POST %s with nobody named = %d, want 400:\n%s", peoplePage, w.Code, w.Body)
+	}
+}
+
+// A form's own page links to its other pages -- will-call, the builder, the
+// people page -- for whoever may open them, as the forms list does beneath
+// each form. Before this, somebody who had opened a form to read it had to go
+// back to the list to do anything else with it.
+func TestAFormsPageLinksToItsOtherPagesForWhoeverMayOpenThem(t *testing.T) {
+	a := newAdmin(t, "")
+
+	reader, err := a.users.Create(t.Context(), time.Now(), userbus.NewUser{Email: mustEmail(t, "reader@schoenstatt.test")})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := a.access.Grant(t.Context(), time.Now(), types.ID{}, reader.ID, mustSlug(t, theForm), accessbus.RoleResults); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+
+	links := map[string]string{
+		"will-call": `href="` + willCallPage + `"`,
+		"edit":      `href="/forms/` + theForm + `/edit"`,
+		"people":    `href="` + peoplePage + `"`,
+	}
+
+	for _, tt := range []struct {
+		name string
+		who  userbus.User
+		want []string
+	}{
+		{"an administrator", formAdmin(t, a, "boss@schoenstatt.test"), []string{"will-call", "edit", "people"}},
+		{"a volunteer at the door", volunteer(t, a, "door@schoenstatt.test"), []string{"will-call"}},
+		{"somebody who reads the results", reader, nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			// Signed in directly rather than through the pages, which would
+			// run three people into the sign-in throttle from one address.
+			req, err := a.users.RequestSignIn(t.Context(), time.Now(), tt.who.Email)
+			if err != nil {
+				t.Fatalf("RequestSignIn: %v", err)
+			}
+
+			_, cookie, err := a.users.SignInWithCode(t.Context(), time.Now(), tt.who.Email, req.Code)
+			if err != nil {
+				t.Fatalf("SignInWithCode: %v", err)
+			}
+
+			w := a.get(t, "/forms/"+theForm+"/submissions", cookie)
+			if w.Code != http.StatusOK {
+				t.Fatalf("GET the form's page = %d:\n%s", w.Code, w.Body)
+			}
+
+			for name, href := range links {
+				if got, want := strings.Contains(w.Body.String(), href), slices.Contains(tt.want, name); got != want {
+					t.Errorf("links to %s = %v, want %v", name, got, want)
+				}
+			}
+		})
 	}
 }
