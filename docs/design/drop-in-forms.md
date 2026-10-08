@@ -1176,6 +1176,39 @@ operating system prefers, and `color-scheme: light` is load-bearing for that
 reason — without it the browser draws the controls themselves in dark widget
 colours over light backgrounds.
 
+### The Schoenstatt Fathers look
+
+Both surfaces now wear the Schoenstatt Fathers identity, from the manual in
+`personal-tasks/brand`: Ubuntu for headings, Inter for everything read at
+length, the Shrine blue `#293896` for anything that can be pressed, and the
+painted rather than the typed palette values, for the reason that directory's
+README gives. The fonts and the logo are the same files
+`/opt/projects/stewards` ships, so the user's apps carry one identity rather
+than several approximations of it.
+
+**Self-hosted, so the policies gained `font-src 'self'` and nothing wider.** A
+font service would learn which form each visitor opened, and both
+Content-Security-Policies would have to name it. The files live in
+`app/sdk/page/assets/shared` with their licences, are served at
+content-hashed paths like the stylesheet, and a stylesheet names them by their
+directory name -- `url("fonts/inter-var.woff2")` -- which the renderer rewrites
+at startup. A `url()` naming anything else is a startup error rather than a
+fallback face nobody notices.
+
+**The admin masthead is white in dark mode too.** The full-colour logo is only
+drawn on white, the manual forbids recolouring it, and the white or black
+version a dark band would need is not in the brand kit. Extract it from the
+manual and the masthead can go dark with the rest of the page.
+
+**Yellow and green are never the colour of words.** Neither reaches 3:1 on
+white. Yellow is the short bar under an admin page's title, from the manual's
+own web page; the "done" green is the brand hue darkened until it reads.
+
+**The embedded form takes the type and the blue, and nothing else.** No logo
+and no yellow mark: it is a fragment of somebody else's page, under their
+heading. It still has no background of its own and no dark mode; the section
+above and the comment at the top of its stylesheet are unchanged by this.
+
 ### One parameter, dropped, and a tall empty box
 
 Every page of the embed surface learns which origin it may post its height to

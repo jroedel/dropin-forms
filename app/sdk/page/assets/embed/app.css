@@ -45,30 +45,65 @@
    The general answer, when this becomes a builder anybody can use, is for the
    form to carry its own palette so it can be matched to the site it lives on.
    That is Track B. Until then, light, because the page it is embedded in is
-   light. */
+   light.
+
+   THE TYPE AND THE ACCENT ARE THE SCHOENSTATT FATHERS IDENTITY'S, AND
+   NOTHING ELSE IS.
+
+   Ubuntu for the headings, Inter for everything else, the Shrine blue for
+   what can be pressed -- the same as the admin surface, so a form and the
+   page that built it are visibly one thing. What the manual would also have,
+   a logo and a yellow mark under the title, is left to the host page: this
+   is a fragment of somebody's own page, and their heading is above it. The
+   faces are served from this hostname, which is why the policy has font-src
+   'self' and nothing wider. */
+
+@font-face {
+  font-display: swap;
+  font-family: "Ubuntu";
+  font-style: normal;
+  font-weight: 100 800;
+  src: url("fonts/ubuntu-var.woff2") format("woff2");
+}
+
+@font-face {
+  font-display: swap;
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  src: url("fonts/inter-var.woff2") format("woff2");
+}
 
 :root {
   /* Not `light dark`. See above. */
   color-scheme: light;
 
-  --ink: #1b1b1f;
+  --font-display: "Ubuntu", system-ui, sans-serif;
+  --font-body:    "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* The manual's ink, a warm near-black. */
+  --ink: #231f20;
 
   /* Not the page's colour any more -- the page has none. This is the surface
      of a field: an input, a select, a textarea. Near-white rather than
      transparent so that a box somebody types in reads as a box on a tinted
      host page. */
   --paper: #fdfdfb;
-  --muted: #5c5c66;
+  --muted: #55535c;
   --rule: #c9c9c2;
-  --accent: #29527a;
+  /* The Shrine blue, and its darker tint for a button under the pointer. */
+  --accent: #293896;
+  --accent-deep: #1e2a73;
   --accent-ink: #ffffff;
   --wrong: #8c2f21;
   /* Translucent for the same reason --tint is: these boxes sit directly on
      the host page now, and a flat pale green card on a cream background is a
      card. A wash of the callout's own colour is a callout. */
   --wrong-tint: rgba(140, 47, 33, .07);
-  --right: #1f5c3d;
-  --right-tint: rgba(31, 92, 61, .08);
+  /* Not the brand green, which is 2.6:1 on white: a colour for a mark rather
+     than for words. The same hue, dark enough to read. */
+  --right: #1f6b2c;
+  --right-tint: rgba(56, 181, 74, .1);
   /* A tint rather than a colour, so a panel darkens whatever is behind it
      instead of replacing it with our grey. On the shrine's cream page a flat
      #f4f3ee read as a slightly dirty rectangle. */
@@ -86,7 +121,7 @@ body.embedded {
      frame inherit the host page; see the top of this file. */
   background: transparent;
   color: var(--ink);
-  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font: 400 16px/1.55 var(--font-body);
 
   /* The frame is only as tall as this element, so no height is set here. */
 }
@@ -98,9 +133,16 @@ body.embedded {
 
 /* --- headings and prose ------------------------------------------------- */
 
+h1, h2,
+fieldset.section > legend {
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: var(--accent);
+}
+
 .form-shell h1 {
   margin: 0 0 .5rem;
-  font-size: 1.35rem;
+  font-size: 1.4rem;
   line-height: 1.25;
 }
 
@@ -317,9 +359,12 @@ textarea:user-invalid {
   color: var(--wrong);
 }
 
+/* The list of what is wrong keeps the colour of what is wrong, rather than
+   the blue every other heading has. */
 .summary h2 {
   margin: 0 0 .35rem;
   font-size: 1rem;
+  color: inherit;
 }
 
 .summary ul {
@@ -346,7 +391,7 @@ button.go {
   cursor: pointer;
 }
 
-button.go:hover { filter: brightness(1.08); }
+button.go:hover { background: var(--accent-deep); }
 
 /* The button while the submission is in flight.
  *
@@ -366,7 +411,6 @@ button.go:disabled {
   background: var(--tint);
   border-color: var(--rule);
   cursor: not-allowed;
-  filter: none;
 }
 
 /* The second action on a page that has two: Back, beside Continue to payment.
@@ -385,7 +429,6 @@ button.go.quiet {
 }
 
 button.go.quiet:hover {
-  filter: none;
   border-color: var(--accent);
   background: var(--tint);
 }
@@ -417,7 +460,7 @@ a.button {
   text-decoration: none;
 }
 
-a.button:hover { filter: brightness(1.08); }
+a.button:hover { background: var(--accent-deep); }
 
 .pay {
   margin: 1.25rem 0 0;
@@ -476,6 +519,10 @@ a.button:hover { filter: brightness(1.08); }
   margin: 0 0 .5rem;
   font-size: 1.2rem;
 }
+
+/* A heading inside the outcome box is part of what the box says, and takes
+   its colour -- green for done, ink for not yet -- rather than the blue. */
+.outcome .said h1 { color: inherit; }
 
 .receipt {
   margin: 1rem 0 0;

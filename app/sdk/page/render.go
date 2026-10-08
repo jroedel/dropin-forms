@@ -26,8 +26,26 @@ import (
 // website, where a masthead would be a second heading under theirs and a
 // footer would be furniture inside a box the height of its contents.
 //
+// Beside them, in assets/shared, are the files both draw on: the Schoenstatt
+// Fathers typefaces and logo. See [sharedFiles].
+//
 //go:embed assets
 var assets embed.FS
+
+// sharedFiles are the kinds of file in assets/shared, and what each is served
+// as.
+//
+// The brand faces are self-hosted rather than fetched from a font service,
+// which would learn which page of somebody's form each visitor opened, and
+// which both Content-Security-Policies would have to name. They are the same
+// subset variable files /opt/projects/stewards ships, licences and all, and
+// the logo is the brand kit's own (personal-tasks/brand/logo), so the user's
+// apps carry one identity rather than several approximations of it.
+var sharedFiles = map[string]string{
+	"fonts/*.woff2": "font/woff2",
+	"img/*.svg":     "image/svg+xml",
+	"img/*.png":     "image/png",
+}
 
 // Chrome is one surface's shared layout and stylesheet: a directory holding
 // *.html templates that define "base", and an app.css.
@@ -91,6 +109,20 @@ type Renderer struct {
 	js     []byte
 	jsPath string
 	jsETag string
+
+	// files are the shared fonts and images, by the path they are served at;
+	// paths maps each one's name in assets/shared -- "img/logo-horizontal.svg"
+	// -- to that path. Content-hashed like the stylesheet, and for the same
+	// reason.
+	files map[string]asset
+	paths map[string]string
+}
+
+// asset is one shared file, ready to serve.
+type asset struct {
+	body []byte
+	kind string
+	etag string
 }
 
 // shell is what every template is executed against.
@@ -132,7 +164,26 @@ func NewRenderer(log *slog.Logger, ch Chrome, own ...fs.FS) (*Renderer, error) {
 		return nil, errors.New("a renderer needs at least one app's templates")
 	}
 
-	base, err := template.New("base").ParseFS(ch.fs, "*.html")
+	files, paths, err := readShared()
+	if err != nil {
+		return nil, err
+	}
+
+	// asset is how a template names a shared file: {{asset "img/logo.svg"}}.
+	// A name that is not there is an error from the template, and so a 500
+	// with a loud line rather than an image that silently does not load --
+	// and the layouts, which are the only callers, are rendered by the tests.
+	funcs := template.FuncMap{
+		"asset": func(name string) (string, error) {
+			if p, ok := paths[name]; ok {
+				return p, nil
+			}
+
+			return "", fmt.Errorf("there is no shared file called %s", name)
+		},
+	}
+
+	base, err := template.New("base").Funcs(funcs).ParseFS(ch.fs, "*.html")
 	if err != nil {
 		return nil, fmt.Errorf("the %s layout could not be read: %w", ch.name, err)
 	}
@@ -176,6 +227,13 @@ func NewRenderer(log *slog.Logger, ch Chrome, own ...fs.FS) (*Renderer, error) {
 		return nil, fmt.Errorf("the %s stylesheet could not be read: %w", ch.name, err)
 	}
 
+	if css, err = linkShared(css, paths); err != nil {
+		return nil, fmt.Errorf("the %s stylesheet: %w", ch.name, err)
+	}
+
+	// After linking, so that a new font is a new stylesheet path as well as
+	// a new font path. Hashing before would leave browsers holding a
+	// stylesheet that is "immutable" and points at the old file.
 	sum := sha256.Sum256(css)
 	digest := hex.EncodeToString(sum[:])[:12]
 
@@ -188,6 +246,8 @@ func NewRenderer(log *slog.Logger, ch Chrome, own ...fs.FS) (*Renderer, error) {
 		css:     css,
 		cssPath: "/static/app." + digest + ".css",
 		cssETag: `"` + digest + `"`,
+		files:   files,
+		paths:   paths,
 	}
 
 	// One optional script, found the same way. fs.ReadFile failing is read as
@@ -205,6 +265,101 @@ func NewRenderer(log *slog.Logger, ch Chrome, own ...fs.FS) (*Renderer, error) {
 
 	return rn, nil
 }
+
+// readShared reads assets/shared and gives each file its served path:
+// fonts/inter-var.woff2 is served at /static/fonts/inter-var.<hash>.woff2.
+func readShared() (map[string]asset, map[string]string, error) {
+	files := map[string]asset{}
+	paths := map[string]string{}
+
+	for pattern, kind := range sharedFiles {
+		names, err := fs.Glob(assets, "assets/shared/"+pattern)
+		if err != nil {
+			return nil, nil, fmt.Errorf("listing %s: %w", pattern, err)
+		}
+
+		for _, name := range names {
+			body, err := fs.ReadFile(assets, name)
+			if err != nil {
+				return nil, nil, fmt.Errorf("%s could not be read: %w", name, err)
+			}
+
+			sum := sha256.Sum256(body)
+			digest := hex.EncodeToString(sum[:])[:12]
+
+			rel := strings.TrimPrefix(name, "assets/shared/")
+			ext := path.Ext(rel)
+			served := "/static/" + strings.TrimSuffix(rel, ext) + "." + digest + ext
+
+			files[served] = asset{body: body, kind: kind, etag: `"` + digest + `"`}
+			paths[rel] = served
+		}
+	}
+
+	return files, paths, nil
+}
+
+// linkShared points the stylesheet's url("fonts/...") references at the
+// files' served paths.
+//
+// The stylesheet names a file the way the directory does, which is what
+// somebody editing it can see. Anything else in a url() that is not a data:
+// URI is refused at startup: it would be a request the stylesheet makes for a
+// file nothing serves, which shows up as a fallback face and nothing in a log.
+func linkShared(css []byte, paths map[string]string) ([]byte, error) {
+	out := string(css)
+
+	for name, served := range paths {
+		out = strings.ReplaceAll(out, `url("`+name+`")`, `url("`+served+`")`)
+	}
+
+	rest := out
+	for {
+		_, after, found := strings.Cut(rest, "url(")
+		if !found {
+			break
+		}
+
+		ref := strings.Trim(after[:strings.IndexByte(after+")", ')')], `"' `)
+		if !strings.HasPrefix(ref, "/static/") && !strings.HasPrefix(ref, "data:") {
+			return nil, fmt.Errorf("it refers to %s, which is not a file in assets/shared", ref)
+		}
+
+		rest = after
+	}
+
+	return []byte(out), nil
+}
+
+// Mount puts every file this surface serves on mux: its stylesheet, its
+// script when it has one, and the shared fonts and images.
+//
+// Outside every gate, and deliberately so: these are files compiled into the
+// binary rather than anybody's data, and the sign-in page needs them. Put
+// them behind the session and the login page renders unstyled, in the
+// fallback face, with a broken image where the logo was.
+func (rn *Renderer) Mount(mux *http.ServeMux) {
+	mux.HandleFunc("GET "+rn.cssPath, rn.Stylesheet())
+
+	if rn.jsPath != "" {
+		mux.HandleFunc("GET "+rn.jsPath, rn.Script())
+	}
+
+	for served, f := range rn.files {
+		mux.HandleFunc("GET "+served, func(w http.ResponseWriter, r *http.Request) {
+			h := w.Header()
+			h.Set("Content-Type", f.kind)
+			h.Set("Cache-Control", "public, max-age=31536000, immutable")
+			h.Set("ETag", f.etag)
+
+			http.ServeContent(w, r, path.Base(served), startup, bytes.NewReader(f.body))
+		})
+	}
+}
+
+// SharedPath is where a shared file is served -- "fonts/inter-var.woff2" --
+// or empty when there is none by that name.
+func (rn *Renderer) SharedPath(name string) string { return rn.paths[name] }
 
 // StylesheetPath is where the stylesheet is served, including its content
 // hash. Handed to the muxer so it can mount it.

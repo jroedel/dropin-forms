@@ -2,11 +2,14 @@ package page_test
 
 import (
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
@@ -112,5 +115,105 @@ func TestTheTwoSurfacesAssetPathsDiffer(t *testing.T) {
 	}
 	if admin.ScriptPath() != "" {
 		t.Errorf("the admin surface ships a script at %s, and its CSP forbids running one", admin.ScriptPath())
+	}
+}
+
+// served fetches path through the surface's mounted files, the way a browser
+// reaches them.
+func served(t *testing.T, rn *page.Renderer, path string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	mux := http.NewServeMux()
+	rn.Mount(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+
+	return w
+}
+
+var urlRef = regexp.MustCompile(`url\("([^"]+)"\)`)
+
+// Every file a stylesheet asks for is one the surface serves, as what it is.
+//
+// A face that does not load is not an error anywhere: the browser draws the
+// fallback and says nothing, so the brand type could go missing on one
+// surface and stay missing until somebody happened to compare two
+// screenshots. The renderer refuses a url() that names no shared file; this
+// is the other half, that the one it rewrote to is mounted.
+func TestEveryFileAStylesheetAsksForIsServed(t *testing.T) {
+	for name, surface := range map[string]struct {
+		chrome    page.Chrome
+		templates fs.FS
+	}{
+		"admin": {page.AdminChrome(), authapp.Templates},
+		"embed": {page.EmbedChrome(), embedapp.Templates},
+	} {
+		rn, err := page.NewRenderer(discard(), surface.chrome, surface.templates)
+		if err != nil {
+			t.Fatalf("NewRenderer(%s): %v", name, err)
+		}
+
+		css := assetOf(t, rn, rn.StylesheetPath(), rn.Stylesheet())
+
+		refs := urlRef.FindAllStringSubmatch(css, -1)
+		if len(refs) < 2 {
+			t.Errorf("%s: the stylesheet asks for %d files, want both brand faces", name, len(refs))
+		}
+
+		for _, ref := range refs {
+			w := served(t, rn, ref[1])
+
+			switch {
+			case w.Code != http.StatusOK:
+				t.Errorf("%s: GET %s = %d", name, ref[1], w.Code)
+			case w.Header().Get("Content-Type") != "font/woff2":
+				t.Errorf("%s: GET %s is %q, want font/woff2", name, ref[1], w.Header().Get("Content-Type"))
+			case !strings.Contains(w.Header().Get("Cache-Control"), "immutable"):
+				t.Errorf("%s: GET %s may not be cached forever, and its path has a hash so that it can", name, ref[1])
+			}
+		}
+	}
+}
+
+// The admin layout's logo and icon are served, and the logo says what it is
+// to somebody who cannot see it.
+func TestTheAdminLayoutCarriesTheLogo(t *testing.T) {
+	plain := fstest.MapFS{
+		"templates/plain.html": {Data: []byte(`{{define "content"}}<p>hello</p>{{end}}`)},
+	}
+
+	rn, err := page.NewRenderer(discard(), page.AdminChrome(), plain)
+	if err != nil {
+		t.Fatalf("NewRenderer: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	rn.Render(w, httptest.NewRequest(http.MethodGet, "/", nil), http.StatusOK, "plain", nil)
+
+	body := w.Body.String()
+
+	for name, kind := range map[string]string{
+		"img/logo-horizontal.svg": "image/svg+xml",
+		"img/isotype-512.png":     "image/png",
+	} {
+		at := rn.SharedPath(name)
+		if at == "" {
+			t.Errorf("there is no %s", name)
+
+			continue
+		}
+
+		if !strings.Contains(body, `"`+at+`"`) {
+			t.Errorf("the layout does not use %s at %s", name, at)
+		}
+
+		if got := served(t, rn, at); got.Code != http.StatusOK || got.Header().Get("Content-Type") != kind {
+			t.Errorf("GET %s = %d %q, want 200 %q", at, got.Code, got.Header().Get("Content-Type"), kind)
+		}
+	}
+
+	if !strings.Contains(body, `alt="Schoenstatt Fathers"`) {
+		t.Error("the logo has no alternative text")
 	}
 }

@@ -62,6 +62,7 @@ func EmbedPolicy(frameAncestors FrameAncestorsFor) web.PolicyFor {
 				"default-src 'none'",
 				"script-src 'self'",
 				"style-src 'self'",
+				"font-src 'self'",
 				"img-src 'self' data:",
 				"form-action 'self'",
 				"base-uri 'none'",
@@ -87,6 +88,8 @@ func EmbedPolicy(frameAncestors FrameAncestorsFor) web.PolicyFor {
 // and no remote assets, and a page that cannot make a network request cannot
 // exfiltrate anything, whatever ends up injected into a field somebody typed.
 // There is no script-src at all, and adding one should feel like a decision.
+// font-src is 'self' and nothing wider: the brand faces are files in the
+// binary, served from this hostname -- see page.sharedFiles.
 //
 // frame-ancestors is 'none'. The management app is never embedded, and the
 // whole reason it lives on a second hostname is to keep it away from the
@@ -97,6 +100,7 @@ func AdminPolicy() web.PolicyFor {
 			ContentSecurityPolicy: strings.Join([]string{
 				"default-src 'none'",
 				"style-src 'self'",
+				"font-src 'self'",
 				"img-src 'self' data:",
 				"form-action 'self'",
 				"base-uri 'none'",

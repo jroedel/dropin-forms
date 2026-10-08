@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{block "title" .Data}}Schoenstatt Austin forms{{end}}</title>
 <link rel="stylesheet" href="{{.Stylesheet}}">
-<link rel="icon" href="data:,">
+<link rel="icon" type="image/png" href="{{asset "img/isotype-512.png"}}">
 {{/* A page may add to the head. Exactly one does: the will-call table, which
      reloads itself with <meta http-equiv="refresh"> because this surface has
      no script-src and a list that stopped updating is wrong within a minute.
@@ -15,7 +15,14 @@
 </head>
 <body>
 <header class="masthead">
-<a class="wordmark" href="/">Schoenstatt Austin forms</a>
+{{/* The Schoenstatt Fathers horizontal lockup, full colour, on the white
+     band the manual asks for: it is never recoloured, and the white or black
+     version that a dark background would need is not in the brand kit. Its
+     width is set in the stylesheet, above the manual's 25 mm minimum, and the
+     words beside it -- what this site was called before it had a logo -- are
+     set apart by more than the width of the logo's "S", the clear space the
+     manual keeps around it. */}}
+<a class="wordmark" href="/"><img src="{{asset "img/logo-horizontal.svg"}}" alt="Schoenstatt Fathers" width="150" height="50"><span>Austin forms</span></a>
 {{block "masthead" .Data}}{{end}}
 </header>
 <main>

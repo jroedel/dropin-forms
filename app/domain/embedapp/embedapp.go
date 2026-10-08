@@ -384,12 +384,9 @@ func Routes(mux *http.ServeMux, cfg Config, writes func(http.Handler) http.Handl
 	// content-hashed one, and it is cached for an hour instead of forever.
 	mux.HandleFunc("GET /embed.js", a.script)
 
-	if p := cfg.Render.StylesheetPath(); p != "" {
-		mux.HandleFunc("GET "+p, cfg.Render.Stylesheet())
-	}
-	if p := cfg.Render.ScriptPath(); p != "" {
-		mux.HandleFunc("GET "+p, cfg.Render.Script())
-	}
+	// The stylesheet, the script and the brand faces, at content-hashed
+	// paths.
+	cfg.Render.Mount(mux)
 }
 
 // formView is what the form template renders.

@@ -377,12 +377,13 @@ func Admin(cfg Config) (http.Handler, error) {
 
 	mux.HandleFunc("GET /healthz", health.Handler(cfg.Log, cfg.DB, cfg.Expected))
 
-	// The stylesheet is outside every gate, and deliberately so: it is a file
-	// compiled into the binary rather than anybody's data, and the sign-in
-	// page needs it. Put it behind the session and the login page renders
-	// unstyled. Its path carries a hash of its content, so it is also the one
-	// response on this surface that may be cached.
-	mux.HandleFunc("GET "+cfg.Render.StylesheetPath(), cfg.Render.Stylesheet())
+	// The stylesheet, the brand faces and the logo are outside every gate,
+	// and deliberately so: they are files compiled into the binary rather
+	// than anybody's data, and the sign-in page needs them. Put them behind
+	// the session and the login page renders unstyled. Their paths carry a
+	// hash of their content, so they are also the only responses on this
+	// surface that may be cached.
+	cfg.Render.Mount(mux)
 
 	// Where a browser arriving at the bare hostname goes. Answered here
 	// rather than left as a 404, because this hostname is what somebody types
