@@ -28,6 +28,7 @@ type memStore struct {
 	tokens    map[types.ID]userbus.Token
 	sessions  map[types.ID]userbus.Session
 	codes     map[types.ID]userbus.BackupCode
+	signin    []userbus.SignInCode // in the order they were made
 	bootstrap bool
 
 	// Counters, so a test can assert that a lookup happened at all -- the
@@ -141,6 +142,82 @@ func (m *memStore) UseToken(_ context.Context, id types.ID, at time.Time) (bool,
 	m.tokens[id] = t
 
 	return true, nil
+}
+
+func (m *memStore) CreateSignInCode(_ context.Context, c userbus.SignInCode) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.signin = append(m.signin, c)
+
+	return nil
+}
+
+func (m *memStore) LatestSignInCode(_ context.Context, userID types.ID) (userbus.SignInCode, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, c := range slices.Backward(m.signin) {
+		if c.UserID == userID {
+			return c, nil
+		}
+	}
+
+	return userbus.SignInCode{}, userbus.ErrNotFound
+}
+
+// TrySignInCode is the atomic reservation, held under the lock like the
+// other claims.
+func (m *memStore) TrySignInCode(_ context.Context, tokenID types.ID, limit int) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i, c := range m.signin {
+		if c.TokenID == tokenID {
+			if c.Tries >= limit {
+				return false, nil
+			}
+
+			m.signin[i].Tries++
+
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func (m *memStore) UseSignInCode(_ context.Context, tokenID types.ID, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i, c := range m.signin {
+		if c.TokenID == tokenID && c.UsedAt.IsZero() {
+			m.signin[i].UsedAt = at
+		}
+	}
+
+	return nil
+}
+
+func (m *memStore) SignInCodeFailures(_ context.Context, userID types.ID, since time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	n := 0
+
+	for _, c := range m.signin {
+		if c.UserID != userID || c.CreatedAt.Before(since) {
+			continue
+		}
+
+		n += c.Tries
+		if !c.UsedAt.IsZero() {
+			n--
+		}
+	}
+
+	return n, nil
 }
 
 func (m *memStore) ReplaceBackupCodes(_ context.Context, userID types.ID, codes []userbus.BackupCode) error {
@@ -299,6 +376,9 @@ func (m *memStore) storedSecrets() []string {
 		out = append(out, string(s.Hash))
 	}
 	for _, c := range m.codes {
+		out = append(out, string(c.Hash))
+	}
+	for _, c := range m.signin {
 		out = append(out, string(c.Hash))
 	}
 

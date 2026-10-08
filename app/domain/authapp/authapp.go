@@ -1,5 +1,6 @@
-// Package authapp is the sign-in surface: asking for a link, redeeming one,
-// backup codes, the one-time bootstrap, and the account page.
+// Package authapp is the sign-in surface: asking for a link, redeeming one or
+// the code that comes with it, backup codes, the one-time bootstrap, and the
+// account page.
 //
 // # The emailed link does not sign anybody in
 //
@@ -127,9 +128,9 @@ func Routes(mux *http.ServeMux, cfg Config, guard func(http.Handler) http.Handle
 
 	a := app{cfg: cfg}
 
-	// One allowance across all four of these, deliberately. They are four ways
+	// One allowance across all five of these, deliberately. They are five ways
 	// of presenting one credential, and a limit that let somebody exhaust the
-	// backup codes and then start on the sign-in links would be four limits
+	// backup codes and then start on the sign-in codes would be five limits
 	// and no limit.
 	//
 	// The GETs are not behind it. They render a form and read nothing, and a
@@ -147,6 +148,7 @@ func Routes(mux *http.ServeMux, cfg Config, guard func(http.Handler) http.Handle
 	mux.Handle("POST /signin", tries(http.HandlerFunc(a.requestLink)))
 	mux.HandleFunc("GET /signin/link", a.confirmLink)
 	mux.Handle("POST /signin/link", tries(http.HandlerFunc(a.redeemLink)))
+	mux.Handle("POST /signin/verify", tries(http.HandlerFunc(a.redeemSignInCode)))
 	mux.HandleFunc("GET /signin/code", a.codeForm)
 	mux.Handle("POST /signin/code", tries(http.HandlerFunc(a.redeemCode)))
 
@@ -258,8 +260,55 @@ func (a app) requestLink(w http.ResponseWriter, r *http.Request) {
 
 	// The same page either way, including when the send above failed. See the
 	// package comment: an error here would appear only for addresses that
-	// have an account.
-	a.cfg.Render.Render(w, r, http.StatusOK, "sent", struct{ Email string }{Email: email.String()})
+	// have an account. That includes the box for the code, which is offered
+	// to an address with no account exactly as to one with.
+	a.cfg.Render.Render(w, r, http.StatusOK, "sent", sentView{Email: email.String(), Next: next})
+}
+
+// sentView is the page after asking: check your email, and the box for the
+// code in it.
+type sentView struct {
+	Email   string
+	Next    string
+	Problem string
+}
+
+// redeemSignInCode signs in with the six digits from the mail, typed on the
+// page that said to check it. The address comes from that page's hidden
+// field, so that it is the one the code was sent to.
+func (a app) redeemSignInCode(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		a.cfg.Render.Render(w, r, http.StatusBadRequest, "signin", signInView{
+			Problem:       "We could not read that. Please try again.",
+			HaveBootstrap: a.cfg.Bootstrap != "",
+		})
+
+		return
+	}
+
+	next := mid.SafeNext(r.PostFormValue("next"))
+	typed := r.PostFormValue("email")
+
+	email, err := types.ParseEmail(typed)
+	if err != nil {
+		// Not a typo anybody made on this page, which has no address box:
+		// the page was edited, or is very old. Back to the start.
+		a.cfg.Render.Render(w, r, http.StatusBadRequest, "signin", signInView{
+			Next:          next,
+			Problem:       "Something was missing from that page. Please ask for a new code.",
+			HaveBootstrap: a.cfg.Bootstrap != "",
+		})
+
+		return
+	}
+
+	user, cookie, err := a.cfg.Users.SignInWithCode(r.Context(), time.Now(), email, r.PostFormValue("code"))
+	a.finish(w, r, user, cookie, err, "sent", sentView{
+		Email: email.String(),
+		Next:  next,
+		Problem: "That code did not work. Check it against the newest email we sent, " +
+			"or use the link in that email instead.",
+	})
 }
 
 // send mails the link, and treats a failure as something to record rather than
@@ -270,16 +319,24 @@ func (a app) send(r *http.Request, req userbus.SignInRequest, next string) {
 		link += "&next=" + url.QueryEscape(next)
 	}
 
-	text := "Somebody asked to sign in to the Schoenstatt Austin forms admin as " +
-		req.User.Email.String() + ".\r\n\r\n" +
-		"Open this link and press the button to sign in:\r\n\r\n" +
+	// The code first, alone on its line, under the words a verification mail
+	// uses. That is what Gmail recognises to offer "Copy code" -- there is no
+	// markup for it, only the shape of the message, copied here from one it
+	// was seen to work on. The link follows for anybody reading on the device
+	// they are signing in on.
+	text := "Your verification code is:\r\n\r\n" +
+		req.Code + "\r\n\r\n" +
+		"This code will expire in 15 minutes. Type it on the page where you asked to sign in.\r\n\r\n" +
+		"Or open this link and press the button to sign in:\r\n\r\n" +
 		link + "\r\n\r\n" +
-		"The link works once and stops working in fifteen minutes.\r\n\r\n" +
-		"If this was not you, nothing has happened and you can ignore this message.\r\n"
+		"The code and the link work once, and using either one uses both.\r\n\r\n" +
+		"Somebody asked to sign in to the Schoenstatt Austin forms admin as " +
+		req.User.Email.String() + ". If this was not you, nothing has happened " +
+		"and you can ignore this message.\r\n"
 
 	if err := a.cfg.Mail.Send(r.Context(), mail.Message{
 		To:      req.User.Email.String(),
-		Subject: "Sign in to Schoenstatt Austin forms",
+		Subject: "Your verification code for Schoenstatt Austin forms",
 		Text:    text,
 	}); err != nil {
 		// Loud, because this is the failure that leaves somebody staring at a
@@ -576,6 +633,8 @@ func nextOf(view any) string {
 	case bootstrapView:
 		return v.Next
 	case signInView:
+		return v.Next
+	case sentView:
 		return v.Next
 	}
 
