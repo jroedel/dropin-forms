@@ -1,0 +1,39 @@
+{{define "title"}}Connect Claude{{end}}
+
+{{define "masthead"}}<a href="/forms">Forms</a>{{end}}
+
+{{define "content"}}
+{{if .Host}}
+<h1>Let {{.Name}} work as you?</h1>
+
+<p><strong>{{.Host}}</strong> is asking to build forms and read what was
+submitted to them, as you ({{.Email}}).</p>
+
+{{with .Problem}}<p class="problem" role="alert">{{.}}</p>{{end}}
+
+<p class="help">It can reach exactly the forms you can, and do with them what
+you can do in the builder: make a form, change it, put it on the web or take it
+down, and read its answers. It cannot give anybody else access to a form, hide
+a submission, or make a key.</p>
+
+<p class="help">It gets a key that lasts {{.Days}} days. You can end it at any
+time on the <a href="/account/keys">API keys</a> page, where it is listed as
+“{{.KeyName}}”.</p>
+
+<form method="post" action="/oauth/authorize">
+  <input type="hidden" name="client_id" value="{{.Request.ClientID}}">
+  <input type="hidden" name="redirect_uri" value="{{.Request.Redirect}}">
+  <input type="hidden" name="state" value="{{.Request.State}}">
+  <input type="hidden" name="code_challenge" value="{{.Request.Challenge}}">
+  <input type="hidden" name="code_challenge_method" value="{{.Request.Method}}">
+  <input type="hidden" name="response_type" value="{{.Request.ResponseType}}">
+  <button type="submit" name="answer" value="allow">Allow</button>
+  <button type="submit" name="answer" value="deny" class="quiet">No</button>
+  <p class="help">Either button takes you back to {{.BackTo}}.</p>
+</form>
+{{else}}
+<h1>Connect Claude</h1>
+<p class="problem" role="alert">{{.Problem}}</p>
+<p><a href="/forms">Go to your forms</a></p>
+{{end}}
+{{end}}

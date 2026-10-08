@@ -33,6 +33,15 @@
 //	        RequireFormRole    or RequireSiteAdmin, per route
 //	          the app
 //
+// And on the admin listener, under /api/ only, a second chain in place of
+// everything from SameOriginOnly down -- see Admin for why it is a separate
+// chain rather than exceptions in this one:
+//
+//	Throttle             per address
+//	  Bearer             a personal key, or 401. Never a cookie.
+//	    RequireFormRole  or RequireFormCreator, per route: the same gates
+//	      the app
+//
 // The three above SecureHeaders are not gates and refuse nothing. They are
 // there so that whatever the gates below decide is logged, and so that a panic
 // beneath them is one Error line and a 500 rather than net/http's unstructured
@@ -72,13 +81,17 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
+	"github.com/jroedel/dropin-forms/app/domain/apiapp"
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
 	"github.com/jroedel/dropin-forms/app/domain/feedapp"
 	"github.com/jroedel/dropin-forms/app/domain/formapp"
 	"github.com/jroedel/dropin-forms/app/domain/hideapp"
+	"github.com/jroedel/dropin-forms/app/domain/mcpapp"
 	"github.com/jroedel/dropin-forms/app/domain/notifyapp"
+	"github.com/jroedel/dropin-forms/app/domain/oauthapp"
 	"github.com/jroedel/dropin-forms/app/domain/paymentapp"
 	"github.com/jroedel/dropin-forms/app/domain/peopleapp"
 	"github.com/jroedel/dropin-forms/app/domain/siteapp"
@@ -88,6 +101,7 @@ import (
 	"github.com/jroedel/dropin-forms/app/sdk/mid"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
+	"github.com/jroedel/dropin-forms/business/domain/apikey/apikeybus"
 	"github.com/jroedel/dropin-forms/business/domain/notify/notifybus"
 	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/foundation/mail"
@@ -206,6 +220,20 @@ type Config struct {
 	// Bootstrap is the one-time sign-in secret. Empty leaves those routes
 	// unmounted.
 	Bootstrap string
+
+	// APIKeys is the personal key domain: the account page that makes and
+	// revokes keys, and the API that accepts them. Optional, and the API is
+	// mounted only alongside the builder, since building forms is most of
+	// what it does. A concrete pointer rather than an interface, for the
+	// reason Notify gives.
+	APIKeys *apikeybus.Business
+
+	// OAuthClients reads the metadata document a program signing in through
+	// OAuth names itself by: foundation/oauth.Fetcher in production, a
+	// stand-in for the network in a test. Optional: without it there is no
+	// OAuth, and the API and MCP endpoint take keys made on the key page
+	// only -- which is everything but a claude.ai connector.
+	OAuthClients oauthapp.Clients
 }
 
 // Embed builds the public, embeddable surface.
@@ -388,6 +416,10 @@ func Admin(cfg Config) (http.Handler, error) {
 		// unless a test says otherwise; authapp.DefaultSignInRate says what it
 		// is and why.
 		TrustProxy: cfg.TrustProxy,
+
+		// Whether the account page links to the page for API keys, which is
+		// mounted below when there is somewhere to keep them.
+		KeysPage: cfg.APIKeys != nil,
 	}, guard)
 
 	// results is the second gate, and it is mounted here rather than inside
@@ -519,15 +551,16 @@ func Admin(cfg Config) (http.Handler, error) {
 	//
 	// Mounted only when there is somewhere to write a definition. Without one
 	// these would be pages whose every button fails.
+	// The narrower gate for the routes that only need "may make a form",
+	// which accessbus.RoleCreator answers without also answering "does this
+	// account administer the whole service". See RequireFormCreator and
+	// formapp's package comment for why that is not the same gate as site
+	// below. Built here rather than inside the builder's block because the
+	// API puts its own form-making route behind it too.
+	creator := mid.RequireFormCreator(cfg.Log, cfg.Access)
+
 	if cfg.Builder != nil {
 		site := mid.RequireSiteAdmin(cfg.Log, cfg.Access, accessbus.RoleAdmin)
-
-		// The narrower gate for the routes that only need "may make a form",
-		// which accessbus.RoleCreator answers without also answering "does
-		// this account administer the whole service". See RequireFormCreator
-		// and formapp's package comment for why that is not the same gate as
-		// site above.
-		creator := mid.RequireFormCreator(cfg.Log, cfg.Access)
 
 		formapp.Routes(mux, formapp.Config{
 			Log:          cfg.Log,
@@ -576,24 +609,145 @@ func Admin(cfg Config) (http.Handler, error) {
 		})
 	}
 
-	return web.Wrap(mux,
+	browser := web.Wrap(mux,
+		web.SameOriginOnly(),
+
+		// Every write from a browser on this surface is a form this service
+		// rendered, and there is no upload anywhere in the management app --
+		// so the set of content types it will parse is exactly one. On the
+		// browser's chain rather than per route, unlike the embed surface,
+		// because there is no webhook on this listener; the API, which posts
+		// JSON, has a chain of its own below rather than a hole in this one.
+		web.FormEncodedOnly(),
+
+		// Below the origin gates, above every handler. It refuses nobody,
+		// which is what lets the sign-in pages live in the same chain as the
+		// account page they lead to.
+		mid.Authenticate(cfg.Log, cfg.Users),
+	)
+
+	root := browser
+
+	if cfg.APIKeys != nil {
+		// Making and revoking your own keys is a page, on the browser's
+		// chain, behind a session and nothing more: anybody with an account
+		// may make a key, and it reaches what they do.
+		apiapp.KeyRoutes(mux, apiapp.KeysConfig{
+			Log:     cfg.Log,
+			Keys:    cfg.APIKeys,
+			Render:  cfg.Render,
+			BaseURL: cfg.AdminBaseURL,
+		}, guard)
+	}
+
+	// The API, on a chain of its own, and the one place on this listener
+	// that is not behind the browser's.
+	//
+	// It is not behind SameOriginOnly or FormEncodedOnly because it posts
+	// JSON from programs, and it does not need them: both exist because a
+	// browser attaches the session cookie to a request somebody else's page
+	// started, and this chain never reads the cookie. mid.Bearer says why
+	// that is the property everything rests on.
+	//
+	// The permission gates are the same values the pages sit behind. A key
+	// is its account, and a route here is reachable by exactly the accounts
+	// that reach the matching page.
+	//
+	// Mounted only alongside the builder, because without somewhere to write
+	// a definition most of it would be routes whose every call fails.
+	if cfg.APIKeys != nil && cfg.Builder != nil {
+		api := http.NewServeMux()
+
+		apiapp.Routes(api, apiapp.Config{
+			Log:          cfg.Log,
+			Catalog:      cfg.Builder,
+			Grants:       cfg.Access,
+			Submissions:  cfg.Submissions,
+			EmbedBaseURL: cfg.EmbedBaseURL,
+		}, admins, results, creator)
+
+		// The same API as MCP tools, for a client like Claude that would
+		// rather call a tool than write a request. On this mux, so it is
+		// behind the same throttle and key; and handed this mux, so that
+		// each tool is a request through the same gates as the route it
+		// names. mcpapp says why it decides nothing of its own.
+		mcpapp.Routes(api, mcpapp.Config{Log: cfg.Log, API: api})
+
+		top := http.NewServeMux()
+
+		// Signing in through OAuth, which is how a claude.ai connector gets a
+		// key: it has nowhere to paste one. oauthapp says what each route sits
+		// behind and why. The page is on the browser's chain, behind a
+		// session; the token endpoint is called by Claude's servers, carries
+		// no cookie, and is beside the API instead, with a throttle of its
+		// own -- a handful of connections a day is the real rate.
+		//
+		// And the MCP endpoint's refusal says where to sign in, which is what
+		// makes a connector start. The plain API's does not: a script holding
+		// no key is not going to open a browser.
+		var challenge func(*http.Request) string
+
+		if cfg.OAuthClients != nil {
+			oc := oauthapp.Config{
+				Log:     cfg.Log,
+				Render:  cfg.Render,
+				Grants:  cfg.APIKeys,
+				Clients: cfg.OAuthClients,
+				BaseURL: cfg.AdminBaseURL,
+			}
+
+			oauthapp.Routes(mux, oc, guard)
+			mcpapp.ResourceRoutes(mux, cfg.AdminBaseURL)
+
+			top.Handle("POST "+oauthapp.TokenPath, web.Wrap(oauthapp.TokenHandler(oc),
+				web.Throttle(web.Throttling{
+					Rate: web.Rate{Burst: 10, Every: 6 * time.Second},
+					Key: func(r *http.Request) string {
+						return "oauth|" + web.IPBucket(web.ClientIP(r, cfg.TrustProxy))
+					},
+					Log: cfg.Log,
+				}),
+			))
+
+			signIn := mcpapp.Challenge(cfg.AdminBaseURL)
+
+			challenge = func(r *http.Request) string {
+				if r.URL.Path == mcpapp.Path {
+					return signIn
+				}
+
+				return `Bearer realm="api"`
+			}
+		}
+
+		top.Handle(apiapp.Prefix, web.Wrap(api,
+			// Ahead of the key, so that a flood is turned away before it
+			// costs a database read each. Two a second, after a burst of
+			// sixty, is more than a program building a form needs and far
+			// less than would trouble a single-writer database.
+			web.Throttle(web.Throttling{
+				Rate: web.Rate{Burst: 60, Every: 500 * time.Millisecond},
+				Key: func(r *http.Request) string {
+					return "api|" + web.IPBucket(web.ClientIP(r, cfg.TrustProxy))
+				},
+				Log: cfg.Log,
+				Refuse: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					mid.WriteJSONError(w, http.StatusTooManyRequests,
+						"That is faster than this service takes requests. Wait for the number of seconds in Retry-After and try again.")
+				}),
+			}),
+			mid.Bearer(cfg.Log, cfg.APIKeys, challenge),
+		))
+		top.Handle("/", browser)
+
+		root = top
+	}
+
+	return web.Wrap(root,
 		web.RequestID(),
 		web.Logging(cfg.Log),
 		web.Panics(cfg.Log),
 		web.SecureHeaders(page.AdminPolicy()),
-		web.SameOriginOnly(),
-
-		// Every write on this surface is a form this service rendered, and
-		// there is no upload anywhere in the management app -- so the set of
-		// content types it will parse is exactly one. On the chain here rather
-		// than per route, unlike the embed surface, because there is no
-		// webhook on this listener and therefore nothing to withhold it from.
-		web.FormEncodedOnly(),
-
-		// Below the header and origin gates, above every handler. It refuses
-		// nobody, which is what lets the sign-in pages live in the same chain
-		// as the account page they lead to.
-		mid.Authenticate(cfg.Log, cfg.Users),
 	), nil
 }
 

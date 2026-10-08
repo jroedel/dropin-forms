@@ -12,11 +12,13 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	"github.com/jroedel/dropin-forms/app/domain/apiapp"
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
 	"github.com/jroedel/dropin-forms/app/domain/feedapp"
 	"github.com/jroedel/dropin-forms/app/domain/formapp"
 	"github.com/jroedel/dropin-forms/app/domain/notifyapp"
+	"github.com/jroedel/dropin-forms/app/domain/oauthapp"
 	"github.com/jroedel/dropin-forms/app/domain/peopleapp"
 	"github.com/jroedel/dropin-forms/app/domain/siteapp"
 	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
@@ -24,6 +26,8 @@ import (
 	"github.com/jroedel/dropin-forms/app/sdk/page"
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/access/stores/accessdb"
+	"github.com/jroedel/dropin-forms/business/domain/apikey/apikeybus"
+	"github.com/jroedel/dropin-forms/business/domain/apikey/stores/apikeydb"
 	"github.com/jroedel/dropin-forms/business/domain/feed/feedbus"
 	"github.com/jroedel/dropin-forms/business/domain/feed/stores/feeddb"
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
@@ -39,6 +43,7 @@ import (
 	"github.com/jroedel/dropin-forms/business/domain/user/stores/userdb"
 	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/foundation/mail"
+	"github.com/jroedel/dropin-forms/foundation/oauth"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -178,6 +183,13 @@ func run() error {
 		return err
 	}
 
+	// The personal keys a program uses the API with, after userdb because a
+	// key belongs to an account and its row references one. apikeybus says
+	// why a service without credentials has these too.
+	if err := apikeydb.Init(ctx, db); err != nil {
+		return err
+	}
+
 	// The schema is checked once at startup as well as on every health
 	// request. Failing here means the process never begins serving, which is
 	// what should happen when a binary and a database disagree -- the deploy
@@ -189,7 +201,7 @@ func run() error {
 	expected := sqldb.Expected{}
 	for _, part := range []sqldb.Expected{
 		sqldb.Infrastructure, userdb.Expected, accessdb.Expected, submissiondb.Expected,
-		paydb.Expected, notifydb.Expected, formdb.Expected, feeddb.Expected,
+		paydb.Expected, notifydb.Expected, formdb.Expected, feeddb.Expected, apikeydb.Expected,
 	} {
 		for table, columns := range part {
 			if _, clash := expected[table]; clash {
@@ -280,7 +292,8 @@ func run() error {
 
 	adminPages, err := page.NewRenderer(log, page.AdminChrome(),
 		authapp.Templates, submissionapp.Templates, notifyapp.Templates, peopleapp.Templates,
-		formapp.Templates, willcallapp.Templates, siteapp.Templates, feedapp.Templates)
+		formapp.Templates, willcallapp.Templates, siteapp.Templates, feedapp.Templates, apiapp.Templates,
+		oauthapp.Templates)
 	if err != nil {
 		return err
 	}
@@ -309,6 +322,12 @@ func run() error {
 		Render:       adminPages,
 		AdminBaseURL: cfg.Server.AdminBaseURL,
 		Bootstrap:    cfg.Auth.BootstrapSecret,
+		APIKeys:      apikeybus.NewBusiness(log, apikeydb.NewStore(db), users),
+
+		// What lets a claude.ai connector sign in: the reader of the
+		// document a program names itself by. Its own timeout and no
+		// redirects followed; foundation/oauth says why.
+		OAuthClients: oauth.NewFetcher(nil),
 
 		Notify: notifier,
 

@@ -23,6 +23,13 @@ DirectoryIndex disabled
 RewriteEngine On
 
 # 1. Certificate renewal. Must be first.
+#
+# Except the two OAuth discovery documents, which are the app's: Claude reads
+# them to learn where to sign in (app/domain/oauthapp, app/domain/mcpapp), and
+# Apache has no file by either name. Named exactly, so the exception can never
+# reach the renewal challenge's path. The embed host has neither document and
+# answers 404 for both, which is right.
+RewriteCond %{REQUEST_URI} !^/\.well-known/oauth-(authorization-server|protected-resource)(/|$)
 RewriteCond %{REQUEST_URI} ^/\.well-known/ [NC]
 RewriteRule ^ - [L]
 

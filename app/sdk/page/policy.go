@@ -225,3 +225,28 @@ func frameAncestorList(frameAncestors FrameAncestorsFor, r *http.Request) string
 
 	return strings.Join(parts, " ")
 }
+
+// AllowFormTo lets the page about to be written send its form on to origin as
+// well as to this site.
+//
+// For the one page that needs it: where somebody agrees to let a program sign
+// in as them (oauthapp). Its form posts here, and the answer is a redirect
+// back to the program -- to claude.ai -- and Chrome applies form-action to
+// where a form's redirects lead as well as to where it posts. With 'self'
+// alone the person presses Allow and nothing happens. Widened for that page
+// and that one origin, which the handler has checked against the program's own
+// metadata document, rather than for every page.
+//
+// Carried over from /opt/projects/stewards' page.AllowFormTo, which found
+// this the hard way.
+func AllowFormTo(h http.Header, origin string) {
+	directives := strings.Split(h.Get("Content-Security-Policy"), ";")
+
+	for i, d := range directives {
+		if name, _, _ := strings.Cut(strings.TrimSpace(d), " "); name == "form-action" {
+			directives[i] = " " + strings.TrimSpace(d) + " " + origin
+		}
+	}
+
+	h.Set("Content-Security-Policy", strings.TrimSpace(strings.Join(directives, ";")))
+}

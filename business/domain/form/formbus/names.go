@@ -1,6 +1,7 @@
 package formbus
 
 import (
+	"fmt"
 	"slices"
 	"strconv"
 )
@@ -71,4 +72,83 @@ func (f *Form) Retire(name string) {
 	if !slices.Contains(f.Retired, name) {
 		f.Retired = append(f.Retired, name)
 	}
+}
+
+// Revise returns next as the definition that replaces was, with the two
+// guarantees above kept across a whole-document write.
+//
+// The builder changes a form one field at a time, and each of its handlers
+// keeps the rules for that one change: a new field is named, a removed one is
+// retired, and a kept one keeps its kind. A caller that hands over the whole
+// definition at once -- the API, which is how a program builds a form -- has
+// to have the same rules applied to the difference between two documents, and
+// this is where that difference is read, so that the rules stay in one
+// package rather than being re-derived by whoever wrote the next writer.
+//
+// So:
+//   - a field or item next leaves unnamed is given the name the builder would
+//     have given it, in the order they appear;
+//   - every field name and item id was had that next does not is retired, so
+//     that it is never handed out again;
+//   - Retired is was's, whatever next carried. It is a record of what this
+//     form has used, and a caller cannot un-use a name by leaving it out.
+//
+// And one refusal, as a [DefinitionError] so that it reaches whoever is
+// writing in the same shape as Check's problems: a field that keeps its name
+// and changes its kind. The builder's field page has no way to ask for that,
+// for the reason it gives -- answers already stored were checked as that
+// kind, and a question that has collected "yes" and "no" does not become a
+// date. A caller that wants a different kind removes the field and adds a new
+// one, which retires the old name.
+//
+// A name next gives explicitly that was had retired is not refused here. It is
+// refused by Check, which holds that invariant for every writer, and on a
+// draft it is one of the problems listed rather than a write that fails.
+func Revise(was, next Form) (Form, error) {
+	next.ID = was.ID
+	next.Fields = slices.Clone(next.Fields)
+	next.Items = slices.Clone(next.Items)
+	next.Retired = slices.Clone(was.Retired)
+
+	var problems []string
+
+	for _, old := range was.Fields {
+		now, kept := next.Field(old.Name)
+
+		switch {
+		case !kept:
+			next.Retire(old.Name)
+		case now.Kind != old.Kind:
+			problems = append(problems, fmt.Sprintf(
+				"the field %q is a %s and cannot become a %s; remove it and add a new field without a name instead",
+				old.Name, old.Kind, now.Kind))
+		}
+	}
+
+	for _, old := range was.Items {
+		if _, kept := next.Item(old.ID); !kept {
+			next.Retire(old.ID)
+		}
+	}
+
+	if len(problems) > 0 {
+		return Form{}, DefinitionError{FormID: was.ID.String(), Problems: problems}
+	}
+
+	// Named after the retirements, so that a name was used and next dropped
+	// is skipped -- and one at a time, so that two new text fields are
+	// text_1 and text_2 rather than both the smallest free number.
+	for i := range next.Fields {
+		if next.Fields[i].Name == "" && next.Fields[i].Kind.Known() {
+			next.Fields[i].Name = next.NextFieldName(next.Fields[i].Kind)
+		}
+	}
+
+	for i := range next.Items {
+		if next.Items[i].ID == "" {
+			next.Items[i].ID = next.NextItemID()
+		}
+	}
+
+	return next, nil
 }

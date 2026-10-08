@@ -145,7 +145,7 @@ func (a app) create(w http.ResponseWriter, r *http.Request) {
 	// service handles exactly one. A form that never sells anything carries it
 	// harmlessly; a form that does would otherwise be created broken and stay
 	// that way until somebody read the error.
-	f := formbus.Form{ID: slug, Title: said.Title, Currency: defaultCurrency}
+	f := formbus.Form{ID: slug, Title: said.Title, Currency: formbus.DefaultCurrency()}
 
 	now := time.Now()
 
@@ -177,11 +177,6 @@ func (a app) create(w http.ResponseWriter, r *http.Request) {
 
 	http.Redirect(w, r, "/forms/"+slug.String()+"/edit", http.StatusSeeOther)
 }
-
-// defaultCurrency is what a new form is created with. One, because
-// formbus.currencies holds one; the list there is the authority and this is
-// the starting value, not a second opinion about what is allowed.
-const defaultCurrency = "usd"
 
 // build is the builder's home page for one form.
 func (a app) build(w http.ResponseWriter, r *http.Request) {

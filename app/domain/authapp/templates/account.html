@@ -31,4 +31,11 @@ replaces any codes you already have.</p>
   <button type="submit">Generate backup codes</button>
 </form>
 {{end}}
+
+{{if .KeysPage}}
+<h2>API keys</h2>
+
+<p>An API key lets a program, such as Claude, build forms and read their
+answers as you. <a href="/account/keys">Make or revoke a key</a>.</p>
+{{end}}
 {{end}}

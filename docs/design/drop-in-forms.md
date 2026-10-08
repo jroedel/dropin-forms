@@ -2154,6 +2154,94 @@ and dropped: hiding a submission does not change it, so a script asking "what
 is new" would never hear that a row should go. At a parish form's size, all of
 it is a few kilobytes.
 
+### The API and the MCP endpoint, as built
+
+Somebody who builds a lot of forms wants to describe one and have Claude make
+it. Claude can write a whole definition at once far more easily than it can
+click through the builder. So the admin host now has a JSON API under
+`/api/v1/` and an MCP endpoint at `/api/mcp`. Both build forms and read their
+submissions, and `docs/api.md` is the reference, written to be handed to
+Claude.
+
+**Personal keys, and the second exception to "no credentials".** A program
+cannot hold a session, for the reason the spreadsheet feed could not. So any
+account can make a key on `/account/keys` (`dfa_`, shown once, stored as its
+SHA-256, as the feed's are). What keeps this from being the parent project's
+credential domain is that a key adds no authority. It has no scopes and no
+roles: it *is* its account, and every API route sits behind the same
+`RequireFormRole` / `RequireFormCreator` value as the matching page. It
+belongs to whoever made it, and only they list or revoke it. No administrator
+mints one for anybody. A disabled account's keys stop on the next request.
+And a key cannot make a key: that page is on the browser's chain, behind a
+session, so one leak cannot leave a second key behind. Last-used is written at
+most once a minute, because a program's burst of calls should not each be a
+write on a single-writer database.
+
+**A chain of its own.** The browser's chain begins with `SameOriginOnly` and
+`FormEncodedOnly`, and a JSON POST from a script fails both. Rather than punch
+a hole in either, the admin listener now splits at the top: `/api/` gets
+throttle → `mid.Bearer` → the same gates, and everything else gets the browser
+chain as before. The API needs no CSRF defence because `Bearer` never reads a
+cookie. A browser attaches a session cookie to a request another site started,
+but it never attaches an `Authorization` header the page did not set, and a
+cross-site page cannot set one here without a CORS preflight this service never
+answers. A test posts a cross-site JSON body with a valid session and no key,
+and expects 401. The gates now answer a key's request in JSON and name "this
+key belongs to …" rather than "you are signed in as …". Same sentence, different
+envelope.
+
+**A whole definition at a time.** The builder edits a field per request because
+a person does. The API takes and returns a whole definition, and
+`formbus.Revise` keeps the builder's per-edit rules across the difference
+between two documents. A question without a name gets the builder's name.
+One left out is retired. One that keeps its name cannot change its kind. The
+draft/live bargain is unchanged: a draft is stored as sent, with Check's
+problems listed in every answer, publishing runs Check, and a live form cannot
+be replaced by one that would not pass. Unknown keys are refused, so a misspelt
+`requried` is a 400 rather than a question nobody had to answer.
+
+**MCP as a thin adaptor.** Each tool is one request to the API mux, made inside
+the process with the MCP request's own context, so the principal `Bearer`
+established goes through the same gates into the same handlers. The tool's
+result is the API's answer verbatim. A refusal is `isError: true` with the
+reasons, which the model can read and act on, rather than a protocol error. The
+transport is Streamable HTTP in its smallest legal shape: POST only, a single
+JSON answer, no event stream, no session id. The tool schema for a definition
+is written by hand for its descriptions. A test fills in every key it names and
+sends it through the API, so a key the API does not read fails the build.
+
+**claude.ai connects by signing in.** A claude.ai custom connector has nowhere
+to paste a key, so the admin host is also an OAuth 2.1 authorization server
+for its own MCP endpoint. This is the stewards app's design (and its
+`foundation/oauth`, copied unchanged), and no dependency was added for it:
+- `/api/mcp` without a key answers `401` pointing at an RFC 9728 document.
+  That document names this host as the place to sign in.
+- `/oauth/authorize` is a page behind the session asking "Let Claude work as
+  you?". Allow mints a five-minute, single-use code bound to the client,
+  redirect and PKCE challenge.
+- `/oauth/token`, called by Claude's servers off the browser chain, trades
+  the code for an ordinary `dfa_` key.
+
+The key is given to that program, lasts ninety days and replaces any earlier
+key given to it. Like every key, it is listed and revoked on the key page.
+There is no Dynamic Client Registration and no refresh token. Clients are
+known by Client ID Metadata Documents, read only from claude.ai, claude.com
+and anthropic.com, which is what keeps the page from being a phishing form for
+any app that publishes a document.
+
+A refusal about the client or its redirect is shown here and never redirected,
+because that would be an open redirect. Every other refusal goes back to
+Claude. The page's CSP widens `form-action` to that one checked origin, or
+Allow silently does nothing in Chrome.
+
+Apache's `.well-known` rule, which keeps certificate renewal away from the
+app, now lets exactly the two OAuth documents through. Verified against the
+real binary with Claude Code's own metadata document, fetched from claude.ai.
+
+**Left out on purpose:** access management, hiding, the will-call table and
+feed keys. None was asked for, and each is a decision about other people's
+access or about the record of what was paid, better made on its own page.
+
 ## 10. Dependencies
 
 A dependency needs a comment naming the standard-library answer that was
