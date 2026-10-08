@@ -429,3 +429,38 @@ func TestTheHeadlineNumbersCountTheWholeMorning(t *testing.T) {
 		}
 	}
 }
+
+// The list leaves out what nobody has paid for until a box is ticked: the rows
+// are drawn, marked for the stylesheet to hide, and counted on the box.
+func TestTheListPutsUnpaidRowsBehindABox(t *testing.T) {
+	a := newAdmin(t, "")
+
+	paid := order(t, a, "Maria", 2, submissionbus.StatusPaid)
+	pending := order(t, a, "Tomas", 1, submissionbus.StatusPending)
+	failed := order(t, a, "Ana", 1, submissionbus.StatusFailed)
+
+	cookie := sessionFor(t, a, formAdmin(t, a, "boss@schoenstatt.test"))
+
+	body := a.get(t, "/forms/"+theForm+"/submissions", cookie).Body.String()
+
+	if !strings.Contains(body, `<label for="show-unpaid">Show the 2 not paid</label>`) {
+		t.Errorf("no box counting the two unpaid rows:\n%s", body)
+	}
+
+	row := func(body string, id types.ID) string {
+		t.Helper()
+
+		at := strings.Index(body, "/submissions/"+id.String()+`"`)
+		if at < 0 {
+			t.Fatalf("no row for %s", id)
+		}
+
+		return body[strings.LastIndex(body[:at], "<tr"):at]
+	}
+
+	for id, unpaid := range map[types.ID]bool{paid.ID: false, pending.ID: true, failed.ID: true} {
+		if got := strings.Contains(row(body, id), `class="unpaid"`); got != unpaid {
+			t.Errorf("row %s marked unpaid = %v, want %v", id, got, unpaid)
+		}
+	}
+}
