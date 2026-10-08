@@ -117,16 +117,21 @@ test-unit: ## Run unit tests, with the race detector
 # because both of them guard something that cannot be caught by a type.
 #
 # ensure-main was written after deploy.sh moved somebody's working tree and
-# then cancelled three deploys in an afternoon. The render test holds still
-# which Stripe keys reach the server, including that a live key in the test
-# slot is refused rather than charged.
+# then cancelled three deploys in an afternoon. The front-end test holds still
+# how a deploy installs each .htaccess -- only when it changed, keeping the
+# old one to put back -- after a release whose new .htaccess never reached the
+# server. The render test holds still which Stripe keys reach the server,
+# including that a live key in the test slot is refused rather than charged.
 #
-# Neither reaches the network or a server, and neither can: one runs in a
-# throwaway git repository with its dispatcher cut off, and the other calls
-# only `render`, whose whole contract is to print and touch nothing.
+# None reaches the network or a server, and none can: two run deploy.sh with
+# its dispatcher cut off -- one in a throwaway git repository, one with its
+# connections replaced by a temporary directory -- and the third calls only
+# `render`, whose whole contract is to print and touch nothing.
 .PHONY: shell-test
-shell-test: ## The shell tests: deploy.sh's branch guard, and what render writes
+shell-test: ## The shell tests: deploy.sh's branch guard and .htaccess install, and what render writes
 	@bash deploy/ensure-main-test.sh deploy/deploy.sh
+	@echo
+	@bash deploy/front-end-test.sh deploy/deploy.sh
 	@echo
 	@bash scripts/secrets-render-test.sh
 
