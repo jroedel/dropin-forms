@@ -210,11 +210,12 @@ type Config struct {
 	// testable on its own.
 	TrustProxy bool
 
-	// AdminBaseURL is the admin surface's own origin, used to build the link
-	// that goes in a sign-in email. Configured rather than taken from the
-	// request: a link built from a Host header is one an attacker can aim at
-	// their own host by sending a single request, and the person who receives
-	// the mail cannot tell.
+	// AdminBaseURL is the admin surface's own origin, used to build the
+	// addresses it hands out -- an invitation's link to the sign-in page, a
+	// spreadsheet feed's URL.
+	// Configured rather than taken from the request: a link built from a Host
+	// header is one an attacker can aim at their own host by sending a single
+	// request, and the person who receives the mail cannot tell.
 	AdminBaseURL string
 
 	// Bootstrap is the one-time sign-in secret. Empty leaves those routes
@@ -370,7 +371,7 @@ func Admin(cfg Config) (http.Handler, error) {
 	case cfg.Mail == nil:
 		return nil, errors.New("the admin surface needs somewhere to send mail, even if that is a recorder")
 	case cfg.AdminBaseURL == "":
-		return nil, errors.New("the admin surface needs its own base URL, which is what goes into a sign-in email")
+		return nil, errors.New("the admin surface needs its own base URL, which is what the addresses it hands out are built from")
 	}
 
 	mux := http.NewServeMux()
@@ -410,7 +411,6 @@ func Admin(cfg Config) (http.Handler, error) {
 		Access:    cfg.Access,
 		Mail:      cfg.Mail,
 		Render:    cfg.Render,
-		BaseURL:   cfg.AdminBaseURL,
 		Bootstrap: cfg.Bootstrap,
 
 		// Which is what the sign-in throttle counts. The default rate applies

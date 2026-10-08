@@ -126,14 +126,32 @@ func TestRequestSignInSaysNothingAboutWhoExists(t *testing.T) {
 				t.Errorf("Sendable() = %v, want %v", req.Sendable(), tt.sendable)
 			}
 
-			if !tt.sendable && req.Secret != "" {
-				t.Error("there is a secret to send for an account that cannot receive one")
+			if !tt.sendable && req.Code != "" {
+				t.Error("there is a code to send for an account that cannot receive one")
 			}
 			if tt.sendable && req.User.ID != known.ID {
 				t.Errorf("the request names %q, want the known account", req.User.ID)
 			}
 		})
 	}
+}
+
+// signIn signs u in the ordinary way, by the code in the mail, and returns the
+// session.
+func signIn(t *testing.T, b *userbus.Business, u userbus.User) string {
+	t.Helper()
+
+	req, err := b.RequestSignIn(t.Context(), now, u.Email)
+	if err != nil {
+		t.Fatalf("RequestSignIn: %v", err)
+	}
+
+	_, cookie, err := b.SignInWithCode(t.Context(), now, u.Email, req.Code)
+	if err != nil {
+		t.Fatalf("SignInWithCode: %v", err)
+	}
+
+	return cookie
 }
 
 func TestSignIn(t *testing.T) {
@@ -145,16 +163,16 @@ func TestSignIn(t *testing.T) {
 		t.Fatalf("RequestSignIn: %v", err)
 	}
 
-	got, cookie, err := b.SignIn(t.Context(), now, req.Secret)
+	got, cookie, err := b.SignInWithCode(t.Context(), now, u.Email, req.Code)
 	if err != nil {
-		t.Fatalf("SignIn: %v", err)
+		t.Fatalf("SignInWithCode: %v", err)
 	}
 
 	if got.ID != u.ID {
 		t.Errorf("signed in as %q, want %q", got.ID, u.ID)
 	}
 	if cookie == "" {
-		t.Fatal("SignIn returned no session")
+		t.Fatal("SignInWithCode returned no session")
 	}
 
 	// The session works.
@@ -166,17 +184,11 @@ func TestSignIn(t *testing.T) {
 		t.Errorf("the session belongs to %q, want %q", who.ID, u.ID)
 	}
 
-	// Single use. This is the property the whole token table exists for.
-	if _, _, err := b.SignIn(t.Context(), now, req.Secret); !errors.Is(err, userbus.ErrDenied) {
-		t.Errorf("a sign-in link worked twice: %v", err)
-	}
-
-	// Neither the link nor the cookie is recoverable from storage.
-	linkSecret := req.Secret[strings.Index(req.Secret, ".")+1:]
+	// Neither the code nor the cookie is recoverable from storage.
 	cookieSecret := cookie[strings.Index(cookie, ".")+1:]
 
 	for _, stored := range store.storedSecrets() {
-		for _, secret := range []string{linkSecret, cookieSecret} {
+		for _, secret := range []string{req.Code, cookieSecret} {
 			if strings.Contains(stored, secret) {
 				t.Error("a secret was stored, not just its hash")
 			}
@@ -184,100 +196,7 @@ func TestSignIn(t *testing.T) {
 	}
 }
 
-func TestSignInRefuses(t *testing.T) {
-	b, _ := newBusiness(t)
-	u := mustCreate(t, b, "frjeff@schoenstatt.us")
-
-	fresh := func(t *testing.T) string {
-		t.Helper()
-
-		req, err := b.RequestSignIn(t.Context(), now, u.Email)
-		if err != nil {
-			t.Fatalf("RequestSignIn: %v", err)
-		}
-
-		return req.Secret
-	}
-
-	valid := fresh(t)
-	id, secret, _ := strings.Cut(valid, ".")
-
-	tests := []struct {
-		name string
-		at   time.Time
-		give func(t *testing.T) string
-	}{
-		{name: "blank", give: func(*testing.T) string { return "" }},
-		{name: "no separator", give: func(*testing.T) string { return id + secret }},
-		{name: "not an identifier", give: func(*testing.T) string { return "nonsense." + secret }},
-		{name: "an identifier with no secret", give: func(*testing.T) string { return id + "." }},
-		{name: "a secret too short to be one", give: func(*testing.T) string { return id + ".abc" }},
-
-		{
-			name: "a wrong secret against a real identifier",
-			give: func(t *testing.T) string { return fresh(t)[:33] + strings.Repeat("A", 26) },
-		},
-		{
-			name: "a real secret against a wrong identifier",
-			give: func(t *testing.T) string {
-				_, s, _ := strings.Cut(fresh(t), ".")
-
-				return types.NewID().String() + "." + s
-			},
-		},
-		{
-			name: "two credentials joined together",
-			give: func(t *testing.T) string { return fresh(t) + "." + fresh(t) },
-		},
-
-		{
-			name: "expired by one second",
-			at:   now.Add(15 * time.Minute),
-			give: fresh,
-		},
-		{
-			name: "expired by a day",
-			at:   now.Add(24 * time.Hour),
-			give: fresh,
-		},
-		{
-			name: "already used",
-			give: func(t *testing.T) string {
-				s := fresh(t)
-				if _, _, err := b.SignIn(t.Context(), now, s); err != nil {
-					t.Fatalf("the first use failed: %v", err)
-				}
-
-				return s
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			at := tt.at
-			if at.IsZero() {
-				at = now
-			}
-
-			user, cookie, err := b.SignIn(t.Context(), at, tt.give(t))
-
-			// One error for every failure. The app layer cannot leak which
-			// half was wrong because it is never told.
-			if !errors.Is(err, userbus.ErrDenied) {
-				t.Errorf("SignIn returned %v, want ErrDenied", err)
-			}
-			if cookie != "" {
-				t.Error("a refused sign-in handed back a session")
-			}
-			if !user.ID.Zero() || user.Enabled {
-				t.Errorf("a refused sign-in handed back an account: %+v", user)
-			}
-		})
-	}
-}
-
-// A link used at the last moment before expiry must work, or the window is
+// A code used at the last moment before expiry must work, or the window is
 // really one second shorter than it says.
 func TestSignInAtTheEdgeOfTheWindow(t *testing.T) {
 	b, _ := newBusiness(t)
@@ -289,13 +208,13 @@ func TestSignInAtTheEdgeOfTheWindow(t *testing.T) {
 	}
 
 	justInside := now.Add(15*time.Minute - time.Nanosecond)
-	if _, _, err := b.SignIn(t.Context(), justInside, req.Secret); err != nil {
-		t.Errorf("a link used just inside its window was refused: %v", err)
+	if _, _, err := b.SignInWithCode(t.Context(), justInside, u.Email, req.Code); err != nil {
+		t.Errorf("a code used just inside its window was refused: %v", err)
 	}
 }
 
-// Two requests holding the same link must not both succeed. This is what the
-// atomic claim in Storer is for, and a SELECT-then-UPDATE would fail it.
+// Two requests holding the same code must not both succeed. This is what the
+// atomic claims in Storer are for, and a SELECT-then-UPDATE would fail it.
 func TestSignInIsSingleUseUnderConcurrency(t *testing.T) {
 	b, _ := newBusiness(t)
 	u := mustCreate(t, b, "frjeff@schoenstatt.us")
@@ -321,7 +240,7 @@ func TestSignInIsSingleUseUnderConcurrency(t *testing.T) {
 		wg.Go(func() {
 			start.Wait()
 
-			_, cookie, err := b.SignIn(t.Context(), now, req.Secret)
+			_, cookie, err := b.SignInWithCode(t.Context(), now, u.Email, req.Code)
 
 			mu.Lock()
 			defer mu.Unlock()
@@ -341,7 +260,7 @@ func TestSignInIsSingleUseUnderConcurrency(t *testing.T) {
 	wg.Wait()
 
 	if len(sessions) != 1 {
-		t.Errorf("%d of %d racing requests each got a session; a sign-in link must be spendable once", len(sessions), racers)
+		t.Errorf("%d of %d racing requests each got a session; a sign-in code must be spendable once", len(sessions), racers)
 	}
 	if denied != racers-1 {
 		t.Errorf("%d requests were denied, want %d", denied, racers-1)
@@ -593,15 +512,7 @@ func TestAuthenticate(t *testing.T) {
 	b, store := newBusiness(t)
 	u := mustCreate(t, b, "frjeff@schoenstatt.us")
 
-	req, err := b.RequestSignIn(t.Context(), now, u.Email)
-	if err != nil {
-		t.Fatalf("RequestSignIn: %v", err)
-	}
-
-	_, cookie, err := b.SignIn(t.Context(), now, req.Secret)
-	if err != nil {
-		t.Fatalf("SignIn: %v", err)
-	}
+	cookie := signIn(t, b, u)
 
 	id, secret, _ := strings.Cut(cookie, ".")
 
@@ -662,23 +573,7 @@ func TestSignOut(t *testing.T) {
 	b, _ := newBusiness(t)
 	u := mustCreate(t, b, "frjeff@schoenstatt.us")
 
-	signIn := func(t *testing.T) string {
-		t.Helper()
-
-		req, err := b.RequestSignIn(t.Context(), now, u.Email)
-		if err != nil {
-			t.Fatalf("RequestSignIn: %v", err)
-		}
-
-		_, cookie, err := b.SignIn(t.Context(), now, req.Secret)
-		if err != nil {
-			t.Fatalf("SignIn: %v", err)
-		}
-
-		return cookie
-	}
-
-	one, two := signIn(t), signIn(t)
+	one, two := signIn(t, b, u), signIn(t, b, u)
 
 	if err := b.SignOut(t.Context(), one); err != nil {
 		t.Fatalf("SignOut: %v", err)

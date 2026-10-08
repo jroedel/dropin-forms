@@ -197,89 +197,19 @@ func TestUsersAreOrderedOldestFirst(t *testing.T) {
 	}
 }
 
-func TestTokenRoundTripAndSingleUse(t *testing.T) {
-	_, s := open(t)
-	u := mustUser(t, s, "frjeff@schoenstatt.us")
-
-	want := userbus.Token{
-		ID:        types.NewID(),
-		UserID:    u.ID,
-		Hash:      []byte("a thirty-two byte hash goes here"),
-		CreatedAt: now,
-		ExpiresAt: now.Add(15 * time.Minute),
-	}
-
-	if err := s.CreateToken(t.Context(), want); err != nil {
-		t.Fatalf("CreateToken: %v", err)
-	}
-
-	got, err := s.TokenByID(t.Context(), want.ID)
-	if err != nil {
-		t.Fatalf("TokenByID: %v", err)
-	}
-
-	switch {
-	case got.UserID != u.ID:
-		t.Errorf("UserID = %q, want %q", got.UserID, u.ID)
-	case string(got.Hash) != string(want.Hash):
-		t.Errorf("Hash = %q, want %q", got.Hash, want.Hash)
-	case !got.ExpiresAt.Equal(want.ExpiresAt):
-		t.Errorf("ExpiresAt = %s, want %s", got.ExpiresAt, want.ExpiresAt)
-
-	// The zero time must come back as the zero time. It is stored as NULL,
-	// and a sentinel like the Unix epoch would compare as "used in 1970".
-	case !got.UsedAt.IsZero():
-		t.Errorf("UsedAt = %s, want the zero time for an unused link", got.UsedAt)
-	}
-
-	claimed, err := s.UseToken(t.Context(), want.ID, now)
-	switch {
-	case err != nil:
-		t.Fatalf("UseToken: %v", err)
-	case !claimed:
-		t.Fatal("UseToken did not claim an unused link")
-	}
-
-	again, err := s.UseToken(t.Context(), want.ID, now)
-	switch {
-	case err != nil:
-		t.Fatalf("UseToken: %v", err)
-	case again:
-		t.Error("UseToken claimed a link that had already been spent")
-	}
-
-	got, err = s.TokenByID(t.Context(), want.ID)
-	if err != nil {
-		t.Fatalf("TokenByID: %v", err)
-	}
-	if !got.UsedAt.Equal(now) {
-		t.Errorf("UsedAt = %s, want %s", got.UsedAt, now)
-	}
-
-	if _, err := s.TokenByID(t.Context(), types.NewID()); !errors.Is(err, userbus.ErrNotFound) {
-		t.Errorf("TokenByID for an absent link returned %v, want ErrNotFound", err)
-	}
-
-	// Claiming something that is not there is false rather than an error:
-	// indistinguishable from losing the race, which is what the caller needs.
-	if claimed, err := s.UseToken(t.Context(), types.NewID(), now); err != nil || claimed {
-		t.Errorf("UseToken on an absent link = %v, %v; want false, nil", claimed, err)
-	}
-}
-
 // The property userbus.Storer documents and that a SELECT-then-UPDATE would
 // fail. Real SQLite this time rather than a mutex in a test double.
-func TestUseTokenIsClaimedOnceUnderConcurrency(t *testing.T) {
+func TestUseSignInCodeIsClaimedOnceUnderConcurrency(t *testing.T) {
 	_, s := open(t)
 	u := mustUser(t, s, "frjeff@schoenstatt.us")
 
 	id := types.NewID()
 
-	if err := s.CreateToken(t.Context(), userbus.Token{
+	if err := s.CreateSignInCode(t.Context(), userbus.SignInCode{
 		ID: id, UserID: u.ID, Hash: []byte("hash"),
 		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}); err != nil {
-		t.Fatalf("CreateToken: %v", err)
+		t.Fatalf("CreateSignInCode: %v", err)
 	}
 
 	const racers = 20
@@ -297,13 +227,13 @@ func TestUseTokenIsClaimedOnceUnderConcurrency(t *testing.T) {
 		wg.Go(func() {
 			start.Wait()
 
-			claimed, err := s.UseToken(t.Context(), id, now)
+			claimed, err := s.UseSignInCode(t.Context(), id, now)
 
 			mu.Lock()
 			defer mu.Unlock()
 
 			if err != nil {
-				t.Errorf("UseToken: %v", err)
+				t.Errorf("UseSignInCode: %v", err)
 
 				return
 			}
@@ -523,13 +453,13 @@ func TestDeletingAnAccountRemovesItsCredentials(t *testing.T) {
 	db, s := open(t)
 	u := mustUser(t, s, "frjeff@schoenstatt.us")
 
-	tokenID, sessionID := types.NewID(), types.NewID()
+	sessionID := types.NewID()
 
-	if err := s.CreateToken(t.Context(), userbus.Token{
-		ID: tokenID, UserID: u.ID, Hash: []byte("h"),
+	if err := s.CreateSignInCode(t.Context(), userbus.SignInCode{
+		ID: types.NewID(), UserID: u.ID, Hash: []byte("h"),
 		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}); err != nil {
-		t.Fatalf("CreateToken: %v", err)
+		t.Fatalf("CreateSignInCode: %v", err)
 	}
 	if err := s.CreateSession(t.Context(), userbus.Session{
 		ID: sessionID, UserID: u.ID, Hash: []byte("h"),
@@ -547,8 +477,8 @@ func TestDeletingAnAccountRemovesItsCredentials(t *testing.T) {
 		t.Fatalf("deleting the account: %v", err)
 	}
 
-	if _, err := s.TokenByID(t.Context(), tokenID); !errors.Is(err, userbus.ErrNotFound) {
-		t.Errorf("the sign-in link outlived the account: %v", err)
+	if _, err := s.LatestSignInCode(t.Context(), u.ID); !errors.Is(err, userbus.ErrNotFound) {
+		t.Errorf("the sign-in code outlived the account: %v", err)
 	}
 	if _, err := s.SessionByID(t.Context(), sessionID); !errors.Is(err, userbus.ErrNotFound) {
 		t.Errorf("the session outlived the account: %v", err)
@@ -563,12 +493,12 @@ func TestDeletingAnAccountRemovesItsCredentials(t *testing.T) {
 	}
 
 	// And a credential cannot be created for an account that never existed.
-	err = s.CreateToken(t.Context(), userbus.Token{
+	err = s.CreateSignInCode(t.Context(), userbus.SignInCode{
 		ID: types.NewID(), UserID: types.NewID(), Hash: []byte("h"),
 		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	})
 	if err == nil {
-		t.Error("a sign-in link was created for an account that does not exist")
+		t.Error("a sign-in code was created for an account that does not exist")
 	}
 }
 
@@ -594,47 +524,33 @@ func TestExpiryComparesCorrectlyAcrossFractionalSeconds(t *testing.T) {
 	early, late := types.NewID(), types.NewID()
 
 	for id, expiry := range map[types.ID]time.Time{early: earlier, late: later} {
-		if err := s.CreateToken(t.Context(), userbus.Token{
+		if err := s.CreateSession(t.Context(), userbus.Session{
 			ID: id, UserID: u.ID, Hash: []byte("h"),
-			CreatedAt: base.Add(-time.Hour), ExpiresAt: expiry,
+			CreatedAt: base.Add(-time.Hour), ExpiresAt: expiry, LastSeenAt: base.Add(-time.Hour),
 		}); err != nil {
-			t.Fatalf("CreateToken: %v", err)
+			t.Fatalf("CreateSession: %v", err)
 		}
 	}
 
-	// A cutoff between the two: the earlier link is expired, the later is not.
+	// A cutoff between the two: the earlier session is expired, the later is
+	// not.
 	cutoff := base.Add(250 * time.Millisecond)
 
 	if err := s.PruneExpired(t.Context(), cutoff); err != nil {
 		t.Fatalf("PruneExpired: %v", err)
 	}
 
-	if _, err := s.TokenByID(t.Context(), early); !errors.Is(err, userbus.ErrNotFound) {
-		t.Errorf("the expired link survived pruning: %v", err)
+	if _, err := s.SessionByID(t.Context(), early); !errors.Is(err, userbus.ErrNotFound) {
+		t.Errorf("the expired session survived pruning: %v", err)
 	}
-	if _, err := s.TokenByID(t.Context(), late); err != nil {
-		t.Errorf("a link that had not expired was pruned: %v", err)
+	if _, err := s.SessionByID(t.Context(), late); err != nil {
+		t.Errorf("a session that had not expired was pruned: %v", err)
 	}
 }
 
 func TestPruneExpired(t *testing.T) {
 	_, s := open(t)
 	u := mustUser(t, s, "frjeff@schoenstatt.us")
-
-	live, dead := types.NewID(), types.NewID()
-
-	if err := s.CreateToken(t.Context(), userbus.Token{
-		ID: live, UserID: u.ID, Hash: []byte("h"),
-		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
-	}); err != nil {
-		t.Fatalf("CreateToken: %v", err)
-	}
-	if err := s.CreateToken(t.Context(), userbus.Token{
-		ID: dead, UserID: u.ID, Hash: []byte("h"),
-		CreatedAt: now.Add(-2 * time.Hour), ExpiresAt: now.Add(-time.Hour),
-	}); err != nil {
-		t.Fatalf("CreateToken: %v", err)
-	}
 
 	liveSession, deadSession := types.NewID(), types.NewID()
 
@@ -654,12 +570,6 @@ func TestPruneExpired(t *testing.T) {
 		t.Fatalf("PruneExpired: %v", err)
 	}
 
-	if _, err := s.TokenByID(t.Context(), live); err != nil {
-		t.Errorf("a live link was pruned: %v", err)
-	}
-	if _, err := s.TokenByID(t.Context(), dead); !errors.Is(err, userbus.ErrNotFound) {
-		t.Errorf("an expired link survived: %v", err)
-	}
 	if _, err := s.SessionByID(t.Context(), liveSession); err != nil {
 		t.Errorf("a live session was pruned: %v", err)
 	}
@@ -695,8 +605,9 @@ func TestAStoredRowThatCannotBeParsedIsRefused(t *testing.T) {
 }
 
 // The SQL behind the sign-in code rules: which code is the newest, the
-// reservation that bounds the attempts, the arithmetic of the daily count, and
-// a code outliving its link by the window it is counted over.
+// reservation that bounds the attempts, the claim that spends one, the
+// arithmetic of the wrong-code count, and a code outliving its expiry by the
+// window it is counted over.
 func TestSignInCodes(t *testing.T) {
 	_, s := open(t)
 	u := mustUser(t, s, "frjeff@schoenstatt.us")
@@ -710,7 +621,7 @@ func TestSignInCodes(t *testing.T) {
 		t.Helper()
 
 		c := userbus.SignInCode{
-			TokenID:   types.NewID(),
+			ID:        types.NewID(),
 			UserID:    who,
 			Hash:      []byte("a thirty-two byte hash goes here"),
 			CreatedAt: now,
@@ -733,14 +644,14 @@ func TestSignInCodes(t *testing.T) {
 	switch {
 	case err != nil:
 		t.Fatalf("LatestSignInCode: %v", err)
-	case got.TokenID != second.TokenID:
-		t.Errorf("newest = %s, want the second (%s), not the first (%s)", got.TokenID, second.TokenID, first.TokenID)
+	case got.ID != second.ID:
+		t.Errorf("newest = %s, want the second (%s), not the first (%s)", got.ID, second.ID, first.ID)
 	case got.Tries != 0 || !got.UsedAt.IsZero() || !got.ExpiresAt.Equal(second.ExpiresAt):
 		t.Errorf("newest = %+v", got)
 	}
 
 	for i := range 4 {
-		ok, err := s.TrySignInCode(t.Context(), second.TokenID, 3)
+		ok, err := s.TrySignInCode(t.Context(), second.ID, 3)
 
 		switch {
 		case err != nil:
@@ -750,13 +661,15 @@ func TestSignInCodes(t *testing.T) {
 		}
 	}
 
-	if _, err := s.TrySignInCode(t.Context(), first.TokenID, 3); err != nil {
+	if _, err := s.TrySignInCode(t.Context(), first.ID, 3); err != nil {
 		t.Fatalf("TrySignInCode: %v", err)
 	}
 
-	// Four attempts, one of which signed somebody in.
-	if err := s.UseSignInCode(t.Context(), first.TokenID, now); err != nil {
-		t.Fatalf("UseSignInCode: %v", err)
+	// Four attempts, one of which signed somebody in -- once.
+	for i, want := range []bool{true, false} {
+		if claimed, err := s.UseSignInCode(t.Context(), first.ID, now); err != nil || claimed != want {
+			t.Errorf("UseSignInCode #%d = %v, %v; want %v", i+1, claimed, err, want)
+		}
 	}
 
 	for since, want := range map[time.Time]int{

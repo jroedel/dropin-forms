@@ -161,8 +161,8 @@ func TestGivingAccessToANewAddressMakesAnAccountAndTellsThem(t *testing.T) {
 		// address is typed, because saying anything else would say which
 		// addresses have accounts.
 		t.Errorf("the invitation does not carry the address to sign in with:\n%s", m.Text)
-	case strings.Contains(m.Text, "/signin/link?t="):
-		t.Errorf("the invitation carries a sign-in token, which expires long before it is read:\n%s", m.Text)
+	case codePattern.MatchString(m.Text):
+		t.Errorf("the invitation carries a sign-in code, which expires long before it is read:\n%s", m.Text)
 	}
 
 	// And the page that answered says who, so nobody has to reload to find

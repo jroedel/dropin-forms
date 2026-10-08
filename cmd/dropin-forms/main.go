@@ -478,14 +478,14 @@ func newPayments(log *slog.Logger, cfg config, db *sql.DB, submissions *submissi
 //
 // With no relay configured it records messages instead of sending them, and
 // says so loudly rather than failing to start. That combination is deliberate:
-// this service's only ordinary way in is an emailed link, so a developer
+// this service's only ordinary way in is an emailed code, so a developer
 // running it locally needs it to come up without a relay -- and an operator
 // who has forgotten to configure one needs to find out from a line in the log
 // rather than from somebody reporting that no mail arrives.
 func newSender(log *slog.Logger, cfg config) (mail.Sender, string, error) {
 	if cfg.Mail.Host == "" {
 		log.Warn("no mail relay is configured, so no mail will be sent",
-			"consequence", "sign-in links cannot arrive; use auth.bootstrap_secret or a backup code")
+			"consequence", "sign-in codes cannot arrive; use auth.bootstrap_secret or a backup code")
 
 		return &mail.Recorder{}, "recorded, not sent", nil
 	}

@@ -586,8 +586,8 @@ neither `f.` nor `forms.` can send as itself. The mailbox is therefore
 **`forms@schoenstatt.link`** — an address at the zone apex, whose MX is the
 same managed host and whose SPF and DKIM already pass. That matters more
 than it sounds: mail sent direct from a small host lands in spam, and since
-magic-link login is the only way into the management app, spam-foldered mail
-means nobody can log in.
+an emailed sign-in code is the only ordinary way into the management app,
+spam-foldered mail means nobody can log in.
 
 Outbound mail is `net/smtp` and `mime/multipart` from the standard library,
 through that authenticated relay.
@@ -730,7 +730,7 @@ app/sdk/mid/                             Authenticate, Require, RequireGrant, Re
 app/sdk/page/                            shared chrome, <head>, the per-form CSP builder
 app/domain/embedapp/                     render /f/{slug}, accept POST, embed.js
 app/domain/paymentapp/                   Checkout session + the Stripe webhook
-app/domain/authapp/                      magic-link request and sign-in
+app/domain/authapp/                      sign-in code request and sign-in
 app/domain/submissionapp/                read submissions, CSV export
 app/domain/formapp/                      the visual builder
 business/domain/form/formbus/            definition, rules, Validate, total, versions
@@ -738,7 +738,7 @@ business/domain/form/stores/formdb/
 business/domain/submission/submissionbus/
 business/domain/submission/stores/submissiondb/
 business/domain/payment/paybus/          Checkout sessions, webhook events
-business/domain/user/userbus/            accounts, magic-link tokens, backup codes
+business/domain/user/userbus/            accounts, sign-in codes, backup codes
 business/domain/submission/submissionbus/ accepted submissions and status
 business/domain/submission/stores/submissiondb/ one JSON column and a nonce table
 business/domain/access/accessbus/        per-form role grants
@@ -786,25 +786,29 @@ Two gaps in the inherited `foundation/web` to fix while bootstrapping:
 
 ### Auth and per-form roles
 
-- **`userbus`** — accounts, magic-link tokens (single-use, ~15-minute expiry,
-  stored hashed), and ten single-use hashed backup codes for when mail is down.
+- **`userbus`** — accounts, emailed six-digit sign-in codes (single-use,
+  15-minute expiry, stored hashed), and ten single-use hashed backup codes for
+  when mail is down.
 - **A one-time bootstrap sign-in secret in `config.toml`**, so the first session
   does not depend on mail working. Consumed once, then inert. Its whole job is to
   make a mail misconfiguration recoverable rather than fatal in the week before
   the feast.
-- **The emailed link must not sign you in on `GET`.** Mail scanners and link
-  previewers prefetch URLs and would burn the token before the person clicks. The
-  link opens a page with a "Sign in" button that **POSTs** the token.
-- **The same mail carries a six-digit code** (added later), typed on the page
-  that said to check your email, because the link opens in whichever browser
-  the mail app picks and that is often not the one somebody was signing in on.
-  The mail is worded the way Gmail recognises a verification code, so it offers
-  "Copy code". Six digits are guessable where the link is not, so only the
-  newest code for an account works, each allows five attempts reserved before
-  comparing, and an account allows fifteen wrong codes a day; past that, codes
-  stop working and the link and backup codes do not. The code and the link
-  redeem one token, so either spends both. `userbus/code.go` has the reasoning,
-  including what a hash of six digits does not protect.
+- **Sign-in is a six-digit code, and there is no sign-in link.** The plan was
+  a magic link, and that is what was built first; it was retired for a code
+  typed on the page that said to check your email, which is now the standard
+  for the Schoenstatt Fathers apps. A link opens in whichever browser the mail
+  app picks, often not the one somebody was signing in on; a code carries
+  across devices, and a mail worded like a verification code gets Gmail's
+  "Copy code" button. It also retired a whole mechanism: a link had to open a
+  page with a button that **POSTed** the token, because mail scanners and link
+  previewers fetch URLs before anybody clicks, and nothing fetches six digits.
+- **Six digits are guessable, so the guessing is bounded.** Only the newest code
+  for an account works, each allows five attempts reserved before comparing,
+  and an account allows ten wrong codes an hour. The hour is short on purpose:
+  with no link to fall back on, a stranger's guessing that spends the budget
+  keeps the account holder out too, and the backup codes are the way in
+  meanwhile. `userbus/code.go` has the reasoning, including what a hash of six
+  digits does not protect.
 - Rate-limit per address, and answer identically whether or not the address
   exists, or the login form is an account-enumeration oracle.
 - **"Answer identically" includes when sending the mail fails**, and that is a
@@ -1471,7 +1475,8 @@ anybody clicks, so a link that unsubscribed on GET would be spent by software
 on its way to the person -- and the symptom is the worst kind: notifications
 that simply stop, for no reason anybody can see, with nothing in a log that
 looks wrong. The GET renders a page with a button and the POST does the work,
-which is the same split the emailed sign-in link uses and for the same reason.
+which is the split the emailed sign-in link used, for the same reason, until
+sign-in became a code.
 `TestOpeningTheUnsubscribeLinkChangesNothing` opens the link twice and asserts
 the preference is untouched.
 
@@ -1582,15 +1587,15 @@ account into existence by trying to sign in; and with the bootstrap route
 unmounted there is no other door. Every account after the first is somebody
 already administering a form typing an address.
 
-**The invitation is not a sign-in link.** The obvious message carries a link
+**The invitation carries no way in.** The obvious message carries something
 that signs the person in, and it would usually be dead on arrival: sign-in
-tokens last fifteen minutes, which is right for one somebody asked for thirty
+codes last fifteen minutes, which is right for one somebody asked for thirty
 seconds ago and wrong for one sent to a volunteer who reads their email that
-evening. A dead link looks like a broken service rather than an expired
-credential. Minting a longer-lived token for this one case would be a second
-credential lifetime to reason about, sitting in a mailbox indefinitely. So the
-invitation names the sign-in page and the person asks for their own link, which
-is always fresh when they use it.
+evening. A dead credential looks like a broken service rather than an expired
+one. Minting a longer-lived one for this case would be a second credential
+lifetime to reason about, sitting in a mailbox indefinitely. So the invitation
+names the sign-in page and the person asks for their own code, which is always
+fresh when they use it.
 
 **The address travels in that link**, as `?email=`, and the sign-in page fills
 its field in from it. Most people have more than one address, and choosing the
@@ -2167,7 +2172,7 @@ the five steps to install it.
 
 **A key, on a service that left key management behind.** CLAUDE.md says so,
 and this is a deliberate, narrow exception. A sheet's script cannot hold a
-session: it cannot follow an emailed sign-in link, and it would have to every
+session: it cannot read an emailed sign-in code, and it would have to every
 fourteen days. What keeps it narrow is what a key cannot do. It reads one form
 and is refused on every other. It writes nothing: no route anywhere accepts a
 key for a write. It has no scopes, no roles and no expiry. An administrator

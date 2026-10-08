@@ -15,14 +15,15 @@
 // some fraction of rows. A fixed-width text layout would fix it; integers
 // avoid the question, sort correctly by construction, and cost nothing.
 //
-// # The three atomic claims
+// # The four atomic claims
 //
-// UseToken, UseBackupCode and ClaimBootstrap are each one statement whose
-// WHERE clause only matches an unclaimed row, and each reports whether it was
-// the statement that matched. That is the contract userbus.Storer documents,
-// and it is the reason those three do not read the row first: a SELECT
-// followed by an UPDATE lets two simultaneous requests both see an unused
-// sign-in link and both succeed, which is the single-use property gone.
+// TrySignInCode, UseSignInCode, UseBackupCode and ClaimBootstrap are each one
+// statement whose WHERE clause only matches an unclaimed row, and each reports
+// whether it was the statement that matched. That is the contract
+// userbus.Storer documents, and it is the reason those four do not read the
+// row first: a SELECT followed by an UPDATE lets two simultaneous requests
+// both see an unused sign-in code and both succeed, which is the single-use
+// property gone.
 package userdb
 
 import (
@@ -60,12 +61,11 @@ func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 // will read. A column missing from the database is a startup failure rather
 // than a 500 in front of somebody trying to sign in.
 var Expected = sqldb.Expected{
-	"users":         {"id", "email", "name", "enabled", "created_at", "updated_at"},
-	"signin_tokens": {"id", "user_id", "hash", "created_at", "expires_at", "used_at"},
-	"signin_codes":  {"token_id", "user_id", "hash", "tries", "created_at", "expires_at", "used_at"},
-	"backup_codes":  {"id", "user_id", "hash", "created_at", "used_at"},
-	"sessions":      {"id", "user_id", "hash", "created_at", "expires_at", "last_seen_at"},
-	"bootstrap":     {"id", "claimed_at"},
+	"users":        {"id", "email", "name", "enabled", "created_at", "updated_at"},
+	"signin_codes": {"token_id", "user_id", "hash", "tries", "created_at", "expires_at", "used_at"},
+	"backup_codes": {"id", "user_id", "hash", "created_at", "used_at"},
+	"sessions":     {"id", "user_id", "hash", "created_at", "expires_at", "last_seen_at"},
+	"bootstrap":    {"id", "claimed_at"},
 }
 
 // Init creates this domain's tables. Idempotent, and run at every startup,
@@ -87,23 +87,21 @@ CREATE TABLE IF NOT EXISTS users (
 -- spelling of any address, and a NOCASE collation would only hide a caller
 -- that had skipped the parser.
 
-CREATE TABLE IF NOT EXISTS signin_tokens (
-    id          TEXT    PRIMARY KEY,
-    user_id     TEXT    NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    hash        BLOB    NOT NULL,
-    created_at  INTEGER NOT NULL,
-    expires_at  INTEGER NOT NULL,
-    used_at     INTEGER
-) STRICT;
+-- The emailed sign-in links, retired for the codes below. Their rows lived
+-- fifteen minutes, so there is nothing in them worth keeping, and a binary
+-- rolled back past this one recreates the table with the statement it has.
+DROP TABLE IF EXISTS signin_tokens;
 
-CREATE INDEX IF NOT EXISTS signin_tokens_expires_at ON signin_tokens (expires_at);
-
--- The six digits sent with each link (userbus/code.go). A table of their own
--- rather than columns on signin_tokens, because this repository's migration is
--- CREATE ... IF NOT EXISTS and a new table is the change that needs nothing
--- more. No reference to signin_tokens either: a code's row outlives its link
--- by a day, so that the wrong codes an account has had are still counted after
--- the link has been pruned.
+-- The six digits a sign-in mail carries (userbus/code.go). A row outlives its
+-- code's expiry by userbus.CodeBudgetWindow, so that the wrong codes an
+-- account has had are still counted after the code itself is dead.
+--
+-- token_id is the code's own identifier, userbus.SignInCode.ID, and the name
+-- is left over: the codes first shipped beside the links, one per link and
+-- keyed by it. Renamed it would be tidier and would break the way back -- a
+-- deploy that fails its health check returns to the release before, whose
+-- schema check names token_id, and a column renamed under it would take both
+-- releases down at once. A misleading name is the cheaper of the two.
 CREATE TABLE IF NOT EXISTS signin_codes (
     token_id    TEXT    PRIMARY KEY,
     user_id     TEXT    NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -237,84 +235,14 @@ func (s *Store) Users(ctx context.Context) ([]userbus.User, error) {
 	return out, nil
 }
 
-// CreateToken records a sign-in link.
-func (s *Store) CreateToken(ctx context.Context, t userbus.Token) error {
-	const q = `
-INSERT INTO signin_tokens (id, user_id, hash, created_at, expires_at)
-VALUES (?, ?, ?, ?, ?)`
-
-	if _, err := s.db.ExecContext(ctx, q,
-		t.ID.String(), t.UserID.String(), t.Hash, msOf(t.CreatedAt), msOf(t.ExpiresAt)); err != nil {
-		return fmt.Errorf("inserting the sign-in link: %w", err)
-	}
-
-	return nil
-}
-
-// TokenByID finds a sign-in link by identifier.
-func (s *Store) TokenByID(ctx context.Context, id types.ID) (userbus.Token, error) {
-	const q = `
-SELECT id, user_id, hash, created_at, expires_at, used_at
-FROM signin_tokens WHERE id = ?`
-
-	var (
-		t      userbus.Token
-		rawID  string
-		rawUID string
-		used   sql.NullInt64
-		made   int64
-		expiry int64
-	)
-
-	err := s.db.QueryRowContext(ctx, q, id.String()).
-		Scan(&rawID, &rawUID, &t.Hash, &made, &expiry, &used)
-
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		return userbus.Token{}, userbus.ErrNotFound
-	case err != nil:
-		return userbus.Token{}, fmt.Errorf("reading the sign-in link: %w", err)
-	}
-
-	if t.ID, err = types.ParseID(rawID); err != nil {
-		return userbus.Token{}, fmt.Errorf("the stored sign-in link has a bad identifier: %w", err)
-	}
-	if t.UserID, err = types.ParseID(rawUID); err != nil {
-		return userbus.Token{}, fmt.Errorf("the stored sign-in link names a bad account: %w", err)
-	}
-
-	t.CreatedAt = timeOf(made)
-	t.ExpiresAt = timeOf(expiry)
-	t.UsedAt = timeOfNull(used)
-
-	return t, nil
-}
-
-// UseToken spends a sign-in link, reporting whether this call was the one that
-// spent it.
-//
-// One statement. `used_at IS NULL` is what makes it a claim rather than a
-// write: two simultaneous requests holding the same link both run this, and
-// exactly one of them affects a row.
-func (s *Store) UseToken(ctx context.Context, id types.ID, at time.Time) (bool, error) {
-	const q = `UPDATE signin_tokens SET used_at = ? WHERE id = ? AND used_at IS NULL`
-
-	res, err := s.db.ExecContext(ctx, q, msOf(at), id.String())
-	if err != nil {
-		return false, fmt.Errorf("spending the sign-in link: %w", err)
-	}
-
-	return affected(res)
-}
-
-// CreateSignInCode records the code sent with a sign-in link.
+// CreateSignInCode records a sign-in code.
 func (s *Store) CreateSignInCode(ctx context.Context, c userbus.SignInCode) error {
 	const q = `
 INSERT INTO signin_codes (token_id, user_id, hash, created_at, expires_at)
 VALUES (?, ?, ?, ?, ?)`
 
 	if _, err := s.db.ExecContext(ctx, q,
-		c.TokenID.String(), c.UserID.String(), c.Hash, msOf(c.CreatedAt), msOf(c.ExpiresAt)); err != nil {
+		c.ID.String(), c.UserID.String(), c.Hash, msOf(c.CreatedAt), msOf(c.ExpiresAt)); err != nil {
 		return fmt.Errorf("inserting the sign-in code: %w", err)
 	}
 
@@ -348,7 +276,7 @@ ORDER BY created_at DESC, rowid DESC LIMIT 1`
 		return userbus.SignInCode{}, fmt.Errorf("reading the sign-in code: %w", err)
 	}
 
-	if c.TokenID, err = types.ParseID(rawID); err != nil {
+	if c.ID, err = types.ParseID(rawID); err != nil {
 		return userbus.SignInCode{}, fmt.Errorf("the stored sign-in code has a bad identifier: %w", err)
 	}
 	if c.UserID, err = types.ParseID(rawUID); err != nil {
@@ -363,11 +291,12 @@ ORDER BY created_at DESC, rowid DESC LIMIT 1`
 }
 
 // TrySignInCode reserves one attempt at a code, reporting false when limit
-// have already been made. One statement, for the reason UseToken is.
-func (s *Store) TrySignInCode(ctx context.Context, tokenID types.ID, limit int) (bool, error) {
+// have already been made. One statement, for the reason in the package
+// comment: two guesses arriving together must not both find the last attempt.
+func (s *Store) TrySignInCode(ctx context.Context, id types.ID, limit int) (bool, error) {
 	const q = `UPDATE signin_codes SET tries = tries + 1 WHERE token_id = ? AND tries < ?`
 
-	res, err := s.db.ExecContext(ctx, q, tokenID.String(), limit)
+	res, err := s.db.ExecContext(ctx, q, id.String(), limit)
 	if err != nil {
 		return false, fmt.Errorf("recording a sign-in code attempt: %w", err)
 	}
@@ -375,15 +304,21 @@ func (s *Store) TrySignInCode(ctx context.Context, tokenID types.ID, limit int) 
 	return affected(res)
 }
 
-// UseSignInCode records that somebody signed in with a code.
-func (s *Store) UseSignInCode(ctx context.Context, tokenID types.ID, at time.Time) error {
+// UseSignInCode spends a sign-in code, reporting whether this call was the one
+// that spent it.
+//
+// One statement. `used_at IS NULL` is what makes it a claim rather than a
+// write: two simultaneous requests holding the same code both run this, and
+// exactly one of them affects a row.
+func (s *Store) UseSignInCode(ctx context.Context, id types.ID, at time.Time) (bool, error) {
 	const q = `UPDATE signin_codes SET used_at = ? WHERE token_id = ? AND used_at IS NULL`
 
-	if _, err := s.db.ExecContext(ctx, q, msOf(at), tokenID.String()); err != nil {
-		return fmt.Errorf("marking the sign-in code used: %w", err)
+	res, err := s.db.ExecContext(ctx, q, msOf(at), id.String())
+	if err != nil {
+		return false, fmt.Errorf("spending the sign-in code: %w", err)
 	}
 
-	return nil
+	return affected(res)
 }
 
 // SignInCodeFailures counts the attempts on an account's codes since a time
@@ -600,19 +535,12 @@ ON CONFLICT (id) DO NOTHING`
 
 // PruneExpired removes credentials that can no longer be used.
 //
-// Spent sign-in links are kept until they expire rather than deleted on use,
-// so that presenting one twice is a refusal we can log rather than an unknown
-// identifier indistinguishable from a guess.
+// Spent sign-in codes are kept rather than deleted on use, so that presenting
+// one twice is a refusal we can log, and so that the wrong attempts on it are
+// still counted.
 func (s *Store) PruneExpired(ctx context.Context, before time.Time) error {
-	cutoff := msOf(before)
-
-	for _, q := range []string{
-		`DELETE FROM signin_tokens WHERE expires_at < ?`,
-		`DELETE FROM sessions WHERE expires_at < ?`,
-	} {
-		if _, err := s.db.ExecContext(ctx, q, cutoff); err != nil {
-			return fmt.Errorf("removing expired credentials: %w", err)
-		}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at < ?`, msOf(before)); err != nil {
+		return fmt.Errorf("removing expired sessions: %w", err)
 	}
 
 	// A code is kept for the window its wrong attempts are counted over, not

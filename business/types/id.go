@@ -22,7 +22,7 @@ import (
 //
 // An ID is safe to log and safe to show. It identifies a row; it never
 // authorises anything. Where a value both identifies and authorises -- a
-// sign-in token, a session -- an ID is paired with a separate secret, so that
+// session, an API key -- an ID is paired with a separate secret, so that
 // the identifier can be indexed and logged while the secret is compared in
 // constant time and never written down.
 type ID struct {

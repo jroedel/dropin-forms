@@ -1,8 +1,8 @@
 // Package userbus holds accounts and how somebody proves they hold one.
 //
-// Sign-in is by emailed link -- or the six-digit code in the same mail, see
-// code.go -- with backup codes for when mail is not working and a one-time
-// bootstrap secret for when nothing is working yet. There is no
+// Sign-in is by a six-digit code sent by email -- see code.go -- with backup
+// codes for when mail is not working and a one-time bootstrap secret for when
+// nothing is working yet. There is no
 // password, which removes password storage, password reset, password reuse and
 // password strength from this service entirely -- the mailbox is the factor,
 // and it is a factor the person already maintains.
@@ -11,7 +11,7 @@
 //
 // Every operational thing about this service happens in a browser, which means
 // reading submissions needs a session, which means sign-in has to work before
-// anything else does. And sign-in by emailed link cannot work until outbound
+// anything else does. And sign-in by emailed code cannot work until outbound
 // mail works. That circularity is the reason [Business.Bootstrap] exists: a
 // one-time secret from the config file that produces a session without
 // sending anything. Without it, a misconfigured mail relay is not an
@@ -21,7 +21,7 @@
 // # What this package refuses to tell anybody
 //
 // Every failed attempt returns [ErrDenied] and nothing else. Not "no such
-// account", not "that link expired", not "wrong code". The app layer cannot
+// account", not "that code expired", not "wrong code". The app layer cannot
 // accidentally leak which half was wrong, because it is never told. In
 // particular [Business.RequestSignIn] succeeds for an address that has no
 // account, so that the page after it reads the same either way -- a login form
@@ -43,7 +43,7 @@ import (
 // How long each credential lasts.
 const (
 	// Long enough to walk to another device and open the mail, short enough
-	// that a link left in an inbox is not a standing key. Mail delivery is
+	// that a code left in an inbox is not a standing key. Mail delivery is
 	// occasionally slow, so this is not tighter.
 	signInLife = 15 * time.Minute
 
@@ -57,7 +57,7 @@ const (
 // into ErrDenied on purpose.
 var (
 	// ErrDenied is every failed attempt to prove an identity: an unknown
-	// address, a disabled account, a token that expired, one already used, a
+	// address, a disabled account, a code that expired, one already used, a
 	// wrong secret, a wrong backup code, a bootstrap secret that has been
 	// claimed. One error, so the difference cannot leak.
 	ErrDenied = errors.New("that did not work")
@@ -92,21 +92,6 @@ type NewUser struct {
 	Name  string
 }
 
-// Token is a single-use credential delivered out of band: the emailed sign-in
-// link, and nothing else so far.
-//
-// Only the hash is stored. A leaked database does not let anybody sign in as
-// somebody else, which matters more here than for a password, because these
-// arrive by mail and mail is archived forever.
-type Token struct {
-	ID        types.ID
-	UserID    types.ID
-	Hash      []byte
-	CreatedAt time.Time
-	ExpiresAt time.Time
-	UsedAt    time.Time // zero means unused
-}
-
 // Session is a signed-in browser.
 type Session struct {
 	ID         types.ID
@@ -130,11 +115,11 @@ type BackupCode struct {
 //
 // Three of these return a bool rather than an error for the "somebody else got
 // there first" case, and that is the important part of this interface.
-// UseToken, UseBackupCode and ClaimBootstrap must each be a single atomic
+// UseSignInCode, UseBackupCode and ClaimBootstrap must each be a single atomic
 // claim -- an UPDATE with a WHERE that only matches an unused row, reporting
 // whether it matched. A SELECT followed by an UPDATE would let two
 // simultaneous requests both see an unused credential and both succeed, which
-// for a single-use sign-in link is the whole property gone.
+// for a single-use sign-in code is the whole property gone.
 type Storer interface {
 	CreateUser(ctx context.Context, u User) error
 	UpdateUser(ctx context.Context, u User) error
@@ -142,19 +127,16 @@ type Storer interface {
 	UserByEmail(ctx context.Context, email types.Email) (User, error)
 	Users(ctx context.Context) ([]User, error)
 
-	CreateToken(ctx context.Context, t Token) error
-	TokenByID(ctx context.Context, id types.ID) (Token, error)
-	UseToken(ctx context.Context, id types.ID, at time.Time) (bool, error)
-
 	// The codes of code.go. LatestSignInCode is the account's newest code
 	// whatever its state, or ErrNotFound. TrySignInCode reserves one attempt
-	// and reports false when limit have been made: it is the claim, so it
-	// must be one statement. SignInCodeFailures is how many attempts on the
-	// account's codes made since then did not sign anybody in.
+	// and reports false when limit have been made, and UseSignInCode spends
+	// the code and reports false when it was already spent: both are claims,
+	// so each must be one statement. SignInCodeFailures is how many attempts
+	// on the account's codes made since then did not sign anybody in.
 	CreateSignInCode(ctx context.Context, c SignInCode) error
 	LatestSignInCode(ctx context.Context, userID types.ID) (SignInCode, error)
-	TrySignInCode(ctx context.Context, tokenID types.ID, limit int) (bool, error)
-	UseSignInCode(ctx context.Context, tokenID types.ID, at time.Time) error
+	TrySignInCode(ctx context.Context, id types.ID, limit int) (bool, error)
+	UseSignInCode(ctx context.Context, id types.ID, at time.Time) (bool, error)
 	SignInCodeFailures(ctx context.Context, userID types.ID, since time.Time) (int, error)
 
 	ReplaceBackupCodes(ctx context.Context, userID types.ID, codes []BackupCode) error
@@ -239,26 +221,22 @@ func (b *Business) All(ctx context.Context) ([]User, error) {
 	return b.store.Users(ctx)
 }
 
-// SignInRequest is the result of asking for a sign-in link.
+// SignInRequest is the result of asking for a sign-in code.
 //
-// Secret is empty when there is no account to send to, and the caller must
+// Code is empty when there is no account to send to, and the caller must
 // render the same page either way. That is the whole reason this returns a
 // struct with an empty field rather than an error: an error would tempt a
 // handler into saying something different, and saying something different is
 // the enumeration oracle.
 type SignInRequest struct {
-	User   User
-	Secret string // empty means: send nothing, say the same thing
-
-	// Code is the six digits that go in the same mail, and redeem the same
-	// link. See code.go.
-	Code string
+	User User
+	Code string // empty means: send nothing, say the same thing
 }
 
-// Sendable reports whether there is actually a link to mail.
-func (r SignInRequest) Sendable() bool { return r.Secret != "" }
+// Sendable reports whether there is actually a code to mail.
+func (r SignInRequest) Sendable() bool { return r.Code != "" }
 
-// RequestSignIn mints a sign-in link for an address, if an account holds it.
+// RequestSignIn mints a sign-in code for an address, if an account holds it.
 //
 // It returns no error for an unknown or disabled account. The caller sends
 // mail only when [SignInRequest.Sendable] is true and otherwise does nothing,
@@ -286,87 +264,20 @@ func (b *Business) RequestSignIn(ctx context.Context, now time.Time, email types
 		return SignInRequest{}, nil
 	}
 
-	cred := mintCredential()
-
-	t := Token{
-		ID:        cred.id,
-		UserID:    u.ID,
-		Hash:      cred.hash,
-		CreatedAt: now,
-		ExpiresAt: now.Add(signInLife),
-	}
-
-	if err := b.store.CreateToken(ctx, t); err != nil {
-		return SignInRequest{}, fmt.Errorf("the sign-in link could not be saved: %w", err)
-	}
-
+	id := types.NewID()
 	code := mintCode()
 
 	if err := b.store.CreateSignInCode(ctx, SignInCode{
-		TokenID:   t.ID,
+		ID:        id,
 		UserID:    u.ID,
-		Hash:      hashSecret(codeSecret(t.ID, code)),
+		Hash:      hashSecret(codeSecret(id, code)),
 		CreatedAt: now,
-		ExpiresAt: t.ExpiresAt,
+		ExpiresAt: now.Add(signInLife),
 	}); err != nil {
 		return SignInRequest{}, fmt.Errorf("the sign-in code could not be saved: %w", err)
 	}
 
-	return SignInRequest{User: u, Secret: cred.String(), Code: code}, nil
-}
-
-// SignIn redeems a sign-in link and returns a session credential.
-//
-// The presented string is what came back from the sign-in *form*, not from the
-// link being opened. That distinction is load-bearing and is enforced by the
-// app layer: the emailed link is a GET that renders a page with a button,
-// because mail scanners and link previewers fetch URLs in messages, and a
-// single-use token redeemed on GET is a token spent by software before the
-// person ever clicks.
-func (b *Business) SignIn(ctx context.Context, now time.Time, presented string) (User, string, error) {
-	id, secret, err := splitCredential(presented)
-	if err != nil {
-		return User{}, "", ErrDenied
-	}
-
-	t, err := b.store.TokenByID(ctx, id)
-	switch {
-	case errors.Is(err, ErrNotFound):
-		return User{}, "", ErrDenied
-	case err != nil:
-		return User{}, "", fmt.Errorf("the sign-in link could not be read: %w", err)
-	}
-
-	// The secret is checked before anything else is believed about the row,
-	// so that a guessed identifier cannot learn whether a token expired or
-	// was already used.
-	if !verifySecret(t.Hash, secret) {
-		return User{}, "", ErrDenied
-	}
-
-	switch {
-	case !t.UsedAt.IsZero():
-		b.log.Warn("a sign-in link was presented twice", "token_id", t.ID.String(), "user_id", t.UserID.String())
-
-		return User{}, "", ErrDenied
-	case !now.Before(t.ExpiresAt):
-		return User{}, "", ErrDenied
-	}
-
-	// The atomic claim. Between the check above and here, another request
-	// holding the same link may have spent it, and only the store can settle
-	// that -- which is why this reports a bool rather than trusting the read.
-	claimed, err := b.store.UseToken(ctx, t.ID, now)
-	switch {
-	case err != nil:
-		return User{}, "", fmt.Errorf("the sign-in link could not be spent: %w", err)
-	case !claimed:
-		b.log.Warn("two requests raced for one sign-in link", "token_id", t.ID.String())
-
-		return User{}, "", ErrDenied
-	}
-
-	return b.start(ctx, now, t.UserID)
+	return SignInRequest{User: u, Code: code}, nil
 }
 
 // SignInWithBackupCode is the way in when mail is not working.
@@ -606,7 +517,7 @@ func (b *Business) Touch(ctx context.Context, now time.Time, id types.ID) error 
 
 // Prune deletes spent and expired credentials.
 //
-// Sign-in tokens are recorded at mint, unlike submission grants, because there
+// Sign-in codes are recorded at mint, unlike submission grants, because there
 // is an account behind every one of them -- so this table cannot be filled by
 // a stranger and pruning is housekeeping rather than a defence.
 func (b *Business) Prune(ctx context.Context, now time.Time) error {

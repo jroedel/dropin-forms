@@ -556,7 +556,7 @@ func (fld Field) checkText(s string) []Violation {
 // One parser, two callers: a form field collecting a receipt address and a
 // user account being created hold the same thing to the same standard, and the
 // consequences of getting it wrong differ only in which of them is worse -- a
-// receipt nobody receives, or a sign-in link nobody can click. What this
+// receipt nobody receives, or a sign-in code nobody can read. What this
 // function adds is the field's label, because the parser cannot know it.
 func (fld Field) checkEmail(s string) []Violation {
 	if _, err := types.ParseEmail(s); err != nil {

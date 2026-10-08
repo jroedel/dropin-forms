@@ -19,7 +19,7 @@ func wrongCode(code string) string {
 	return "000000"
 }
 
-func TestACodeSignsInOnceAndSpendsTheLink(t *testing.T) {
+func TestACodeSignsInOnce(t *testing.T) {
 	b, store := newBusiness(t)
 	u := mustCreate(t, b, "frjeff@schoenstatt.us")
 
@@ -47,33 +47,10 @@ func TestACodeSignsInOnceAndSpendsTheLink(t *testing.T) {
 		t.Errorf("a code worked twice: %v", err)
 	}
 
-	// The code and the link are one credential.
-	if _, _, err := b.SignIn(t.Context(), now, req.Secret); !errors.Is(err, userbus.ErrDenied) {
-		t.Errorf("the link still worked after its code was used: %v", err)
-	}
-
 	for _, stored := range store.storedSecrets() {
 		if strings.Contains(stored, req.Code) {
 			t.Error("a code was stored, not just its hash")
 		}
-	}
-}
-
-func TestTheLinkSpendsTheCode(t *testing.T) {
-	b, _ := newBusiness(t)
-	u := mustCreate(t, b, "frjeff@schoenstatt.us")
-
-	req, err := b.RequestSignIn(t.Context(), now, u.Email)
-	if err != nil {
-		t.Fatalf("RequestSignIn: %v", err)
-	}
-
-	if _, _, err := b.SignIn(t.Context(), now, req.Secret); err != nil {
-		t.Fatalf("SignIn: %v", err)
-	}
-
-	if _, _, err := b.SignInWithCode(t.Context(), now, u.Email, req.Code); !errors.Is(err, userbus.ErrDenied) {
-		t.Errorf("the code still worked after its link was used: %v", err)
 	}
 }
 
@@ -171,9 +148,14 @@ func TestACodeAllowsFiveTries(t *testing.T) {
 		t.Errorf("the right code worked after five wrong ones: %v", err)
 	}
 
-	// The link in the same mail still does.
-	if _, _, err := b.SignIn(t.Context(), now, req.Secret); err != nil {
-		t.Errorf("the link stopped working with its code: %v", err)
+	// Asking again is the way on.
+	again, err := b.RequestSignIn(t.Context(), now, u.Email)
+	if err != nil {
+		t.Fatalf("RequestSignIn: %v", err)
+	}
+
+	if _, _, err := b.SignInWithCode(t.Context(), now, u.Email, again.Code); err != nil {
+		t.Errorf("a fresh code after the last one ran out: %v", err)
 	}
 }
 
@@ -202,8 +184,8 @@ func TestACodesTriesHoldUnderConcurrency(t *testing.T) {
 }
 
 // Asking for a fresh code every five wrong guesses runs into the account's
-// daily budget, which a right code does not draw on -- and the link still
-// works when codes do not.
+// hourly budget, which a right code does not draw on; and when the hour has
+// passed, codes work again.
 func TestAnAccountsWrongCodesAreBudgeted(t *testing.T) {
 	b, _ := newBusiness(t)
 	u := mustCreate(t, b, "frjeff@schoenstatt.us")
@@ -218,7 +200,7 @@ func TestAnAccountsWrongCodesAreBudgeted(t *testing.T) {
 	}
 
 	at := now
-	for range 3 {
+	for range 2 {
 		at = at.Add(time.Minute)
 
 		req, err := b.RequestSignIn(t.Context(), at, u.Email)
@@ -239,15 +221,11 @@ func TestAnAccountsWrongCodesAreBudgeted(t *testing.T) {
 	}
 
 	if _, _, err := b.SignInWithCode(t.Context(), at, u.Email, req.Code); !errors.Is(err, userbus.ErrDenied) {
-		t.Errorf("a fresh right code worked after fifteen wrong ones today: %v", err)
+		t.Errorf("a fresh right code worked after ten wrong ones this hour: %v", err)
 	}
 
-	if _, _, err := b.SignIn(t.Context(), at, req.Secret); err != nil {
-		t.Errorf("the link was refused along with the code: %v", err)
-	}
-
-	// A day on, codes work again.
-	later := at.Add(userbus.CodeBudgetWindow)
+	// An hour after the wrong ones, codes work again.
+	later := now.Add(2*time.Minute + userbus.CodeBudgetWindow)
 
 	req, err = b.RequestSignIn(t.Context(), later, u.Email)
 	if err != nil {
@@ -255,6 +233,6 @@ func TestAnAccountsWrongCodesAreBudgeted(t *testing.T) {
 	}
 
 	if _, _, err := b.SignInWithCode(t.Context(), later, u.Email, req.Code); err != nil {
-		t.Errorf("a code a day later: %v", err)
+		t.Errorf("a code an hour later: %v", err)
 	}
 }

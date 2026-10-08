@@ -26,7 +26,7 @@ import (
 //
 // # Why it does not expire
 //
-// A sign-in link expires because it grants a session. This grants nothing: it
+// A sign-in code expires because it grants a session. This grants nothing: it
 // identifies whose preference is being changed, and the preference is
 // reversible from the same page. An unsubscribe link that has quietly stopped
 // working is a person who replies to ask somebody to turn it off for them,
