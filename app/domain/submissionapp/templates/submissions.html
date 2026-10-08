@@ -5,6 +5,14 @@
 {{define "content"}}
 <h1>{{.Form.Title}}</h1>
 
+{{if or .WillCall .Edit .People}}<p class="crumb">
+{{- if .WillCall}}<a href="/forms/{{.FormID}}/will-call">Will-call</a>{{end}}
+{{- if and .WillCall (or .Edit .People)}} &middot; {{end}}
+{{- if .Edit}}<a href="/forms/{{.FormID}}/edit">Edit</a>{{end}}
+{{- if and .Edit .People}} &middot; {{end}}
+{{- if .People}}<a href="/forms/{{.FormID}}/people">People</a>{{end -}}
+</p>{{end}}
+
 {{if .ShowingHidden}}
 <p class="notice">These {{len .Rows}} submission{{if ne (len .Rows) 1}}s are{{else}} is{{end}} hidden, and
 not counted in anything below. Open one to put it back.

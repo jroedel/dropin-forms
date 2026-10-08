@@ -443,6 +443,8 @@ func Admin(cfg Config) (http.Handler, error) {
 		Render:      cfg.Render,
 		CanHide:     cfg.Hiding != nil,
 		CanFeed:     cfg.Feeds != nil && cfg.FeedRows != nil,
+		CanEdit:     cfg.Builder != nil,
+		CanWillCall: cfg.Table != nil,
 	}
 
 	if cfg.Notify != nil {
