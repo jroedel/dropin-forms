@@ -66,6 +66,39 @@ happens on that form's own people page instead.</p>
 their row. Adding an address that already appears above does the same
 thing.</p>
 
+{{if .Workers}}
+<h2>Already working on a form</h2>
+
+<p class="lede">These people have access to at least one form and nothing
+site-wide. Either button gives them site-wide access and emails them to say
+so. What they hold on each form stays as it is.</p>
+
+{{/* A list rather than a table: on a page this narrow, three columns
+     left the address and the forms a few words a line each. */}}
+<ul class="workers">
+{{range .Workers}}
+<li>
+<p class="who">{{if .Name}}<strong>{{.Name}}</strong> <span class="addr">{{.Email}}</span>{{else}}<strong>{{.Email}}</strong>{{end}}</p>
+<ul class="worked-on" aria-label="Forms {{.Who}} works on">
+{{range .Forms}}<li>{{.Title}} <span class="as">{{.Role}}</span></li>{{end}}
+</ul>
+<div class="promote">
+<form method="post" action="/site/people/promote" class="inline">
+  <input type="hidden" name="user" value="{{.UserID}}">
+  <input type="hidden" name="role" value="admin">
+  <button type="submit" aria-label="Make {{.Who}} a site admin">Make site admin</button>
+</form>
+<form method="post" action="/site/people/promote" class="inline">
+  <input type="hidden" name="user" value="{{.UserID}}">
+  <input type="hidden" name="role" value="creator">
+  <button type="submit" class="quiet" aria-label="Let {{.Who}} make forms">Let them make forms</button>
+</form>
+</div>
+</li>
+{{end}}
+</ul>
+{{end}}
+
 <h2>Give somebody site-wide access</h2>
 
 <form method="post" action="/site/people">
