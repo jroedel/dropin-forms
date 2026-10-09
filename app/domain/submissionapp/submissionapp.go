@@ -442,6 +442,19 @@ type listView struct {
 	Hidden        int
 	ShowingHidden bool
 
+	// Unpaid is how many of the rows are not paid -- awaiting payment, or
+	// failed -- which the list leaves out until somebody ticks the box that
+	// says this number. Zero draws no box.
+	//
+	// Out by default because the list is read for who is coming, and on a
+	// form that sells, a third of the rows can be somebody who reached
+	// Stripe and stopped: the same name twice, once unpaid and once paid,
+	// reads as two people. In the list rather than in a second page because
+	// the office still needs them -- to ring somebody whose card failed --
+	// and a tick is closer than a link. Only the rows: the counts and totals
+	// above already separate the two, and the CSV is everything.
+	Unpaid int
+
 	// Feed is whether to link to the spreadsheet page: mounted, and this
 	// reader administers the form.
 	Feed bool
@@ -465,6 +478,9 @@ type rowView struct {
 	// Cells line up with Columns, one per field of the definition, so the
 	// table has the same shape as the form somebody filled in.
 	Cells []string
+
+	// Unpaid marks a row the list hides until asked; see listView.Unpaid.
+	Unpaid bool
 }
 
 // summaryView is the headline. Counts by status rather than one total,
@@ -545,7 +561,16 @@ func (a app) list(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, s := range subs {
+		unpaid := s.Status == submissionbus.StatusPending || s.Status == submissionbus.StatusFailed
+
+		// The hidden list shows what it was asked for, all of it: a row put
+		// out of the way once is not put out of the way again.
+		if unpaid && !view.ShowingHidden {
+			view.Unpaid++
+		}
+
 		view.Rows = append(view.Rows, rowView{
+			Unpaid: unpaid && !view.ShowingHidden,
 			ID:     s.ID.String(),
 			When:   s.CreatedAt.Local().Format("2 Jan 2006, 15:04"),
 			Status: s.Status.String(),

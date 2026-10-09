@@ -59,6 +59,9 @@
      rather than for words. The same hue, dark enough to read. */
   --right: #1f6b2c;
   --tint: var(--sf-neutral);
+
+  /* The shadow at the edge of a table that scrolls. */
+  --shade: rgba(0, 0, 0, .22);
 }
 
 /* Not in the manual, which is a print document and has no dark page. Derived
@@ -76,6 +79,7 @@
     --wrong: #e8907f;
     --right: #86c9a3;
     --tint: #1c1f3a;
+    --shade: rgba(174, 184, 242, .35);
   }
 }
 
@@ -365,6 +369,39 @@ button.quiet:hover:not(:disabled) {
   overflow-x: auto;
   margin: 0 0 1.5rem;
 }
+
+/* A table wider than the page's column of prose: the submissions of a form
+   with a dozen questions. It breaks out of that column and grows to fit its
+   columns, up to the window less a margin, centred on the page -- so on a
+   wide screen nothing scrolls, and a narrow table still lines up with the
+   text above it.
+
+   Where it does still scroll, the edge that hides something carries a
+   shadow, because a table cut off at a column boundary looks finished and
+   nobody tries scrolling a thing that looks finished. The shadows are the
+   two "scroll" backgrounds; the two "local" ones travel with the content and
+   cover a shadow once its edge has been reached. */
+.scroller.wide {
+  position: relative;
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  min-width: 100%;
+  max-width: calc(100vw - 2rem);
+  background:
+    linear-gradient(to right, var(--paper) 40%, transparent) left / 2rem 100% no-repeat local,
+    linear-gradient(to left, var(--paper) 40%, transparent) right / 2rem 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, var(--shade), transparent) left / .9rem 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, var(--shade), transparent) right / .9rem 100% no-repeat scroll;
+}
+
+/* The date is the link to the submission, and three lines of it set the
+   height of every row. */
+.scroller.wide th[scope="row"] { white-space: nowrap; }
+
+/* The rows nobody has paid for, out of the list until the box above it says
+   otherwise. See the submissions template. */
+main:has(#show-unpaid:not(:checked)) tr.unpaid { display: none; }
 
 /* --- the headline numbers ----------------------------------------------- */
 

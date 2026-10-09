@@ -52,7 +52,15 @@ started and has not paid for.</caption>
 or <a href="/forms/{{.FormID}}/feed">keep a Google Sheet up to date</a>{{end}}</p>
 
 {{if .Rows}}
-<div class="scroller">
+{{/* The box shows the rows it names. A stylesheet rule hides every
+     tr.unpaid while it is clear, so this works with no script -- the admin
+     surface has none -- and a browser without :has() shows every row and a
+     box that does nothing, which loses nothing. */}}
+{{if .Unpaid}}<p class="choice">
+<input type="checkbox" id="show-unpaid">
+<label for="show-unpaid">Show the {{.Unpaid}} not paid</label>
+</p>{{end}}
+<div class="scroller wide">
 <table class="listing">
 <thead>
 <tr>
@@ -64,9 +72,12 @@ or <a href="/forms/{{.FormID}}/feed">keep a Google Sheet up to date</a>{{end}}</
 </thead>
 <tbody>
 {{range .Rows}}
-<tr>
+<tr{{if .Unpaid}} class="unpaid"{{end}}>
 <th scope="row"><a href="/forms/{{$.FormID}}/submissions/{{.ID}}">{{.When}}</a></th>
-{{range .Cells}}<td>{{.}}</td>{{end}}
+{{/* A short answer -- a phone number, an address, a number -- stays on one
+     line: broken at its hyphens it reads as three values. A long one wraps,
+     or the table would be as wide as the longest comment anybody left. */}}
+{{range .Cells}}<td{{if lt (len .) 25}} class="nowrap"{{end}}>{{.}}</td>{{end}}
 <td class="figure">{{.Total}}</td>
 <td>{{.Status}}</td>
 </tr>
