@@ -779,3 +779,71 @@ form.role button {
    wrap it, "21 Sep 2026" became three lines and set the height of every row
    in the table. */
 .listing td.when { white-space: nowrap; }
+
+/* --- people who already work on a form ----------------------------------
+
+   The site people page's shortcut for giving one of them site-wide access.
+   A list of entries rather than a table: the page's column is narrow, and a
+   third column of buttons left the address and the form titles a few words
+   a line. Each entry reads top to bottom instead -- who, what they work on,
+   and the two things that can be done about it. */
+
+.workers {
+  list-style: none;
+  margin: 0 0 1.5rem;
+  padding: 0;
+  border-top: 2px solid var(--rule);
+}
+
+.workers > li {
+  padding: 0.8rem 0.6rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.workers .who { margin: 0 0 0.3rem; }
+
+.workers .addr {
+  color: var(--muted);
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.worked-on {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.worked-on li + li { margin-top: 0.15rem; }
+
+/* What they hold on that form. A tag rather than a word in the sentence,
+   because after a long title -- "...Hector Islas door" -- a bare role reads
+   as the end of the title. */
+.worked-on .as {
+  display: inline-block;
+  margin-left: 0.3rem;
+  padding: 0 0.4rem;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--muted);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.promote {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.65rem;
+}
+
+/* As flex items the inline forms are blocks again, and would take the
+   1.5rem every form has above it. */
+.promote form { margin: 0; }
+
+/* Sized like form.role's button in the table above. */
+.promote button {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.9rem;
+}

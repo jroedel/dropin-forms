@@ -16,6 +16,7 @@
 //	POST /site/people          the same
 //	POST /site/people/role     the same
 //	POST /site/people/revoke   the same
+//	POST /site/people/promote  the same
 //
 // Admin throughout, and site-wide admin specifically rather than the
 // per-form gate peopleapp sits behind: deciding who else administers the
@@ -48,6 +49,7 @@ import (
 	"github.com/jroedel/dropin-forms/app/sdk/mid"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
+	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/business/types"
 	"github.com/jroedel/dropin-forms/foundation/mail"
@@ -71,11 +73,21 @@ type Accounts interface {
 }
 
 // Grants is what this app changes, always with the zero [types.Slug]: every
-// grant this page lists, gives or takes away is site-wide by definition.
+// grant this page gives or takes away is site-wide by definition. All is the
+// one read that is not, and it only reads: it is how the page finds the
+// people who already work on a form, to offer them a site-wide role without
+// anybody retyping an address the service already knows.
 type Grants interface {
+	All(ctx context.Context) ([]accessbus.Grant, error)
 	ForForm(ctx context.Context, form types.Slug) ([]accessbus.Grant, error)
 	Grant(ctx context.Context, now time.Time, granter, userID types.ID, form types.Slug, role accessbus.Role) (accessbus.Grant, error)
 	Revoke(ctx context.Context, userID types.ID, form types.Slug) error
+}
+
+// Forms is where a form's title comes from, so that the list of people who
+// work on forms names the forms rather than their slugs.
+type Forms interface {
+	ByID(slug types.Slug) (formbus.Form, error)
 }
 
 // Config is what this app needs.
@@ -83,6 +95,7 @@ type Config struct {
 	Log      *slog.Logger
 	Accounts Accounts
 	Grants   Grants
+	Forms    Forms
 	Mail     mail.Sender
 	Render   *page.Renderer
 
@@ -112,6 +125,7 @@ func Routes(mux *http.ServeMux, cfg Config, guard, site func(http.Handler) http.
 	mux.Handle("POST /site/people", behind(a.add))
 	mux.Handle("POST /site/people/role", behind(a.changeRole))
 	mux.Handle("POST /site/people/revoke", behind(a.revoke))
+	mux.Handle("POST /site/people/promote", behind(a.promote))
 }
 
 // listView is the page: who runs the service, and the form for adding
@@ -119,6 +133,10 @@ func Routes(mux *http.ServeMux, cfg Config, guard, site func(http.Handler) http.
 type listView struct {
 	People []personView
 	Roles  []roleView
+
+	// Workers is everybody who holds a grant on at least one form and no
+	// site-wide grant: the people most likely to be given one next.
+	Workers []workerView
 
 	Done    string
 	Problem string
@@ -144,6 +162,21 @@ type personView struct {
 	You bool
 
 	Choices []roleView
+}
+
+// workerView is one person who works on forms, and what they hold on each.
+type workerView struct {
+	UserID string
+	Name   string
+	Email  string
+	Forms  []workView
+}
+
+func (v workerView) Who() string { return cmp.Or(v.Name, v.Email) }
+
+type workView struct {
+	Title string
+	Role  string
 }
 
 type roleView struct {
@@ -237,6 +270,13 @@ func (a app) add(w http.ResponseWriter, r *http.Request) {
 		"request_id", web.RequestIDFrom(r.Context()),
 		"user_id", u.ID.String(), "role", role.String(), "by", me.ID.String(), "new_account", created)
 
+	a.announce(w, r, u, role, created)
+}
+
+// announce emails somebody who has just been given a site-wide role, and says
+// on the page whether that worked. A grant made by add and one made by
+// promote are the same news to the person receiving it.
+func (a app) announce(w http.ResponseWriter, r *http.Request, u userbus.User, role accessbus.Role, created bool) {
 	invitation := a.invite(u, role, created)
 
 	if err := a.cfg.Mail.Send(r.Context(), invitation); err != nil {
@@ -253,6 +293,133 @@ func (a app) add(w http.ResponseWriter, r *http.Request) {
 	a.show(w, r, http.StatusOK, listView{
 		Done: u.Email.String() + " can now " + verb(role) + ", and we have emailed them about it.",
 	})
+}
+
+// promote gives a site-wide role to somebody who already works on a form,
+// from the button on their row in the list of such people.
+//
+// This takes an account by its id from a hidden field, which changeRole's
+// comment says a route that grants somebody new must not do: typing the
+// address is what makes adding somebody a deliberate act rather than a
+// replayed form. promote is narrower in the way that keeps that true. It
+// reaches only accounts that some form's administrator has already added by
+// address, and only while they hold nothing site-wide, so the set of people
+// it can touch is exactly the list on the page and never a stranger -- and a
+// role somebody already holds site-wide is changed by changeRole, which does
+// not email, rather than announced to them a second time.
+//
+// Their grants on individual forms are left as they are. A site-wide admin
+// reaches every form anyway, so the per-form grants say nothing while it
+// lasts; they matter on the day it is removed, when the person goes back to
+// the forms they had rather than to nothing.
+func (a app) promote(w http.ResponseWriter, r *http.Request) {
+	me, ok := mid.UserFrom(r.Context())
+	if !ok {
+		a.oops(w, r, "the site people page was reached with no account", nil)
+
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		a.show(w, r, http.StatusBadRequest, listView{
+			Problem: "We could not read that. Please try again.",
+		})
+
+		return
+	}
+
+	id, err := types.ParseID(r.PostFormValue("user"))
+	if err != nil {
+		a.show(w, r, http.StatusBadRequest, listView{
+			Problem: "We could not tell who that was. Please try again.",
+		})
+
+		return
+	}
+
+	role, err := accessbus.ParseSiteRole(r.PostFormValue("role"))
+	if err != nil {
+		a.show(w, r, http.StatusBadRequest, listView{
+			Problem: "Choose what they may do.",
+		})
+
+		return
+	}
+
+	if id == me.ID {
+		a.show(w, r, http.StatusConflict, listView{
+			Problem: "You cannot change your own role here. Ask another administrator to do it.",
+		})
+
+		return
+	}
+
+	grants, err := a.cfg.Grants.All(r.Context())
+	if err != nil {
+		a.oops(w, r, "the grants could not be listed", err)
+
+		return
+	}
+
+	var onForms int
+
+	for _, g := range grants {
+		if g.UserID != id {
+			continue
+		}
+
+		if g.Form.Zero() {
+			a.show(w, r, http.StatusConflict, listView{
+				Problem: "They already hold a site-wide role. Change it with the dropdown on their row.",
+			})
+
+			return
+		}
+
+		onForms++
+	}
+
+	if onForms == 0 {
+		a.show(w, r, http.StatusConflict, listView{
+			Problem: "That person does not work on any form. Add them by their email address below.",
+		})
+
+		return
+	}
+
+	u, err := a.cfg.Accounts.ByID(r.Context(), id)
+	switch {
+	case errors.Is(err, userbus.ErrNotFound):
+		a.show(w, r, http.StatusConflict, listView{
+			Problem: "We could not tell who that was. Please try again.",
+		})
+
+		return
+
+	case err != nil:
+		a.oops(w, r, "the account could not be read", err)
+
+		return
+
+	case !u.Enabled:
+		a.show(w, r, http.StatusConflict, listView{
+			Problem: u.Email.String() + " has been switched off, so a site-wide role would reach nothing.",
+		})
+
+		return
+	}
+
+	if _, err := a.cfg.Grants.Grant(r.Context(), time.Now(), me.ID, id, types.Slug{}, role); err != nil {
+		a.oops(w, r, "the grant could not be saved", err)
+
+		return
+	}
+
+	a.cfg.Log.Info("site-wide access granted",
+		"request_id", web.RequestIDFrom(r.Context()),
+		"user_id", id.String(), "role", role.String(), "by", me.ID.String(), "from_forms", onForms)
+
+	a.announce(w, r, u, role, false)
 }
 
 // changeRole changes what somebody already holds site-wide. Deliberately
@@ -418,14 +585,27 @@ func (a app) show(w http.ResponseWriter, r *http.Request, status int, view listV
 
 	me, _ := mid.UserFrom(r.Context())
 
-	grants, err := a.cfg.Grants.ForForm(r.Context(), types.Slug{})
+	all, err := a.cfg.Grants.All(r.Context())
 	if err != nil {
-		a.oops(w, r, "the site-wide grants could not be listed", err)
+		a.oops(w, r, "the grants could not be listed", err)
 
 		return
 	}
 
-	for _, g := range grants {
+	// Site-wide grants are the table; everybody else's are gathered by
+	// person for the list of people who work on forms.
+	var site []accessbus.Grant
+	onForms := map[types.ID][]accessbus.Grant{}
+
+	for _, g := range all {
+		if g.Form.Zero() {
+			site = append(site, g)
+		} else {
+			onForms[g.UserID] = append(onForms[g.UserID], g)
+		}
+	}
+
+	for _, g := range site {
 		u, err := a.cfg.Accounts.ByID(r.Context(), g.UserID)
 		if err != nil {
 			a.cfg.Log.Error("a site-wide grant names an account that could not be read",
@@ -456,7 +636,64 @@ func (a app) show(w http.ResponseWriter, r *http.Request, status int, view listV
 		return cmp.Compare(x.Email, y.Email)
 	})
 
+	view.Workers = a.workers(r, site, onForms)
+
 	a.cfg.Render.Render(w, r, status, "site-people", view)
+}
+
+// workers is the list of people who work on forms and hold nothing
+// site-wide, which is who promote will accept. An account that is switched
+// off is left out, for the reason promote refuses one.
+func (a app) workers(r *http.Request, site []accessbus.Grant, onForms map[types.ID][]accessbus.Grant) []workerView {
+	var out []workerView
+
+	for id, grants := range onForms {
+		if slices.ContainsFunc(site, func(g accessbus.Grant) bool { return g.UserID == id }) {
+			continue
+		}
+
+		u, err := a.cfg.Accounts.ByID(r.Context(), id)
+		if err != nil {
+			a.cfg.Log.Error("a grant names an account that could not be read",
+				"request_id", web.RequestIDFrom(r.Context()), "user_id", id.String(), "error", err)
+
+			continue
+		}
+
+		if !u.Enabled {
+			continue
+		}
+
+		row := workerView{UserID: id.String(), Name: u.Name, Email: u.Email.String()}
+
+		for _, g := range grants {
+			row.Forms = append(row.Forms, workView{Title: a.title(g.Form), Role: g.Role.String()})
+		}
+
+		slices.SortFunc(row.Forms, func(x, y workView) int {
+			return cmp.Compare(x.Title, y.Title)
+		})
+
+		out = append(out, row)
+	}
+
+	slices.SortFunc(out, func(x, y workerView) int {
+		return cmp.Compare(x.Email, y.Email)
+	})
+
+	return out
+}
+
+// title is a form's title, or its slug when the definition cannot be read --
+// a grant can outlive the form it was for, and the slug is still a name the
+// reader will recognise.
+func (a app) title(slug types.Slug) string {
+	f, err := a.cfg.Forms.ByID(slug)
+	if err != nil || f.Title == "" {
+		return slug.String()
+	}
+
+	return f.Title
 }
 
 func (a app) oops(w http.ResponseWriter, r *http.Request, what string, err error) {
@@ -529,7 +766,7 @@ func (a app) invite(u userbus.User, role accessbus.Role, created bool) mail.Mess
 		b.WriteString("Your account on the Schoenstatt Austin forms service can now " + verb(role) + ".\r\n\r\n")
 	}
 
-	b.WriteString("Sign in at " + a.cfg.BaseURL + "/signin with this address, " + u.Email.String() + ", and we will email you a link.\r\n")
+	b.WriteString("Sign in at " + a.cfg.BaseURL + "/signin with this address, " + u.Email.String() + ", and we will email you a code to sign in with.\r\n")
 
 	return mail.Message{
 		To:      u.Email.String(),

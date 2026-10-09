@@ -584,6 +584,7 @@ func Admin(cfg Config) (http.Handler, error) {
 			Log:      cfg.Log,
 			Accounts: cfg.Users,
 			Grants:   cfg.Access,
+			Forms:    cfg.Forms,
 			Mail:     cfg.Mail,
 			Render:   cfg.Render,
 			BaseURL:  cfg.AdminBaseURL,
