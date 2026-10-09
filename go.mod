@@ -18,7 +18,7 @@ module github.com/jroedel/dropin-forms
 // Still one directive and no separate toolchain line, which is the rule in
 // .claude/skills/writing-go. Raise this when a Go patch release fixes an
 // advisory the scan reports.
-go 1.26.8
+go 1.26.9
 
 require (
 	github.com/BurntSushi/toml v1.4.0
