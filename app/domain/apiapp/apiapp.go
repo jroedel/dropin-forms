@@ -569,11 +569,12 @@ func (a app) submissions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Oldest first, as the feed has them, so that a program writing them out
-	// in order keeps each person where they were last time.
+	// in order keeps each person where they were last time. The store's list
+	// turned over rather than sorted again by time: it is newest first in the
+	// exact order of arrival, ties included, and a sort by time alone would
+	// put two submissions from the same millisecond back the wrong way round.
 	subs = slices.Clone(subs)
-	slices.SortStableFunc(subs, func(x, y submissionbus.Submission) int {
-		return x.CreatedAt.Compare(y.CreatedAt)
-	})
+	slices.Reverse(subs)
 
 	doc := submissionsDoc{
 		Form:        f.ID.String(),

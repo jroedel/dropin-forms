@@ -372,7 +372,7 @@ GROUP BY r.submission_id`
 // their address into a page behind the submit throttle, and an index on
 // (form_slug, email) would be paid for on every insert to serve that.
 func (s *Store) ByEmail(ctx context.Context, form types.Slug, email types.Email) ([]submissionbus.Submission, error) {
-	const q = selectColumns + ` WHERE form_slug = ? AND email = ? AND ` + notHidden + ` ORDER BY created_at DESC, id`
+	const q = selectColumns + ` WHERE form_slug = ? AND email = ? AND ` + notHidden + ` ORDER BY created_at DESC, rowid DESC`
 
 	rows, err := s.db.QueryContext(ctx, q, form.String(), email.String())
 	if err != nil {
@@ -498,8 +498,15 @@ const notHidden = `id NOT IN (SELECT submission_id FROM hidden_submissions)`
 
 // ByForm lists a form's submissions, newest first, which is the order the
 // index is built for and the order a page wants.
+//
+// Every list here breaks a tie on created_at by rowid, which is the order the
+// rows were inserted -- the order they arrived. Two submissions in the same
+// millisecond are rare and not impossible, and the identifier this used to
+// break the tie with is random: the two came back in a different order from
+// one read to the next, and a list read oldest-first by a program put the
+// second person first half the time.
 func (s *Store) ByForm(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error) {
-	const q = selectColumns + ` WHERE form_slug = ? AND ` + notHidden + ` ORDER BY created_at DESC, id`
+	const q = selectColumns + ` WHERE form_slug = ? AND ` + notHidden + ` ORDER BY created_at DESC, rowid DESC`
 
 	rows, err := s.db.QueryContext(ctx, q, form.String())
 	if err != nil {
@@ -543,7 +550,7 @@ func (s *Store) Settled(ctx context.Context, form types.Slug, limit int) ([]subm
 	args = append(args, limit)
 
 	q := selectColumns + ` WHERE form_slug = ? AND ` + notHidden + ` AND status IN (?` +
-		strings.Repeat(", ?", len(settled)-1) + `) ORDER BY created_at DESC, id LIMIT ?`
+		strings.Repeat(", ?", len(settled)-1) + `) ORDER BY created_at DESC, rowid DESC LIMIT ?`
 
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -581,7 +588,7 @@ func (s *Store) Settled(ctx context.Context, form types.Slug, limit int) ([]subm
 // bottom and the one most likely to matter is the one that has been waiting
 // longest.
 func (s *Store) Unpaid(ctx context.Context, from, before time.Time) ([]submissionbus.Submission, error) {
-	const q = selectColumns + ` WHERE status = ? AND ` + notHidden + ` AND created_at >= ? AND created_at < ? ORDER BY created_at, id`
+	const q = selectColumns + ` WHERE status = ? AND ` + notHidden + ` AND created_at >= ? AND created_at < ? ORDER BY created_at, rowid`
 
 	rows, err := s.db.QueryContext(ctx, q, submissionbus.StatusPending.String(), msOf(from), msOf(before))
 	if err != nil {
@@ -1003,7 +1010,7 @@ func (s *Store) Unhide(ctx context.Context, id types.ID) error {
 
 // Hidden lists a form's hidden submissions, newest first.
 func (s *Store) Hidden(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error) {
-	const q = selectColumns + ` WHERE form_slug = ? AND id IN (SELECT submission_id FROM hidden_submissions) ORDER BY created_at DESC, id`
+	const q = selectColumns + ` WHERE form_slug = ? AND id IN (SELECT submission_id FROM hidden_submissions) ORDER BY created_at DESC, rowid DESC`
 
 	rows, err := s.db.QueryContext(ctx, q, form.String())
 	if err != nil {
