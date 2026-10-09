@@ -3,7 +3,9 @@ package submissiondb_test
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -353,6 +355,39 @@ func TestByFormIsNewestFirstAndScoped(t *testing.T) {
 
 	if none, err := store.ByForm(t.Context(), mustSlug(t, "nothing-here")); err != nil || len(none) != 0 {
 		t.Errorf("an unknown form has %d submissions, err = %v", len(none), err)
+	}
+}
+
+// Submissions made in the same millisecond come back in the order they
+// arrived, newest first, every time. Ten of them, because with the random
+// identifier this used to break ties by, ten in a row in the right order by
+// chance is one in 3.6 million.
+func TestATieIsBrokenByArrival(t *testing.T) {
+	_, store := open(t)
+
+	var arrived []types.ID
+
+	for i := range 10 {
+		sub := sample(t)
+
+		if _, err := store.Accept(t.Context(), sub, fmt.Sprintf("nonce-%d", i)); err != nil {
+			t.Fatalf("Accept: %v", err)
+		}
+
+		arrived = append(arrived, sub.ID)
+	}
+
+	got, err := store.ByForm(t.Context(), mustSlug(t, "feast-lunch-2026"))
+	if err != nil {
+		t.Fatalf("ByForm: %v", err)
+	}
+
+	slices.Reverse(arrived)
+
+	for i, s := range got {
+		if s.ID != arrived[i] {
+			t.Fatalf("position %d is %s, want %s: a tie is not in the order of arrival", i, s.ID, arrived[i])
+		}
 	}
 }
 

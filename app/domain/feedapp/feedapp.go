@@ -395,10 +395,10 @@ func feedOf(f formbus.Form, subs []submissionbus.Submission, counts map[types.ID
 		})
 	}
 
+	// Oldest first: the store's newest-first list turned over, which is the
+	// order of arrival exactly, ties included -- see submissiondb.ByForm.
 	subs = slices.Clone(subs)
-	slices.SortStableFunc(subs, func(x, y submissionbus.Submission) int {
-		return x.CreatedAt.Compare(y.CreatedAt)
-	})
+	slices.Reverse(subs)
 
 	for _, s := range subs {
 		answers := make(map[string]any, len(f.Fields))
