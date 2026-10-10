@@ -14,6 +14,11 @@ on:
   pull_request:
   push:
     branches: [main]
+  # For go-version.yml. A pull request opened with the repository's token
+  # triggers no workflows, so that workflow dispatches this one on its branch
+  # instead; without this trigger CI never runs there and the merge workflow
+  # never sees green.
+  workflow_dispatch:
 
 permissions:
   contents: read
