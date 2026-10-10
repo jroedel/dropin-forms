@@ -1,0 +1,126 @@
+# Raise the go line in go.mod when Go ships a patch release, as a pull request
+# that dependabot-merge.yml then treats like one of Dependabot's own.
+#
+# Dependabot does not do this. It bumps modules, not the toolchain: in eumaeus
+# it ran every week from September into October, across Go 1.26.7 and 1.26.8,
+# and never touched "go 1.26.6". A Go patch release is where the standard
+# library's security fixes arrive, and govulncheck in CI only notices them on
+# the next pull request somebody happens to open -- which is how Go 1.26.9
+# arrived here (#52), with twelve advisories this module reaches. The go line
+# is pinned to the patch so that CI, the deploy and a laptop all build with
+# exactly one toolchain; this is what keeps that pin from going stale.
+#
+# # Why it starts CI itself
+#
+# A pull request opened with the repository's token does not trigger
+# workflows -- GitHub's guard against a workflow starting an endless chain of
+# itself. So CI would never run on it, and the merge workflow, which wants
+# every check green, would never merge it. workflow_dispatch is the exception,
+# so this dispatches CI on the branch; its check runs land on the branch's head
+# commit, which is where the merge workflow looks.
+#
+# # What it will not do
+#
+# It stays on the minor the go line already names. 1.26 to 1.27 changes the
+# language and is for a person to read and decide. When the named minor drops
+# out of support, which is when its security fixes stop, it opens an issue
+# saying so instead.
+#
+# # What it needs once, by hand
+#
+# Settings -> Actions -> General -> "Allow GitHub Actions to create and
+# approve pull requests". Without it the pull request is refused; this run
+# then fails, and deletes the branch it pushed so the next run tries again.
+
+name: Go version
+
+on:
+  schedule:
+    # 05:00 UTC daily, half an hour before the merge workflow, so a pull
+    # request opened here has waited its full day by the next morning's merge
+    # rather than the one after.
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Raise the go line to the newest patch of its minor
+        run: |
+          set -euo pipefail
+
+          current=$(sed -n 's/^go \([0-9][0-9.]*\)$/\1/p' go.mod)
+          [ -n "$current" ] || { echo "go.mod has no go line"; exit 1; }
+          minor=$(echo "$current" | cut -d. -f1,2)
+
+          # The download page lists the supported releases only: the newest
+          # two minors, each at its newest patch.
+          releases=$(curl -fsSL 'https://go.dev/dl/?mode=json' \
+            | jq -r '.[] | select(.stable) | .version | ltrimstr("go")')
+          [ -n "$releases" ] || { echo "go.dev listed no stable releases"; exit 1; }
+
+          # Compared as a field, not as a regular expression built from the
+          # version: the draft of this escaped the dots once too often and
+          # matched nothing, which would have reported a supported minor as
+          # dead on its first run.
+          latest=$(echo "$releases" | awk -F. -v m="$minor" '$1"."$2 == m' | sort -V | tail -1)
+
+          if [ -z "$latest" ]; then
+            newest=$(echo "$releases" | sort -V | tail -1)
+            title="Go ${minor} is no longer supported"
+            open=$(gh issue list --state open --search "\"${title}\" in:title" --json number -q '.[0].number // empty')
+            if [ -n "$open" ]; then
+              echo "${title}; issue #${open} already says so"
+            else
+              gh issue create --title "$title" --body "go.mod names Go ${current}. Go ${minor} no longer receives security fixes; the supported releases are $(echo $releases | sed 's/ /, /g'). Moving to ${newest} changes the language version, so the go line is for a person to raise, with the release notes: https://go.dev/doc/go${newest%.*}"
+            fi
+            exit 0
+          fi
+
+          if [ "$(printf '%s\n%s\n' "$current" "$latest" | sort -V | tail -1)" = "$current" ]; then
+            echo "go ${current} is the newest ${minor} release"
+            exit 0
+          fi
+
+          branch="go-${latest}"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            echo "${branch} already exists; its pull request is waiting"
+            exit 0
+          fi
+
+          sed -i "s/^go ${current}\$/go ${latest}/" go.mod
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -q -c "$branch"
+          git commit -q -am "Go ${latest}" -m "Raised by the Go version workflow from ${current}. Release notes: https://go.dev/doc/devel/release#go${latest}"
+          git push -q origin "$branch"
+
+          body="Go ${latest} is out, and go.mod names ${current}. This raises the go line so CI, the deploy and local builds use it.
+
+          Release notes, including which packages got security fixes: https://go.dev/doc/devel/release#go${latest}
+
+          CI was started on this branch by the workflow that opened it. Once it is green and the pull request is a day old, the merge workflow merges and deploys it like a Dependabot bump."
+
+          if ! gh pr create --head "$branch" --title "Go ${latest}" --body "$body"; then
+            git push -q origin --delete "$branch"
+            echo "could not open the pull request. Settings -> Actions -> General ->"
+            echo "\"Allow GitHub Actions to create and approve pull requests\" must be ticked."
+            exit 1
+          fi
+
+          gh workflow run ci.yml --ref "$branch"
+          echo "opened the pull request for Go ${latest} and started CI on it"
