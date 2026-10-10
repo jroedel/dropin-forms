@@ -189,9 +189,9 @@ func TestASubmissionIsAcceptedAndConfirmedInPlace(t *testing.T) {
 		t.Errorf("the submission redirected to %q, want an in-line answer", loc)
 	}
 
-	// Two tickets at twelve dollars, derived from the definition and not from
+	// Two tickets at fifteen dollars, derived from the definition and not from
 	// anything the browser sent.
-	if !strings.Contains(body, "$24.00") {
+	if !strings.Contains(body, "$30.00") {
 		t.Errorf("the receipt does not show the derived total:\n%s", short(body))
 	}
 
@@ -205,8 +205,8 @@ func TestASubmissionIsAcceptedAndConfirmedInPlace(t *testing.T) {
 
 	sub := stored[0]
 
-	if sub.Answers.Total != types.Money(2400) {
-		t.Errorf("stored total = %s, want 24.00", sub.Answers.Total)
+	if sub.Answers.Total != types.Money(3000) {
+		t.Errorf("stored total = %s, want 30.00", sub.Answers.Total)
 	}
 	if sub.Status != submissionbus.StatusPending {
 		t.Errorf("stored status = %q, want pending: there is money to collect", sub.Status)
@@ -244,8 +244,8 @@ func TestAPriceInTheBodyIsIgnored(t *testing.T) {
 		t.Fatalf("%d submissions, want 1", len(stored))
 	}
 
-	if got := stored[0].Answers.Total; got != types.Money(2400) {
-		t.Errorf("total = %s, want 24.00 -- a submitted price changed the charge", got)
+	if got := stored[0].Answers.Total; got != types.Money(3000) {
+		t.Errorf("total = %s, want 30.00 -- a submitted price changed the charge", got)
 	}
 }
 

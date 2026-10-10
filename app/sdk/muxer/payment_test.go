@@ -328,7 +328,7 @@ func TestTheConfirmationOffersAWayToPayAndAddsUp(t *testing.T) {
 	// regression test for a real bug: the receipt used to be built from the
 	// priced items alone, so a donation appeared in the total and on no line,
 	// and the page did not add up.
-	for _, want := range []string{"Lunch ticket", "Donation for the Shrine", "$24.00", "$5.00", "$29.00"} {
+	for _, want := range []string{"Lunch ticket", "Donation for the Shrine", "$30.00", "$5.00", "$35.00"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the receipt does not show %q:\n%s", want, short(body))
 		}
@@ -336,8 +336,8 @@ func TestTheConfirmationOffersAWayToPayAndAddsUp(t *testing.T) {
 
 	// And the same figures went to Stripe.
 	o := k.pay.orders[0]
-	if o.Total != 2900 {
-		t.Errorf("Stripe was asked for %s and the page says $29.00", o.Total)
+	if o.Total != 3500 {
+		t.Errorf("Stripe was asked for %s and the page says $35.00", o.Total)
 	}
 	if len(o.Lines) != 2 {
 		t.Errorf("Stripe was given %d lines, want the tickets and the donation", len(o.Lines))

@@ -6,7 +6,9 @@
 # payment_required below.
 #
 # TO CHANGE THE TICKET PRICE, edit `price` under [[item]] and deploy. Nothing
-# else needs touching. The form's version is a fingerprint of this file's
+# else on the live site needs touching. The tests do: they use this form as
+# their fixture and pin its price, and `make test-unit` names every one that
+# still expects the old figure. The form's version is a fingerprint of this file's
 # content, so the edit invalidates every grant already sitting in an open tab
 # and anyone mid-order is re-rendered at the new price rather than charged the
 # old one. There is no schedule and no cutover to get wrong.
@@ -128,5 +130,5 @@ max_length = 500
 [[item]]
 id = "ticket"
 label = "Lunch ticket"
-price = "12.00"
+price = "15.00"
 max = 20

@@ -2526,7 +2526,7 @@ Settled, recorded here so they are not re-litigated:
   nothing, with an author-written sentence naming which of the two things to
   fill in. A generic "this form requires a payment" would tell nobody what to
   do next.
-- **One ticket price, edited by hand — no timed cutover.** $12.00 in
+- **One ticket price, edited by hand — no timed cutover.** $15.00 in
   `forms/feast-lunch-2026.toml`; changing it is one edit and a deploy. The
   content fingerprint above is what makes that safe, so nothing else needs
   touching and there is no schedule to get wrong.
