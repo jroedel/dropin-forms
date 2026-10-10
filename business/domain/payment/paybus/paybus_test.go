@@ -191,9 +191,9 @@ func TestTheLinesSentToStripeAddUpToTheDerivedTotal(t *testing.T) {
 		formbus.QuantityField("ticket"): {"2"},
 	})
 
-	// Two tickets at twelve, plus a five dollar gift.
-	if sub.Answers.Total != 2900 {
-		t.Fatalf("the validator derived %s, want $29.00", sub.Answers.Total)
+	// Two tickets at fifteen, plus a five dollar gift.
+	if sub.Answers.Total != 3500 {
+		t.Fatalf("the validator derived %s, want $35.00", sub.Answers.Total)
 	}
 
 	o := paybus.OrderFor(f, sub)
@@ -213,7 +213,7 @@ func TestTheLinesSentToStripeAddUpToTheDerivedTotal(t *testing.T) {
 
 	// Labelled from the definition, never from anything somebody typed: this
 	// is what a person reads on the payment page.
-	if o.Lines[0].Label != "Lunch ticket" || o.Lines[0].Qty != 2 || o.Lines[0].Unit != 1200 {
+	if o.Lines[0].Label != "Lunch ticket" || o.Lines[0].Qty != 2 || o.Lines[0].Unit != 1500 {
 		t.Errorf("the ticket line is %+v", o.Lines[0])
 	}
 	if o.Lines[1].Label != "Donation for the Shrine" || o.Lines[1].Qty != 1 || o.Lines[1].Unit != 500 {

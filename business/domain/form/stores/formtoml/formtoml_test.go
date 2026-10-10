@@ -50,14 +50,14 @@ func TestTheFeastForm(t *testing.T) {
 	}
 
 	// The price. Asserted here because it is the number that leaves somebody's
-	// bank account, and because "12.00" in a TOML file becoming 1200 cents is
+	// bank account, and because "15.00" in a TOML file becoming 1500 cents is
 	// exactly the conversion worth pinning.
 	item, ok := f.Item("ticket")
 	if !ok {
 		t.Fatal("there is no ticket to buy")
 	}
-	if item.Price != 1200 {
-		t.Errorf("a lunch ticket is %s, want 12.00", item.Price)
+	if item.Price != 1500 {
+		t.Errorf("a lunch ticket is %s, want 15.00", item.Price)
 	}
 	if item.Max != 20 {
 		t.Errorf("the per-item cap is %d, want 20", item.Max)
@@ -105,7 +105,7 @@ func TestTheFeastForm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the real form refused a real order: %v", err)
 	}
-	if want := types.Money(2400 + 2500); ans.Total != want {
+	if want := types.Money(3000 + 2500); ans.Total != want {
 		t.Errorf("Total = %s, want %s: two tickets and a $25 donation", ans.Total, want)
 	}
 	if ans.Version != f.Version {

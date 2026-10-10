@@ -221,10 +221,10 @@ func TestTheSubmissionListShowsWhatWasSubmitted(t *testing.T) {
 		}
 	}
 
-	// Four tickets at twelve dollars, none of them paid for yet. The owed
+	// Four tickets at fifteen dollars, none of them paid for yet. The owed
 	// figure is the one that says this is not money in the bank.
-	if !strings.Contains(body, "$48.00") {
-		t.Errorf("the list does not total the four tickets at $48.00:\n%s", short(body))
+	if !strings.Contains(body, "$60.00") {
+		t.Errorf("the list does not total the four tickets at $60.00:\n%s", short(body))
 	}
 
 	// A name somebody typed is never markup. The apostrophe above arriving
@@ -257,7 +257,7 @@ func TestTheDetailPageShowsOneSubmission(t *testing.T) {
 
 	body := w.Body.String()
 
-	for _, want := range []string{"No shellfish, please", "maria@example.org", "Lunch ticket", "$24.00"} {
+	for _, want := range []string{"No shellfish, please", "maria@example.org", "Lunch ticket", "$30.00"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the detail page does not show %q:\n%s", want, short(body))
 		}
