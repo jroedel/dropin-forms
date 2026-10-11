@@ -229,7 +229,8 @@ func (a app) state(w http.ResponseWriter, r *http.Request) {
 
 	if live {
 		a.show(w, r, http.StatusOK, s, buildView{
-			Done: "This form is live. Paste the two lines below into the page it belongs on.",
+			Done:      "This form is live. Paste the two lines below into the page it belongs on.",
+			Published: true,
 		})
 
 		return

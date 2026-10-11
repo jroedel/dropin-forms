@@ -64,7 +64,8 @@ func (a app) addItem(w http.ResponseWriter, r *http.Request) {
 	raw := value(r, "price")
 	if raw == "" {
 		a.show(w, r, http.StatusBadRequest, s, buildView{
-			Problem: "Give it a price. Write 0.00 if it really is free.",
+			Problem:    "Give it a price. Write 0.00 if it really is free.",
+			AddingItem: true,
 		})
 
 		return
@@ -72,7 +73,7 @@ func (a app) addItem(w http.ResponseWriter, r *http.Request) {
 
 	price, err := parseMoney("The price", raw)
 	if err != nil {
-		a.show(w, r, http.StatusBadRequest, s, buildView{Problem: err.Error()})
+		a.show(w, r, http.StatusBadRequest, s, buildView{Problem: err.Error(), AddingItem: true})
 
 		return
 	}
@@ -89,8 +90,9 @@ func (a app) addItem(w http.ResponseWriter, r *http.Request) {
 		}
 
 		a.show(w, r, http.StatusBadRequest, s, buildView{
-			Problem:  "That was not added.",
-			Problems: problems,
+			Problem:    "That was not added.",
+			Problems:   problems,
+			AddingItem: true,
 		})
 
 		return
@@ -301,11 +303,12 @@ func (a app) removeItem(w http.ResponseWriter, r *http.Request) {
 
 		// The refusal this is written for: taking the last item off a form
 		// that requires a payment, or one with a minimum order. Check names
-		// both, which is what says which setting to change instead.
-		a.show(w, r, http.StatusConflict, s, buildView{
-			Problem:  "That was not removed.",
-			Problems: problems,
-		})
+		// both, which is what says which setting to change instead. On the
+		// item's own page, where its Remove button is.
+		said := itemOf(s, it)
+		said.Problem = "This was not removed."
+		said.Problems = problems
+		a.cfg.Render.Render(w, r, http.StatusConflict, "build-item", said)
 
 		return
 	}

@@ -3,6 +3,7 @@ package formapp
 import (
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
@@ -59,8 +60,9 @@ type fieldView struct {
 
 	// Earlier is the fields this one may be shown conditionally on: the ones
 	// above it, because a condition may only name an earlier field and that is
-	// what guarantees there is no cycle to resolve.
-	Earlier []string
+	// what guarantees there is no cycle to resolve. Each carries its wording
+	// for the dropdown to show and its name for the dropdown to submit.
+	Earlier []earlierField
 
 	// InSection says this question sits under a section heading, so the page
 	// can say that it is hidden whenever the section is.
@@ -68,6 +70,15 @@ type fieldView struct {
 
 	Problems []string
 	Problem  string
+}
+
+// earlierField is one entry in the "show it only when this question"
+// dropdown. The name is what is stored in the condition; the label is what
+// somebody recognises, now that the list on the form's page no longer shows
+// names to learn them from.
+type earlierField struct {
+	Name  string
+	Label string
 }
 
 // kindChoice is one entry in the kind dropdown: the value the domain uses,
@@ -132,6 +143,7 @@ func (a app) addField(w http.ResponseWriter, r *http.Request) {
 	if !fld.Kind.Known() {
 		a.show(w, r, http.StatusBadRequest, s, buildView{
 			Problem: "Choose what sort of answer it takes.",
+			Adding:  true,
 		})
 
 		return
@@ -156,8 +168,9 @@ func (a app) addField(w http.ResponseWriter, r *http.Request) {
 		}
 
 		a.show(w, r, http.StatusBadRequest, s, buildView{
-			Problem:  "That field was not added.",
+			Problem:  "That question was not added.",
 			Problems: problems,
+			Adding:   true,
 		})
 
 		return
@@ -226,7 +239,12 @@ func fieldOf(s formbus.Stored, fld formbus.Field, at int) fieldView {
 	// condition that names one.
 	for _, earlier := range s.Form.Fields[:at] {
 		if earlier.Kind.Asks() {
-			v.Earlier = append(v.Earlier, earlier.Name)
+			label := earlier.Label
+			if label == "" {
+				label = earlier.Name
+			}
+
+			v.Earlier = append(v.Earlier, earlierField{Name: earlier.Name, Label: label})
 		}
 	}
 
@@ -359,7 +377,7 @@ func (a app) saveField(w http.ResponseWriter, r *http.Request) {
 
 	s.Form = f
 
-	a.show(w, r, http.StatusOK, s, buildView{Done: "The field " + fld.Name + " is saved."})
+	a.show(w, r, http.StatusOK, s, buildView{Done: quoted(fld.Label, fld.Name) + " is saved."})
 }
 
 // moveField shifts one field up or down.
@@ -459,11 +477,13 @@ func (a app) removeField(w http.ResponseWriter, r *http.Request) {
 
 		// Most often: another field is shown only when this one holds a
 		// particular value. Check names both, which is what somebody needs in
-		// order to decide which of the two to remove.
-		a.show(w, r, http.StatusConflict, s, buildView{
-			Problem:  "That field was not removed.",
-			Problems: problems,
-		})
+		// order to decide which of the two to remove. On the question's own
+		// page, because that is where its Remove button is and where somebody
+		// would go to try again once the other one is dealt with.
+		said := fieldOf(s, fld, at)
+		said.Problem = "This question was not removed."
+		said.Problems = problems
+		a.cfg.Render.Render(w, r, http.StatusConflict, "build-field", said)
 
 		return
 	}
@@ -471,7 +491,7 @@ func (a app) removeField(w http.ResponseWriter, r *http.Request) {
 	s.Form = f
 
 	a.show(w, r, http.StatusOK, s, buildView{
-		Done: "The field " + fld.Name + " is gone. Anything already submitted under that name is still in the submissions.",
+		Done: quoted(fld.Label, fld.Name) + " is gone. The answers already given to it are still in the submissions.",
 	})
 }
 
@@ -546,6 +566,56 @@ func kindOf(k formbus.Kind) kindChoice {
 		Temporal:   k.Temporal(),
 		Money:      k == formbus.KindAmount,
 		Section:    k == formbus.KindSection,
+	}
+}
+
+// quoted is a question as a sentence names it: its wording in quotation
+// marks, or its name when it has no wording yet.
+func quoted(label, name string) string {
+	if label == "" {
+		return name
+	}
+
+	return strconv.Quote(label)
+}
+
+// shortKind is a kind as the list of questions shows it: the word somebody
+// would use for it, short enough to sit in a narrow column beside the
+// question. describeKind is the sentence for choosing one; this is the label
+// for recognising one. A kind with no word written for it shows its own name,
+// as describeKind does.
+func shortKind(k formbus.Kind) string {
+	switch k {
+	case formbus.KindText:
+		return "Text"
+	case formbus.KindParagraph:
+		return "Paragraph"
+	case formbus.KindEmail:
+		return "Email"
+	case formbus.KindTel:
+		return "Phone"
+	case formbus.KindNumber:
+		return "Number"
+	case formbus.KindDate:
+		return "Date"
+	case formbus.KindTime:
+		return "Time"
+	case formbus.KindDateTime:
+		return "Date and time"
+	case formbus.KindSelect:
+		return "Dropdown"
+	case formbus.KindRadio:
+		return "Buttons"
+	case formbus.KindCheckbox:
+		return "Tick box"
+	case formbus.KindChoices:
+		return "Tick boxes"
+	case formbus.KindAmount:
+		return "Amount"
+	case formbus.KindSection:
+		return "Section"
+	default:
+		return string(k)
 	}
 }
 

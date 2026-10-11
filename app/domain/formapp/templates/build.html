@@ -25,21 +25,6 @@ changed {{.Updated}}</p>
 </div>
 {{end}}
 
-{{if .Live}}
-{{if .Snippet}}
-<h2>Paste this into your website</h2>
-<p class="help">Two lines, in a code block on the page the form belongs on.
-They do not change when you edit the form.</p>
-<pre class="snippet">{{.Snippet}}</pre>
-<p><a href="{{.Preview}}" rel="noreferrer">Open the form itself</a> &mdash; this
-is the real page, rendered from this definition, not a preview of it.</p>
-{{else}}
-<p class="help">To show the two lines you paste into your website, and a link
-to the form itself, set <code>server.embed_base_url</code> in the service's
-configuration file.</p>
-{{end}}
-{{end}}
-
 <h2>Questions</h2>
 
 {{if .Any}}
@@ -49,7 +34,6 @@ configuration file.</p>
 <th scope="col">Question</th>
 <th scope="col">Kind</th>
 <th scope="col"><span class="visually-hidden">Order</span></th>
-<th scope="col"><span class="visually-hidden">Remove</span></th>
 </tr>
 </thead>
 <tbody>
@@ -57,12 +41,11 @@ configuration file.</p>
 <tr{{if .Section}} class="section-row"{{else if .InSection}} class="in-section"{{end}}>
 <th scope="row">
 <a href="/forms/{{$.FormID}}/edit/fields/{{.Name}}">{{.Label}}</a>
-{{if .Required}} <span class="ref">required</span>{{end}}
-<br><span class="ref">{{.Name}}</span>
+{{if .Required}} <span class="aside">required</span>{{end}}
 {{if .Detail}}<br><span class="aside">{{.Detail}}</span>{{end}}
 {{if .ShownWhen}}<br><span class="aside">{{.ShownWhen}}</span>{{end}}
 </th>
-<td>{{.Kind}}</td>
+<td class="kind">{{.Kind}}</td>
 <td class="nowrap">
 <form method="post" action="/forms/{{$.FormID}}/edit/fields/{{.Name}}/move" class="inline">
   <input type="hidden" name="to" value="up">
@@ -75,20 +58,26 @@ configuration file.</p>
           aria-label="Move {{.Label}} down">&darr;</button>
 </form>
 </td>
-<td>
-<form method="post" action="/forms/{{$.FormID}}/edit/fields/{{.Name}}/remove" class="inline">
-  <button type="submit" class="quiet">Remove</button>
-</form>
-</td>
 </tr>
 {{end}}
 </tbody>
 </table>
 {{else}}
-<p>This form asks nothing yet. Add its first question below.</p>
+<p>This form asks nothing yet.</p>
 {{end}}
 
-<h3>Add a question</h3>
+{{/* Behind a button rather than always open: two full forms under the lists
+     were most of what made this page hard to read, and the lists are what
+     somebody comes back to. A <details> rather than a page of its own, so it
+     still opens without a round trip, and rather than anything scripted,
+     because this surface has no script-src. Open from the start on a form
+     with no questions -- there is nothing else to do there -- and after a
+     refused add, so the reason sits beside what was typed. The Remove
+     buttons went the other way for the same reason: one per row, beside the
+     arrows, a click from losing a question on a live form. They are on each
+     question's own page now. */}}
+<details class="adder"{{if or .Adding (not .Any)}} open{{end}}>
+<summary>Add a question</summary>
 
 <form method="post" action="/forms/{{.FormID}}/edit/fields">
   <div class="field">
@@ -123,6 +112,7 @@ configuration file.</p>
 
   <button type="submit">Add it</button>
 </form>
+</details>
 
 <h2>Money</h2>
 
@@ -134,7 +124,6 @@ configuration file.</p>
 <th scope="col">Price</th>
 <th scope="col">Most</th>
 <th scope="col"><span class="visually-hidden">Order</span></th>
-<th scope="col"><span class="visually-hidden">Remove</span></th>
 </tr>
 </thead>
 <tbody>
@@ -142,7 +131,6 @@ configuration file.</p>
 <tr>
 <th scope="row">
 <a href="/forms/{{$.FormID}}/edit/items/{{.ID}}">{{.Label}}</a>
-<br><span class="ref">{{.ID}}</span>
 {{if .Note}}<br><span class="aside">{{.Note}}</span>{{end}}
 </th>
 <td class="figure">{{.Price}}</td>
@@ -159,38 +147,28 @@ configuration file.</p>
           aria-label="Move {{.Label}} down">&darr;</button>
 </form>
 </td>
-<td>
-<form method="post" action="/forms/{{$.FormID}}/edit/items/{{.ID}}/remove" class="inline">
-  <button type="submit" class="quiet">Remove</button>
-</form>
-</td>
 </tr>
 {{end}}
 </tbody>
 </table>
-{{end}}
-
-{{/* The checkbox is not part of any form and is never submitted: it only
-     reveals what follows, through the stylesheet's :has() rule. A form that
-     already takes money has nothing to reveal, so it is ticked and cannot be
-     unticked -- turning selling off is removing what is sold. A browser
-     without :has() shows everything, which is the page this was before. */}}
-<p class="choice">
-  <input type="checkbox" id="collects-money"
-         {{if .Sells}}checked disabled{{end}}>
-  <label for="collects-money">We need to collect money</label>
-</p>
-{{if .Sells}}
-<p class="help">This form takes money. To stop, remove everything it sells and
-any question that asks for an amount of money.</p>
+{{else if .Sells}}
+<p class="help">This form takes money through a question that asks for an
+amount.</p>
 {{else}}
-<p class="help">Tick this to sell tickets, meals or anything else at a fixed
-price. A form that sells nothing takes no payment, which is right for a survey
-or a sign-up sheet.</p>
+<p class="help">This form takes no payment, which is right for a survey or a
+sign-up sheet.</p>
 {{end}}
 
-<div class="if-collects-money">
-<h3>Add something for sale</h3>
+{{/* The same button-and-panel as adding a question. It replaces a "We need
+     to collect money" checkbox that only revealed this form -- and, once
+     anything was for sale, sat ticked and greyed out with a sentence
+     explaining why it could not be unticked. Turning selling off is removing
+     what is sold, which each item's own page now offers. */}}
+<details class="adder"{{if .AddingItem}} open{{end}}>
+<summary>{{if .Items}}Add something for sale{{else}}Sell something on this form{{end}}</summary>
+{{if not .Items}}
+<p class="help">Tickets, meals or anything else at a fixed price.</p>
+{{end}}
 
 <form method="post" action="/forms/{{.FormID}}/edit/items">
   <div class="field">
@@ -210,7 +188,7 @@ or a sign-up sheet.</p>
 
   <button type="submit">Add it</button>
 </form>
-</div>
+</details>
 
 <h2>Settings</h2>
 
@@ -230,6 +208,25 @@ or a sign-up sheet.</p>
 <h2>{{if .Live}}It is on the web{{else}}Putting it on the web{{end}}</h2>
 
 {{if .Live}}
+{{if .Snippet}}
+{{/* Folded, and down here rather than at the top of the page: the two lines
+     do not change when the form does, so after the first visit they were
+     the first thing on every page and the thing least often needed. Open on
+     the page the Publish button answers, which is the visit they are for. */}}
+<details class="embed"{{if .Published}} open{{end}}>
+<summary>Paste this into your website</summary>
+<p class="help">Two lines, in a code block on the page the form belongs on.
+They do not change when you edit the form.</p>
+<pre class="snippet">{{.Snippet}}</pre>
+</details>
+<p><a href="{{.Preview}}" rel="noreferrer">Open the form itself</a> &mdash; this
+is the real page, rendered from this definition, not a preview of it.</p>
+{{else}}
+<p class="help">To show the two lines you paste into your website, and a link
+to the form itself, set <code>server.embed_base_url</code> in the service's
+configuration file.</p>
+{{end}}
+
 <p>Every change you make here takes effect at once. Anybody who had the form
 half filled in gets a fresh copy of it rather than the old one &mdash; which is
 what stops somebody being charged a price you have just changed.</p>

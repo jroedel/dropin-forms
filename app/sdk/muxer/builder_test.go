@@ -239,6 +239,16 @@ func TestAFormBuiltInTheBrowserIsServedOnceItIsPublished(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "data-dropin-form=&#34;supper-2026&#34;") {
 		t.Errorf("the page does not show the markup to paste:\n%s", w.Body)
 	}
+
+	// Unfolded on the page that answers Publish, and folded on every visit
+	// after it: the two lines do not change when the form does.
+	if !strings.Contains(w.Body.String(), `<details class="embed" open>`) {
+		t.Errorf("the snippet is folded on the page that answers Publish:\n%s", w.Body)
+	}
+
+	if page := a.get(t, "/forms/supper-2026/edit", cookie).Body.String(); !strings.Contains(page, `<details class="embed">`) {
+		t.Errorf("the snippet is not folded on a later visit:\n%s", page)
+	}
 }
 
 // A dropdown with no options is not a form anybody can fill in, so adding one

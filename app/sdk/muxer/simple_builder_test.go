@@ -144,7 +144,7 @@ func TestTheAddAQuestionFormAsksNoNameAndHidesChoicesByKind(t *testing.T) {
 	}
 }
 
-func TestSellingSomethingIsBehindACheckboxAndGetsAGeneratedID(t *testing.T) {
+func TestSellingSomethingIsBehindAButtonAndGetsAGeneratedID(t *testing.T) {
 	a := newAdmin(t, "")
 
 	cookie := sessionFor(t, a, siteBoss(t, a, "site@schoenstatt.test"))
@@ -153,9 +153,15 @@ func TestSellingSomethingIsBehindACheckboxAndGetsAGeneratedID(t *testing.T) {
 
 	page := a.get(t, "/forms/supper-2026/edit", cookie).Body.String()
 
-	if !strings.Contains(page, `<input type="checkbox" id="collects-money"`+"\n") ||
-		!strings.Contains(page, `<div class="if-collects-money">`) {
-		t.Errorf("a form that sells nothing does not offer the money checkbox unticked:\n%s", page)
+	if !strings.Contains(page, `<details class="adder">`+"\n<summary>Sell something on this form</summary>") {
+		t.Errorf("a form that sells nothing does not offer selling behind a closed button:\n%s", page)
+	}
+
+	// A refused add opens the panel again, so the reason is beside the form.
+	if w := a.post(t, "/forms/supper-2026/edit/items", url.Values{
+		"label": {"Adult"},
+	}, cookie); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `<details class="adder" open>`+"\n<summary>Sell something") {
+		t.Errorf("a priceless item = %d, want 400 with the panel open:\n%s", w.Code, w.Body)
 	}
 
 	if w := a.post(t, "/forms/supper-2026/edit/items", url.Values{
@@ -173,10 +179,87 @@ func TestSellingSomethingIsBehindACheckboxAndGetsAGeneratedID(t *testing.T) {
 		t.Errorf("items = %+v, want one called item_1", s.Form.Items)
 	}
 
-	// Once it sells something the box is ticked and fixed: turning selling
-	// off is removing what is sold, and the page says so.
+	// Once it sells something the button says so, and the way to stop is on
+	// the item's own page rather than a Remove on every row.
 	page = a.get(t, "/forms/supper-2026/edit", cookie).Body.String()
-	if !strings.Contains(page, "checked disabled") || !strings.Contains(page, "To stop, remove everything it sells") {
-		t.Errorf("a form that sells does not show the box ticked and fixed:\n%s", page)
+	if !strings.Contains(page, "<summary>Add something for sale</summary>") || strings.Contains(page, "/remove") {
+		t.Errorf("a form that sells does not offer adding another, or still has Remove on its list:\n%s", page)
+	}
+
+	if item := a.get(t, "/forms/supper-2026/edit/items/item_1", cookie).Body.String(); !strings.Contains(item, `action="/forms/supper-2026/edit/items/item_1/remove"`) {
+		t.Errorf("the item's page does not offer removing it:\n%s", item)
+	}
+}
+
+// The list of questions is the part of the page somebody comes back to, so it
+// shows what they wrote and little else: no generated names, a word for the
+// kind, conditions in the questions' own words, and no Remove beside every
+// row. Adding is behind a button that is open only when there is nothing else
+// to do or an add was just refused.
+func TestTheListOfQuestionsShowsWordsRatherThanNames(t *testing.T) {
+	a := newAdmin(t, "")
+
+	cookie := sessionFor(t, a, siteBoss(t, a, "site@schoenstatt.test"))
+
+	made(t, a, cookie, "supper-2026", "Parish supper")
+
+	if page := a.get(t, "/forms/supper-2026/edit", cookie).Body.String(); !strings.Contains(page, `<details class="adder" open>`+"\n<summary>Add a question</summary>") {
+		t.Errorf("a form with no questions does not open the add panel:\n%s", page)
+	}
+
+	for _, f := range []url.Values{
+		{"label": {"Will you stay for lunch?"}, "kind": {"radio"}, "options": {"yes | Yes, please\nno | No, thank you"}},
+		{"label": {"How many?"}, "kind": {"number"}},
+	} {
+		if w := a.post(t, "/forms/supper-2026/edit/fields", f, cookie); w.Code != http.StatusSeeOther {
+			t.Fatalf("adding %s = %d:\n%s", f.Get("label"), w.Code, w.Body)
+		}
+	}
+
+	field := a.get(t, "/forms/supper-2026/edit/fields/number_1", cookie).Body.String()
+	if !strings.Contains(field, `<option value="radio_1" >Will you stay for lunch?</option>`) {
+		t.Errorf("the condition dropdown does not offer the earlier question by its wording:\n%s", field)
+	}
+
+	if w := a.post(t, "/forms/supper-2026/edit/fields/number_1", url.Values{
+		"label": {"How many?"}, "show_if_field": {"radio_1"}, "show_if_is": {"yes"},
+	}, cookie); w.Code != http.StatusOK {
+		t.Fatalf("setting the condition = %d:\n%s", w.Code, w.Body)
+	}
+
+	page := a.get(t, "/forms/supper-2026/edit", cookie).Body.String()
+
+	for _, want := range []string{
+		`<td class="kind">Buttons</td>`,
+		`<td class="kind">Number</td>`,
+		`only when &#34;Will you stay for lunch?&#34; is &#34;Yes, please&#34;`,
+		`<details class="adder">` + "\n<summary>Add a question</summary>",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the page does not contain %s", want)
+		}
+	}
+
+	for _, gone := range []string{`<span class="ref">radio_1</span>`, "/fields/radio_1/remove"} {
+		if strings.Contains(page, gone) {
+			t.Errorf("the list still shows %s", gone)
+		}
+	}
+
+	if w := a.post(t, "/forms/supper-2026/edit/fields", url.Values{"label": {"Oops"}}, cookie); w.Code != http.StatusBadRequest ||
+		!strings.Contains(w.Body.String(), `<details class="adder" open>`+"\n<summary>Add a question</summary>") {
+		t.Errorf("an add with no kind = %d, want 400 with the panel open:\n%s", w.Code, w.Body)
+	}
+
+	// On a live form, removing the question another depends on is refused --
+	// and the refusal is on the question's own page, where its button is.
+	if w := a.post(t, "/forms/supper-2026/edit/state", url.Values{"state": {"live"}}, cookie); w.Code != http.StatusOK {
+		t.Fatalf("publishing = %d:\n%s", w.Code, w.Body)
+	}
+
+	w := a.post(t, "/forms/supper-2026/edit/fields/radio_1/remove", nil, cookie)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "This question was not removed.") ||
+		!strings.Contains(w.Body.String(), "Remove this question") {
+		t.Errorf("removing a question another depends on = %d, want 409 on its own page:\n%s", w.Code, w.Body)
 	}
 }
