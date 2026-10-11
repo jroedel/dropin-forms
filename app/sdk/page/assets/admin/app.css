@@ -643,10 +643,79 @@ form:has(#kind option:checked:not(.has-options)) .uses-options {
   display: none;
 }
 
-/* The "We need to collect money" box on a form's page reveals the form for
-   adding something for sale. Same mechanism, same fallback. */
-main:has(#collects-money:not(:checked)) .if-collects-money {
-  display: none;
+/* The kind column of the list of questions: a word, quieter than the
+   question beside it, and never wrapped -- "Date and time" on two lines
+   would make the row as tall as the sentence it replaced. */
+.listing td.kind {
+  color: var(--muted);
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+/* "Add a question" and "Add something for sale": a <details> whose summary
+   looks like a quiet button while it is closed, and becomes the heading of a
+   panel, ruled down its left in the colour of things that can be pressed,
+   once it is open. Clicking the heading closes it again, which is the
+   cancel. A <details> needs no script, and a browser that ignores the
+   styling still shows a working disclosure. */
+details.adder { margin: 0 0 1.5rem; }
+
+details.adder > summary {
+  display: inline-block;
+  list-style: none;
+  cursor: pointer;
+  font-weight: 600;
+  padding: 0.6rem 1.1rem;
+  color: var(--accent);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+details.adder > summary::-webkit-details-marker { display: none; }
+
+details.adder > summary:hover {
+  background: var(--tint);
+  border-color: var(--accent);
+}
+
+details.adder > summary:focus-visible,
+details.embed > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+details.adder[open] {
+  padding: 1rem 1.1rem 1.1rem;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+}
+
+details.adder[open] > summary {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--font-display);
+  font-size: 1rem;
+  color: var(--heading);
+}
+
+details.adder[open] > summary:hover { text-decoration: underline; }
+
+details.adder[open] > .help { margin-top: 0.75rem; }
+
+details.adder > form { margin-top: 1rem; }
+
+/* The folded paste snippet: an ordinary disclosure, with its triangle, set
+   like a link because it is one more thing to open rather than a thing to
+   do. */
+details.embed { margin: 0 0 1rem; }
+
+details.embed > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--accent);
+  margin: 0 0 0.5rem;
 }
 
 code {

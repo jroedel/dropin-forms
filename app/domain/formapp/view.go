@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -50,6 +51,18 @@ type buildView struct {
 	Snippet string
 	Preview string
 
+	// Adding and AddingItem open the "add a question" and "add something for
+	// sale" panels, which are otherwise closed behind a button. They are set
+	// when an add was refused, so that the reason appears with the form it is
+	// about rather than above a panel somebody has to think to reopen.
+	Adding     bool
+	AddingItem bool
+
+	// Published opens the folded paste snippet, on the page that answers the
+	// Publish button: that is the one moment it is what somebody came for.
+	// Every other visit it is two lines they pasted weeks ago.
+	Published bool
+
 	Done    string
 	Problem string
 }
@@ -61,11 +74,20 @@ func (v buildView) Any() bool { return len(v.Fields) > 0 }
 // fieldRow is one field in the list, already turned into the words the page
 // shows. The template does no formatting of its own, which is what keeps the
 // rules for reading a definition in Go where they can be tested.
+//
+// The field's name is in the struct for the links and is not shown in the
+// list. It is generated from the kind and a number, nobody chose it, and a
+// column of text_1, radio_2 beside the questions somebody wrote was most of
+// what made the list hard to read. It is on the question's own page.
 type fieldRow struct {
 	Name     string
 	Label    string
-	Kind     string
 	Required bool
+
+	// Kind is a word or two -- "Text", "Dropdown" -- rather than the sentence
+	// the add form's dropdown uses. The sentence is for choosing; in a narrow
+	// column it made every row four lines tall. See shortKind.
+	Kind string
 
 	// Detail is the field's own rules in one short phrase -- its options, its
 	// bounds, its pattern -- so that the list is readable without opening
@@ -209,10 +231,10 @@ func (a app) show(w http.ResponseWriter, r *http.Request, status int, s formbus.
 		view.Fields = append(view.Fields, fieldRow{
 			Name:      fld.Name,
 			Label:     fld.Label,
-			Kind:      string(fld.Kind),
+			Kind:      shortKind(fld.Kind),
 			Required:  fld.Required,
 			Detail:    detailOf(fld, f.Currency),
-			ShownWhen: shownWhen(fld),
+			ShownWhen: shownWhen(f, fld),
 			Section:   fld.Kind == formbus.KindSection,
 			InSection: inSection,
 			First:     i == 0,
@@ -436,23 +458,41 @@ func moneyRange(min, max types.Money, currency string) string {
 
 // shownWhen is a condition in words, or empty for a field that is always
 // shown.
-func shownWhen(fld formbus.Field) string {
+//
+// It names the other question by its wording and each value by what people
+// read, because the list no longer shows field names: "only when radio_1 is
+// "yes"" would send somebody hunting for which question radio_1 is. A name
+// that matches no field -- which Check refuses, so only an old draft has one
+// -- and a value that is not among the options are shown as they are stored,
+// which is at least the thing to go and fix.
+func shownWhen(f formbus.Form, fld formbus.Field) string {
 	if fld.ShowIf == nil {
 		return ""
 	}
 
+	asked := fld.ShowIf.Field
+	other, found := f.Field(asked)
+	if found && other.Label != "" {
+		asked = strconv.Quote(other.Label)
+	}
+
 	values := make([]string, 0, len(fld.ShowIf.Is))
 	for _, v := range fld.ShowIf.Is {
-		values = append(values, strconv.Quote(v))
+		read := v
+		if at := slices.IndexFunc(other.Options, func(o formbus.Option) bool { return o.Value == v }); at >= 0 && other.Options[at].Label != "" {
+			read = other.Options[at].Label
+		}
+
+		values = append(values, strconv.Quote(read))
 	}
 
 	switch len(values) {
 	case 0:
-		return "only when " + fld.ShowIf.Field + " is — nothing is named, so never"
+		return "only when " + asked + " is — nothing is named, so never"
 	case 1:
-		return "only when " + fld.ShowIf.Field + " is " + values[0]
+		return "only when " + asked + " is " + values[0]
 	default:
-		return "only when " + fld.ShowIf.Field + " is one of " + strings.Join(values, ", ")
+		return "only when " + asked + " is one of " + strings.Join(values, ", ")
 	}
 }
 

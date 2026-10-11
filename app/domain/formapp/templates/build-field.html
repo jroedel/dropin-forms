@@ -201,7 +201,7 @@
     <select id="show_if_field" name="show_if_field">
       <option value="">always show it</option>
       {{range .Earlier}}
-      <option value="{{.}}" {{if eq . $.ShowIfField}}selected{{end}}>{{.}}</option>
+      <option value="{{.Name}}" {{if eq .Name $.ShowIfField}}selected{{end}}>{{.Label}}</option>
       {{end}}
     </select>
   </div>
@@ -218,6 +218,18 @@
   {{end}}
 
   <button type="submit">Save this question</button>
+</form>
+
+{{/* Here rather than on every row of the form's list, where it sat beside
+     the reorder arrows and took a question off a live form in one click.
+     Removing is rare enough to be worth the walk to this page. */}}
+<h2>Remove it</h2>
+<p class="help">{{if .Uses.Section}}The questions under this heading stay on
+the form, and join the section above it if there is one.{{else}}The answers already
+given to it stay in the submissions.{{end}}</p>
+
+<form method="post" action="/forms/{{.FormID}}/edit/fields/{{.Name}}/remove">
+  <button type="submit" class="quiet">Remove this {{if .Uses.Section}}heading{{else}}question{{end}}</button>
 </form>
 
 <p><a href="/forms/{{.FormID}}/edit">Back to the form</a></p>
