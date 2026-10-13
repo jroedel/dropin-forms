@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -134,7 +135,8 @@ func full(t *testing.T) formbus.Form {
 
 		Retired: []string{"text_1", "item_1"},
 
-		Listing: formbus.Listing{Heading: "Who is coming", Line: "Somebody at the {sitting} sitting", Limit: 20, OldestFirst: true},
+		Listing: formbus.Listing{Heading: "Who is coming", Line: "Somebody at the {sitting} sitting", Limit: 20, OldestFirst: true,
+			Sort: []formbus.SortKey{{By: "sitting"}, {By: formbus.SortSubmitted, Order: formbus.SortDesc}}},
 
 		Items: []formbus.Item{
 			{ID: "adult", Label: "Adult", Note: "Two courses", Price: types.Money(1500), Max: 8},
@@ -229,7 +231,7 @@ func TestADefinitionSurvivesTheRoundTrip(t *testing.T) {
 		t.Errorf("retired = %v, want %v -- a name lost here is a name the builder hands out again", got.Form.Retired, want.Retired)
 	}
 
-	if got.Form.Listing != want.Listing {
+	if !reflect.DeepEqual(got.Form.Listing, want.Listing) {
 		t.Errorf("listing = %+v, want %+v", got.Form.Listing, want.Listing)
 	}
 

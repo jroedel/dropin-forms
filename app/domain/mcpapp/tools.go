@@ -307,7 +307,14 @@ func definitionSchema(creating bool) map[string]any {
 			"heading":      str("What the list is called, like Who is coming."),
 			"line":         str("One line per submission, naming questions in braces, like {text_1} is bringing {radio_1}. Shows answers publicly; email and tel questions cannot be named."),
 			"limit":        integer("How many are shown."),
-			"oldest_first": boolean("List in the order they arrived."),
+			"oldest_first": boolean("List in the order they arrived. With sort, decides only what the sort leaves level."),
+			"sort": list(object(map[string]any{
+				"by": str("A question the line shows, or submitted_at for when it was sent."),
+				"order": map[string]any{
+					"type": "string", "enum": []string{"asc", "desc"},
+					"description": "asc unless said. A choice sorts in the order of its options, not its labels.",
+				},
+			}, "by"), "Order the list by answers, each step settling what the one before left level, like [{by: slot}, {by: submitted_at}]. Unanswered goes last. The newest up to limit are still the ones shown."),
 		}, "line"),
 		"fields": list(field, "The questions and section headings, in order."),
 		"items":  list(item, "Things for sale at a fixed price, each with a quantity box."),

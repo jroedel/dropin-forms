@@ -1036,18 +1036,19 @@ func (a app) listing(r *http.Request, f formbus.Form) *listingView {
 		view.Heading = "Already signed up"
 	}
 
+	// Recent reads the newest, newest first, and that is which ones are
+	// shown however they are ordered -- formbus.Listing.OldestFirst says why.
+	// So every order is the same page rearranged, not a different query.
+	// Arranged before the lines are written, because a sort reads answers and
+	// a line is only text.
+	formbus.Arrange(f, subs, func(s submissionbus.Submission) (formbus.Answers, time.Time) {
+		return s.Answers, s.CreatedAt
+	})
+
 	for _, s := range subs {
 		if line := f.ListLine(s.Answers); line != "" {
 			view.Lines = append(view.Lines, line)
 		}
-	}
-
-	// Recent reads the newest, newest first, and that is which ones are
-	// shown whichever way round they are listed -- formbus.Listing.OldestFirst
-	// says why. So oldest-first is the same page turned over, not a
-	// different query.
-	if f.Listing.OldestFirst {
-		slices.Reverse(view.Lines)
 	}
 
 	return view

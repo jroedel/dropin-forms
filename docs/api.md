@@ -229,7 +229,7 @@ Every key:
 | `daily_cap` | an abuse control, the most submissions in 24 hours. Leave it out unless asked |
 | `confirmation` | shown after somebody submits |
 | `notify` | extra addresses told about each submission |
-| `listing` | `{heading, line, limit, oldest_first}`: earlier submissions shown under the form, one `line` each, like `"{text_1} is bringing {radio_1}"`. This is public, so it may not name an email or phone question |
+| `listing` | `{heading, line, limit, oldest_first, sort}`: earlier submissions shown under the form, one `line` each, like `"{text_1} is bringing {radio_1}"`. This is public, so it may not name an email or phone question. `sort` is a list of `{by, order}` steps, like `[{"by": "select_1"}, {"by": "submitted_at", "order": "asc"}]`: `by` is a question the line shows or `submitted_at`, `order` is `asc` (the default) or `desc`. A choice sorts in the order of its options; unanswered goes last either way; what every step leaves level stays newest first, or oldest first with `oldest_first` |
 | `fields` | the questions and section headings, in order |
 | `items` | things for sale: `{id, label, note, price, max}` |
 

@@ -1945,6 +1945,43 @@ orders, because the other reading — the first fifty ever — means the
 fifty-first person submits, looks at the list, and is not on it. Not in the
 fingerprint, with the heading and the limit.
 
+**Sorted by an answer, when arrival is the wrong order** (#60). A time-slot
+sign-up is read to find the empty slots and to see who is before and after
+you, and in arrival order that means reading the whole list and sorting it in
+your head. `Listing.Sort` is a list of `{by, order}` steps; `by` is a question
+or `submitted_at`, and each step settles what the one before left level. What
+they all leave level stands in arrival order, newest or oldest first as
+`OldestFirst` says — so an empty `Sort` is exactly the list there was before,
+and no form changed order the day this shipped. `formbus.Arrange` does it, on
+the window `Recent` already read: the newest up to the limit are kept, *then*
+sorted, for the reason above.
+
+- **A choice sorts by where its option stands in the definition,** not by its
+  label: "10:00 am" sorts before "9:00 am" as text, and the author has already
+  written the options in the order they mean. Several boxes sort by the earliest
+  ticked; an option since removed sorts after every option still there.
+- **Numbers, amounts, dates and times by what they are; text without regard
+  to case.** No collation beyond that: `golang.org/x/text/collate` would put
+  "Ángela" among the As, and is a dependency for one comparison. Worth it the
+  day somebody asks.
+- **Unanswered goes last in both directions,** because a gap is neither the
+  smallest answer nor the largest.
+- **Only a question the line shows can be sorted by.** The order of a public
+  list publishes something about the answer it is sorted by — names sorted by
+  age say who is older than whom — and the person filling the form in was told
+  only that what the line shows would be shown. That rule also keeps email and
+  telephone out without a second one, and it is why `Sort` is not in the
+  fingerprint: it can reach no answer the fingerprint does not already cover.
+- `submitted_at` is a legal question name too; on a form with such a question,
+  `Check` refuses a step naming it rather than guessing which was meant.
+
+The settings page offers three steps — a question or "when it was sent", and
+which way — beside the newest/oldest choice it already had, now labelled as the
+tie-break it is. A form given more steps through the API shows all of them, so
+saving the page never drops one. The admin results list and its CSV are not
+sorted by this; that was the smaller half of the request and is left for when
+it is wanted.
+
 **Only settled submissions are listed.** `submissionbus.Recent` reads through
 `SettledStatuses`, the same rule `Status.Settled` states, so an order abandoned
 at the checkout page never appears as though it were a booking. On a form that

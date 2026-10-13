@@ -53,6 +53,10 @@ type settingsView struct {
 	ListLimit   string
 	ListOldest  bool
 
+	// ListSort is the list's order, a row per step, with empty rows to add
+	// more. See sortRows for how many.
+	ListSort []sortRow
+
 	// Listable is the questions the list's line may name, for the help text
 	// beside it: a template is only writable by somebody who can see the
 	// names it is written in. Email and telephone questions are left out,
@@ -60,6 +64,9 @@ type settingsView struct {
 	Listable    []listable
 	ListDefault int
 	ListMax     int
+
+	// ListSubmitted is the value a sort row sends for "when it was sent".
+	ListSubmitted string
 
 	// Sells says whether this form has anything for sale, which decides
 	// whether the money half of the page is shown at all. A survey should not
@@ -75,6 +82,60 @@ type settingsView struct {
 type listable struct {
 	Name  string
 	Label string
+}
+
+// sortRow is one step of the list's order as the page shows it.
+type sortRow struct {
+	By   string
+	Desc bool
+}
+
+// sortRowsShown is how many steps the page offers when fewer are set. Three
+// is a slot, then a name, then the time it was sent, which is more than any
+// list here has wanted; a form given more through the API shows all of them,
+// so saving this page never drops a step nobody could see.
+const sortRowsShown = 3
+
+// sortRows pads a list's order out to the rows the page shows.
+func sortRows(keys []formbus.SortKey) []sortRow {
+	rows := make([]sortRow, 0, max(sortRowsShown, len(keys)))
+
+	for _, k := range keys {
+		rows = append(rows, sortRow{By: k.By, Desc: k.Desc()})
+	}
+
+	for len(rows) < sortRowsShown {
+		rows = append(rows, sortRow{})
+	}
+
+	return rows
+}
+
+// saidSort reads the order back from the page. The two selects of a row are
+// always both sent, so the n-th "by" and the n-th "order" belong together; a
+// row left on "nothing" is skipped rather than kept as a step that orders by
+// nothing, which Check would refuse.
+func saidSort(r *http.Request) []formbus.SortKey {
+	by := r.PostForm["list_sort_by"]
+	order := r.PostForm["list_sort_order"]
+
+	var keys []formbus.SortKey
+
+	for i, b := range by {
+		b = strings.TrimSpace(b)
+		if b == "" {
+			continue
+		}
+
+		k := formbus.SortKey{By: b, Order: formbus.SortAsc}
+		if i < len(order) && order[i] == string(formbus.SortDesc) {
+			k.Order = formbus.SortDesc
+		}
+
+		keys = append(keys, k)
+	}
+
+	return keys
 }
 
 // settings shows the page.
@@ -113,6 +174,8 @@ func settingsOf(s formbus.Stored) settingsView {
 		ListLine:        f.Listing.Line,
 		ListDefault:     formbus.ListingDefault,
 		ListMax:         formbus.ListingMax,
+		ListSort:        sortRows(f.Listing.Sort),
+		ListSubmitted:   formbus.SortSubmitted,
 	}
 
 	for _, fld := range f.Questions() {
@@ -196,6 +259,8 @@ func (a app) saveSettings(w http.ResponseWriter, r *http.Request) {
 	said.ListLine = value(r, "list_line")
 	said.ListLimit = value(r, "list_limit")
 	said.ListOldest = r.PostFormValue("list_order") == "oldest"
+	sorted := saidSort(r)
+	said.ListSort = sortRows(sorted)
 
 	// The definition as it stands, with its fields and items carried through
 	// untouched: this page is about everything except them.
@@ -212,6 +277,7 @@ func (a app) saveSettings(w http.ResponseWriter, r *http.Request) {
 	f.Listing.Heading = said.ListHeading
 	f.Listing.Line = said.ListLine
 	f.Listing.OldestFirst = said.ListOldest
+	f.Listing.Sort = sorted
 
 	var problems []string
 

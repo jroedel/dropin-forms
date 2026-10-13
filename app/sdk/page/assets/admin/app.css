@@ -812,6 +812,26 @@ h3 { font-size: 1rem; margin: 1.5rem 0 0.5rem; }
   .will-call td { padding: 0.6rem 0.35rem; }
 }
 
+/* One step of a list's sort order on the settings page: "then by", the
+   question, and which way, on one line where there is room and wrapping onto
+   two where there is not. Added with issue #60. The question's select takes
+   what space is left, so a long label does not push the direction off a
+   phone's screen. */
+.sort-step {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.sort-step label {
+  min-width: 4.5rem;
+}
+
+.sort-step select {
+  width: auto;
+  flex: 1 1 10rem;
+  min-width: 0;
+}
+
 /* A role control inside a table cell: a select and the button that commits it,
    on one line, sized so the two do not wrap apart on a narrow screen. Added
    with the role change of issue #29 -- before it, the only way to change a

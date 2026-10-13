@@ -110,7 +110,35 @@
   </div>
 
   <fieldset class="field">
-    <legend>In what order</legend>
+    <legend>Sorted by</legend>
+    <p class="help">Like a time-slot sign-up read in slot order, so the empty
+    slots show. Each step settles what the one above it left level. A choice
+    is sorted in the order its options are listed, not by its words; numbers,
+    amounts, dates and times by what they are; text from A to Z whatever its
+    capitals. Somebody who left the question blank goes to the bottom either
+    way. Only a question the line shows can be sorted by, because the order of
+    the list tells people about it too.</p>
+    {{range $i, $row := .ListSort}}
+    <p class="choice sort-step">
+      <label for="list_sort_by_{{$i}}">{{if eq $i 0}}First by{{else}}then by{{end}}</label>
+      <select id="list_sort_by_{{$i}}" name="list_sort_by">
+        <option value="">{{if eq $i 0}}nothing: just the order below{{else}}nothing more{{end}}</option>
+        {{range $.Listable}}
+        <option value="{{.Name}}" {{if eq .Name $row.By}}selected{{end}}>{{.Label}}</option>
+        {{end}}
+        <option value="{{$.ListSubmitted}}" {{if eq $.ListSubmitted $row.By}}selected{{end}}>when it was sent</option>
+      </select>
+      <label class="visually-hidden" for="list_sort_order_{{$i}}">which way</label>
+      <select id="list_sort_order_{{$i}}" name="list_sort_order">
+        <option value="asc" {{if not $row.Desc}}selected{{end}}>first to last (A to Z, 1 to 9, earliest first)</option>
+        <option value="desc" {{if $row.Desc}}selected{{end}}>last to first (Z to A, 9 to 1, latest first)</option>
+      </select>
+    </p>
+    {{end}}
+  </fieldset>
+
+  <fieldset class="field">
+    <legend>Otherwise, or when those leave two level</legend>
     <p class="choice">
       <input type="radio" id="list_order_newest" name="list_order" value="newest"
              {{if not .ListOldest}}checked{{end}}>

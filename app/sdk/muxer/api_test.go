@@ -627,3 +627,45 @@ func TestAnUnknownAPIAddressIsAJSON404(t *testing.T) {
 	}
 	answer(t, w)
 }
+
+// A list's order goes in and comes back out in the shape the docs give, and a
+// direction that is neither way is a problem Check names rather than a value
+// quietly read as ascending.
+func TestAListsOrderIsSetThroughTheAPI(t *testing.T) {
+	a := newAdmin(t, "")
+	boss := siteBoss(t, a, "site@schoenstatt.test")
+	key := keyFor(t, a, boss)
+
+	def := retreat()
+	def["listing"] = map[string]any{
+		"line": "{text_1} -- {radio_1}",
+		"sort": []map[string]any{{"by": "radio_1"}, {"by": "submitted_at", "order": "desc"}},
+	}
+
+	w := call(t, a, http.MethodPost, "/api/v1/forms", key, def)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create = %d:\n%s", w.Code, short(w.Body.String()))
+	}
+	if f := formOf(t, w); len(f.Problems) != 0 {
+		t.Errorf("problems = %v, want none", f.Problems)
+	}
+
+	read := answer(t, call(t, a, http.MethodGet, "/api/v1/forms/advent-retreat-2026", key, nil))
+	listing := read["definition"].(map[string]any)["listing"].(map[string]any)
+
+	got, _ := json.Marshal(listing["sort"])
+	if want := `[{"by":"radio_1"},{"by":"submitted_at","order":"desc"}]`; string(got) != want {
+		t.Errorf("sort = %s, want %s", got, want)
+	}
+
+	def["slug"] = "advent-retreat-2027"
+	def["listing"] = map[string]any{
+		"line": "{text_1}",
+		"sort": []map[string]any{{"by": "text_1", "order": "up"}},
+	}
+
+	f := formOf(t, call(t, a, http.MethodPost, "/api/v1/forms", key, def))
+	if !strings.Contains(strings.Join(f.Problems, "\n"), `sorted "up"`) {
+		t.Errorf("problems = %v, want one about the direction", f.Problems)
+	}
+}
