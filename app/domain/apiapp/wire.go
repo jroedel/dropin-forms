@@ -123,10 +123,19 @@ type itemDoc struct {
 }
 
 type listingDoc struct {
-	Heading     string `json:"heading,omitempty"`
-	Line        string `json:"line"`
-	Limit       int    `json:"limit,omitempty"`
-	OldestFirst bool   `json:"oldest_first,omitempty"`
+	Heading     string    `json:"heading,omitempty"`
+	Line        string    `json:"line"`
+	Limit       int       `json:"limit,omitempty"`
+	OldestFirst bool      `json:"oldest_first,omitempty"`
+	Sort        []sortDoc `json:"sort,omitzero"`
+}
+
+// sortDoc is one step of a list's order. Order is passed through as written,
+// and formbus's Check is what refuses one that is neither asc nor desc, so the
+// sentence about it is the same one the settings page and a TOML file get.
+type sortDoc struct {
+	By    string `json:"by"`
+	Order string `json:"order,omitempty"`
 }
 
 // formDoc is what every read or write of one form answers with.
@@ -219,6 +228,10 @@ func formOf(d definitionDoc) (formbus.Form, []string) {
 			Line:        d.Listing.Line,
 			Limit:       d.Listing.Limit,
 			OldestFirst: d.Listing.OldestFirst,
+		}
+
+		for _, k := range d.Listing.Sort {
+			f.Listing.Sort = append(f.Listing.Sort, formbus.SortKey{By: k.By, Order: formbus.SortOrder(k.Order)})
 		}
 	}
 
@@ -328,12 +341,16 @@ func definitionOf(f formbus.Form) definitionDoc {
 		d.Origins = append(d.Origins, o.String())
 	}
 
-	if f.Listing != (formbus.Listing{}) {
+	if !f.Listing.IsZero() {
 		d.Listing = &listingDoc{
 			Heading:     f.Listing.Heading,
 			Line:        f.Listing.Line,
 			Limit:       f.Listing.Limit,
 			OldestFirst: f.Listing.OldestFirst,
+		}
+
+		for _, k := range f.Listing.Sort {
+			d.Listing.Sort = append(d.Listing.Sort, sortDoc{By: k.By, Order: string(k.Order)})
 		}
 	}
 

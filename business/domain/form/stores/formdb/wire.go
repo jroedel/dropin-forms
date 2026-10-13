@@ -96,6 +96,13 @@ type listing struct {
 	Limit   int    `json:"limit,omitempty"`
 
 	OldestFirst bool `json:"oldest_first,omitempty"`
+
+	Sort []sortKey `json:"sort,omitzero"`
+}
+
+type sortKey struct {
+	By    string `json:"by"`
+	Order string `json:"order,omitempty"`
 }
 
 type option struct {
@@ -144,6 +151,10 @@ func encode(f formbus.Form) (string, error) {
 
 			OldestFirst: f.Listing.OldestFirst,
 		},
+	}
+
+	for _, k := range f.Listing.Sort {
+		w.Listing.Sort = append(w.Listing.Sort, sortKey{By: k.By, Order: string(k.Order)})
 	}
 
 	for _, o := range f.Origins {
@@ -244,6 +255,10 @@ func decode(body string) (formbus.Form, error) {
 
 			OldestFirst: w.Listing.OldestFirst,
 		},
+	}
+
+	for _, k := range w.Listing.Sort {
+		f.Listing.Sort = append(f.Listing.Sort, formbus.SortKey{By: k.By, Order: formbus.SortOrder(k.Order)})
 	}
 
 	for _, raw := range w.Origins {

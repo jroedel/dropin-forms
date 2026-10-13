@@ -231,6 +231,15 @@ type listing struct {
 	Limit   int    `toml:"limit"`
 
 	OldestFirst bool `toml:"oldest_first"`
+
+	// Sort is written as an array of inline tables,
+	// sort = [{by = "slot"}, {by = "submitted_at", order = "desc"}].
+	Sort []sortKey `toml:"sort"`
+}
+
+type sortKey struct {
+	By    string `toml:"by"`
+	Order string `toml:"order"`
 }
 
 type field struct {
@@ -310,6 +319,10 @@ func (w form) toForm() (formbus.Form, error) {
 
 			OldestFirst: w.Listing.OldestFirst,
 		},
+	}
+
+	for _, k := range w.Listing.Sort {
+		f.Listing.Sort = append(f.Listing.Sort, formbus.SortKey{By: k.By, Order: formbus.SortOrder(k.Order)})
 	}
 
 	slug, err := types.ParseSlug(w.ID)

@@ -3,6 +3,7 @@ package muxer_test
 import (
 	"net/http"
 	"net/url"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -654,6 +655,11 @@ func TestTheListOfEarlierAnswersIsSetFromTheSettingsPage(t *testing.T) {
 		"list_line":    {"{text_1} is coming"},
 		"list_limit":   {"20"},
 		"list_order":   {"oldest"},
+
+		// Three rows, the way the page sends them: the empty middle one is
+		// skipped, and the steps either side of it are kept in order.
+		"list_sort_by":    {"text_1", "", formbus.SortSubmitted},
+		"list_sort_order": {"desc", "asc", "asc"},
 	}, cookie)
 	if w.Code != http.StatusOK {
 		t.Fatalf("saving the list = %d, want 200:\n%s", w.Code, w.Body)
@@ -664,9 +670,16 @@ func TestTheListOfEarlierAnswersIsSetFromTheSettingsPage(t *testing.T) {
 		t.Fatalf("ByID: %v", err)
 	}
 
-	want := formbus.Listing{Heading: "Who is coming", Line: "{text_1} is coming", Limit: 20, OldestFirst: true}
-	if served.Listing != want {
+	want := formbus.Listing{Heading: "Who is coming", Line: "{text_1} is coming", Limit: 20, OldestFirst: true,
+		Sort: []formbus.SortKey{{By: "text_1", Order: formbus.SortDesc}, {By: formbus.SortSubmitted, Order: formbus.SortAsc}}}
+	if !reflect.DeepEqual(served.Listing, want) {
 		t.Errorf("served listing = %+v, want %+v", served.Listing, want)
+	}
+
+	// The page shows the order it saved, so saving it again keeps it.
+	page = a.get(t, "/forms/supper-2026/edit/settings", cookie).Body.String()
+	if !strings.Contains(page, `<option value="desc" selected>`) || !strings.Contains(page, `<option value="submitted_at" selected>`) {
+		t.Errorf("the settings page does not show the saved order:\n%s", page)
 	}
 
 	for line, reason := range map[string]string{
@@ -685,7 +698,19 @@ func TestTheListOfEarlierAnswersIsSetFromTheSettingsPage(t *testing.T) {
 		}
 	}
 
-	if f, _ := a.catalogue.ByID(mustSlug(t, "supper-2026")); f.Listing != want {
+	// Sorted by the email, which the line cannot show: the order of a public
+	// list would publish something about it all the same.
+	w = a.post(t, "/forms/supper-2026/edit/settings", url.Values{
+		"title":           {"Parish supper"},
+		"list_line":       {"{text_1} is coming"},
+		"list_sort_by":    {"email_1"},
+		"list_sort_order": {"asc"},
+	}, cookie)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "cannot be shown on a public page") {
+		t.Errorf("sorting by the email on a live form = %d, want 409 saying why:\n%s", w.Code, w.Body)
+	}
+
+	if f, _ := a.catalogue.ByID(mustSlug(t, "supper-2026")); !reflect.DeepEqual(f.Listing, want) {
 		t.Errorf("after the refusals the form serves %+v, want it unchanged", f.Listing)
 	}
 }

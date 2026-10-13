@@ -201,3 +201,30 @@ func TestAnOldestFirstListKeepsTheNewestAndTurnsThemOver(t *testing.T) {
 		t.Error("the oldest sign-up is shown past a limit of two; want the newest two kept")
 	}
 }
+
+// Sorted by a choice, in the order its options are written rather than by
+// their labels, with what the sort leaves level in the order they arrived.
+// Issue #60's case: a sheet read to see what is already covered.
+func TestASortedListFollowsTheOptionsThenArrival(t *testing.T) {
+	h := potluckSurfaceWith(t, func(l *formbus.Listing) {
+		l.OldestFirst = true
+		l.Sort = []formbus.SortKey{{By: "dish"}}
+	})
+
+	signUp(t, h, "Ann K.", "", "dessert")
+	signUp(t, h, "Maria G.", "", "main")
+	signUp(t, h, "Tom R.", "", "main")
+
+	body := getPage(t, h, potluckPath).Body.String()
+
+	maria := strings.Index(body, "<li>Maria G. -- A main dish</li>")
+	tom := strings.Index(body, "<li>Tom R. -- A main dish</li>")
+	ann := strings.Index(body, "<li>Ann K. -- Dessert</li>")
+
+	switch {
+	case maria < 0 || tom < 0 || ann < 0:
+		t.Fatalf("the list does not show all three sign-ups:\n%s", body)
+	case !(maria < tom && tom < ann):
+		t.Error("want the main dishes first, in the order they arrived, then the dessert")
+	}
+}

@@ -361,11 +361,38 @@ func settingsSummary(f formbus.Form) []settingRow {
 			order = "oldest at the top"
 		}
 
+		if len(f.Listing.Sort) > 0 {
+			order = "sorted by " + sortPhrase(f) + ", then " + order
+		}
+
 		rows = append(rows, set("Shows beneath it, publicly",
 			fmt.Sprintf("the newest %d, %s, each as %s", f.Listing.Shown(), order, f.Listing.Line)))
 	}
 
 	return rows
+}
+
+// sortPhrase is a list's order in words: "Your slot, then Your name (Z to A)".
+// By label rather than by name, as everything else in this summary is.
+func sortPhrase(f formbus.Form) string {
+	steps := make([]string, 0, len(f.Listing.Sort))
+
+	for _, k := range f.Listing.Sort {
+		step := k.By
+		if k.By == formbus.SortSubmitted {
+			step = "when it was sent"
+		} else if fld, ok := f.Field(k.By); ok {
+			step = fld.Label
+		}
+
+		if k.Desc() {
+			step += " (last to first)"
+		}
+
+		steps = append(steps, step)
+	}
+
+	return strings.Join(steps, ", then ")
 }
 
 // detailOf is a field's own rules in one phrase, for the list.
