@@ -308,6 +308,14 @@ type Storer interface {
 	// ChangeCounts is how many times each of a form's submissions has been
 	// changed, absent for none.
 	ChangeCounts(ctx context.Context, form types.Slug) (map[types.ID]int, error)
+
+	// ByPaymentRef reads the submission a Stripe payment reference belongs
+	// to, hidden or not, and ErrNotFound when none does.
+	ByPaymentRef(ctx context.Context, ref string) (Submission, error)
+
+	// Paid lists a form's paid submissions that carry a payment reference,
+	// hidden ones included, newest first.
+	Paid(ctx context.Context, form types.Slug) ([]Submission, error)
 }
 
 // Business is the set of operations on submissions.
@@ -432,6 +440,39 @@ func (b *Business) ByForm(ctx context.Context, form types.Slug) ([]Submission, e
 	out, err := b.store.ByForm(ctx, form)
 	if err != nil {
 		return nil, fmt.Errorf("listing the submissions: %w", err)
+	}
+
+	return out, nil
+}
+
+// ByPaymentRef reads the submission a Stripe payment reference belongs to.
+//
+// This is how a line in a bank deposit is traced back to an order: the
+// reference recorded when the payment was confirmed is the one Stripe puts on
+// the charge, the refund and the dispute alike. Hidden submissions are found,
+// because hiding an order does not take its money out of the deposit.
+func (b *Business) ByPaymentRef(ctx context.Context, ref string) (Submission, error) {
+	if ref == "" {
+		return Submission{}, ErrNotFound
+	}
+
+	s, err := b.store.ByPaymentRef(ctx, ref)
+	if err != nil {
+		return Submission{}, fmt.Errorf("reading the submission for a payment: %w", err)
+	}
+
+	return s, nil
+}
+
+// Paid lists a form's paid submissions, hidden ones included, newest first.
+//
+// Only those with a payment reference, which is every order paid through
+// Stripe: what reads this is looking for money that has not reached the bank
+// yet, and an order with no reference was never going to.
+func (b *Business) Paid(ctx context.Context, form types.Slug) ([]Submission, error) {
+	out, err := b.store.Paid(ctx, form)
+	if err != nil {
+		return nil, fmt.Errorf("listing the paid submissions: %w", err)
 	}
 
 	return out, nil

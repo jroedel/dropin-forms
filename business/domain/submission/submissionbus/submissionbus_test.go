@@ -61,6 +61,27 @@ func (m *memStore) Accept(_ context.Context, s submissionbus.Submission, nonce s
 	return true, nil
 }
 
+func (m *memStore) ByPaymentRef(_ context.Context, ref string) (submissionbus.Submission, error) {
+	for _, s := range m.subs {
+		if s.PaymentRef != "" && s.PaymentRef == ref {
+			return s, nil
+		}
+	}
+
+	return submissionbus.Submission{}, submissionbus.ErrNotFound
+}
+
+func (m *memStore) Paid(_ context.Context, form types.Slug) ([]submissionbus.Submission, error) {
+	var out []submissionbus.Submission
+	for _, s := range m.subs {
+		if s.Form == form && s.Status == submissionbus.StatusPaid && s.PaymentRef != "" {
+			out = append(out, s)
+		}
+	}
+
+	return out, nil
+}
+
 func (m *memStore) ByID(_ context.Context, id types.ID) (submissionbus.Submission, error) {
 	if m.fail != nil {
 		return submissionbus.Submission{}, m.fail

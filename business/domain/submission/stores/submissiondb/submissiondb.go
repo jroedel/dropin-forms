@@ -96,6 +96,13 @@ CREATE TABLE IF NOT EXISTS submissions (
 CREATE INDEX IF NOT EXISTS submissions_form_created ON submissions (form_slug, created_at DESC);
 CREATE INDEX IF NOT EXISTS submissions_status ON submissions (status);
 
+-- Reconciling a deposit looks a submission up by Stripe's reference for the
+-- payment, once per line of the deposit. Partial, because most rows on most
+-- forms have no reference at all and an index full of empty strings is all
+-- one key. A query uses it only when it repeats the condition, which
+-- ByPaymentRef does.
+CREATE INDEX IF NOT EXISTS submissions_payment_ref ON submissions (payment_ref) WHERE payment_ref != '';
+
 -- One row per grant that has been spent. The primary key is the whole
 -- mechanism: redeeming a grant twice is a constraint violation rather than a
 -- check somebody has to remember to perform.
@@ -608,6 +615,63 @@ func (s *Store) Unpaid(ctx context.Context, from, before time.Time) ([]submissio
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("reading the unpaid submissions: %w", err)
+	}
+
+	return out, nil
+}
+
+// ByPaymentRef reads the submission a Stripe payment reference belongs to.
+//
+// Hidden submissions are found too, as ByID finds them: a hidden order whose
+// money reached the bank is still money in the deposit, and leaving it out
+// would show the accountant a deposit that does not add up.
+//
+// The reference is not unique in the schema, because nothing on Stripe's side
+// promises that and a constraint here would turn a surprise into a failed
+// payment confirmation. The earliest row is the answer, which is the order
+// that started the payment.
+func (s *Store) ByPaymentRef(ctx context.Context, ref string) (submissionbus.Submission, error) {
+	const q = selectColumns + ` WHERE payment_ref = ? AND payment_ref != '' ORDER BY created_at, rowid LIMIT 1`
+
+	sub, err := scan(s.db.QueryRowContext(ctx, q, ref))
+
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return submissionbus.Submission{}, submissionbus.ErrNotFound
+	case err != nil:
+		return submissionbus.Submission{}, fmt.Errorf("reading the submission: %w", err)
+	}
+
+	return sub, nil
+}
+
+// Paid lists a form's paid submissions that carry a payment reference,
+// hidden ones included, newest first.
+//
+// Hidden ones included for ByPaymentRef's reason: this is read to find money
+// that has not reached the bank yet, and a hidden order's money is on its way
+// there all the same.
+func (s *Store) Paid(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error) {
+	const q = selectColumns + ` WHERE form_slug = ? AND status = ? AND payment_ref != '' ORDER BY created_at DESC, rowid DESC`
+
+	rows, err := s.db.QueryContext(ctx, q, form.String(), submissionbus.StatusPaid.String())
+	if err != nil {
+		return nil, fmt.Errorf("querying the paid submissions: %w", err)
+	}
+	defer rows.Close()
+
+	var out []submissionbus.Submission
+	for rows.Next() {
+		sub, err := scan(rows)
+		if err != nil {
+			return nil, fmt.Errorf("reading a paid submission: %w", err)
+		}
+
+		out = append(out, sub)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading the paid submissions: %w", err)
 	}
 
 	return out, nil
