@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"github.com/jroedel/dropin-forms/app/domain/apiapp"
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
+	"github.com/jroedel/dropin-forms/app/domain/depositapp"
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
 	"github.com/jroedel/dropin-forms/app/domain/feedapp"
 	"github.com/jroedel/dropin-forms/app/domain/formapp"
@@ -307,7 +308,7 @@ func run() error {
 	adminPages, err := page.NewRenderer(log, page.AdminChrome(),
 		authapp.Templates, submissionapp.Templates, notifyapp.Templates, peopleapp.Templates,
 		formapp.Templates, willcallapp.Templates, siteapp.Templates, feedapp.Templates, apiapp.Templates,
-		oauthapp.Templates)
+		oauthapp.Templates, depositapp.Templates)
 	if err != nil {
 		return err
 	}
@@ -379,6 +380,11 @@ func run() error {
 	if payments != nil {
 		mc.Payments = payments
 		mc.Embed.Payments = payments
+	}
+
+	// The same trap, the same way.
+	if deposits != nil {
+		mc.Deposits = deposits
 	}
 
 	log.Info("starting",

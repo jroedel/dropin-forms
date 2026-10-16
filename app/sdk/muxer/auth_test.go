@@ -16,6 +16,7 @@ import (
 
 	"github.com/jroedel/dropin-forms/app/domain/apiapp"
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
+	"github.com/jroedel/dropin-forms/app/domain/depositapp"
 	"github.com/jroedel/dropin-forms/app/domain/formapp"
 	"github.com/jroedel/dropin-forms/app/domain/notifyapp"
 	"github.com/jroedel/dropin-forms/app/domain/oauthapp"
@@ -30,6 +31,8 @@ import (
 	"github.com/jroedel/dropin-forms/business/domain/access/stores/accessdb"
 	"github.com/jroedel/dropin-forms/business/domain/apikey/apikeybus"
 	"github.com/jroedel/dropin-forms/business/domain/apikey/stores/apikeydb"
+	"github.com/jroedel/dropin-forms/business/domain/deposit/depositbus"
+	"github.com/jroedel/dropin-forms/business/domain/deposit/stores/depositdb"
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/domain/form/stores/formdb"
 	"github.com/jroedel/dropin-forms/business/domain/notify/notifybus"
@@ -76,6 +79,11 @@ type harness struct {
 	// without signing in for it -- signing in is throttled, and most API
 	// tests are about what a key reaches rather than how it was made.
 	keys *apikeybus.Business
+
+	// deposits is the real deposit domain over the same database, reading
+	// from ledger, a fake Stripe a test fills before calling Sync.
+	deposits *depositbus.Business
+	ledger   *fakeLedger
 }
 
 func newAdmin(t *testing.T, bootstrap string) harness {
@@ -109,6 +117,9 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 	if err := apikeydb.Init(t.Context(), db); err != nil {
 		t.Fatalf("apikeydb.Init: %v", err)
 	}
+	if err := depositdb.Init(t.Context(), db); err != nil {
+		t.Fatalf("depositdb.Init: %v", err)
+	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	users := userbus.NewBusiness(log, userdb.NewStore(db))
@@ -116,10 +127,13 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 	access := accessbus.NewBusiness(log, accessdb.NewStore(db))
 	submissions := submissionbus.NewBusiness(log, submissiondb.NewStore(db))
 	sent := &mail.Recorder{}
+	ledger := &fakeLedger{}
+	deposits := depositbus.NewBusiness(log, ledger, depositdb.NewStore(db), submissions)
 
 	renderer, err := page.NewRenderer(log, page.AdminChrome(),
 		authapp.Templates, submissionapp.Templates, notifyapp.Templates, peopleapp.Templates,
-		formapp.Templates, willcallapp.Templates, siteapp.Templates, apiapp.Templates, oauthapp.Templates)
+		formapp.Templates, willcallapp.Templates, siteapp.Templates, apiapp.Templates, oauthapp.Templates,
+		depositapp.Templates)
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
 	}
@@ -171,6 +185,9 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 	for table, columns := range apikeydb.Expected {
 		expected[table] = columns
 	}
+	for table, columns := range depositdb.Expected {
+		expected[table] = columns
+	}
 
 	h, err := muxer.Admin(muxer.Config{
 		Log:          log,
@@ -180,6 +197,7 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 		Access:       access,
 		Submissions:  submissions,
 		Table:        submissions,
+		Deposits:     deposits,
 		Forms:        catalogue,
 		Builder:      catalogue,
 		EmbedBaseURL: "https://f.forms.test",
@@ -198,7 +216,7 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 	return harness{
 		h: h, users: users, access: access, sent: sent,
 		notify: notifier, muteKey: muteKey, catalogue: catalogue, orders: submissions,
-		keys: keys,
+		keys: keys, deposits: deposits, ledger: ledger,
 	}
 }
 

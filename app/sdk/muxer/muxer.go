@@ -85,6 +85,7 @@ import (
 
 	"github.com/jroedel/dropin-forms/app/domain/apiapp"
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
+	"github.com/jroedel/dropin-forms/app/domain/depositapp"
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
 	"github.com/jroedel/dropin-forms/app/domain/feedapp"
 	"github.com/jroedel/dropin-forms/app/domain/formapp"
@@ -153,6 +154,12 @@ type Config struct {
 	// Optional: without it the will-call routes are not mounted, which is
 	// right for an installation that has no table to work.
 	Table willcallapp.Orders
+
+	// Deposits is the deposits Stripe has paid into the bank, which the
+	// deposits page reads. Optional, and nil when Stripe is not configured:
+	// without it the page is not mounted and the results page does not link
+	// to it.
+	Deposits depositapp.Deposits
 
 	// Hiding is what takes a submission out of the lists and puts it back:
 	// the same submissions again, with two writes. Its own field for the
@@ -445,6 +452,7 @@ func Admin(cfg Config) (http.Handler, error) {
 		CanFeed:     cfg.Feeds != nil && cfg.FeedRows != nil,
 		CanEdit:     cfg.Builder != nil,
 		CanWillCall: cfg.Table != nil,
+		CanDeposits: cfg.Deposits != nil,
 	}
 
 	if cfg.Notify != nil {
@@ -543,6 +551,19 @@ func Admin(cfg Config) (http.Handler, error) {
 			Accounts: cfg.Users,
 			Render:   cfg.Render,
 		}, guard, door)
+	}
+
+	// The deposits to the bank, behind results like the submissions it is
+	// reconciled against: reading what reached the bank is reading the
+	// numbers, and somebody keeping the books should change nothing.
+	if cfg.Deposits != nil {
+		depositapp.Routes(mux, depositapp.Config{
+			Log:      cfg.Log,
+			Forms:    cfg.Forms,
+			Deposits: cfg.Deposits,
+			Orders:   cfg.Submissions,
+			Render:   cfg.Render,
+		}, guard, results)
 	}
 
 	// The builder, behind the same per-form admin gate as the people page for
