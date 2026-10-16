@@ -2346,6 +2346,69 @@ real binary with Claude Code's own metadata document, fetched from claude.ai.
 feed keys. None was asked for, and each is a decision about other people's
 access or about the record of what was paid, better made on its own page.
 
+### Deposits, as built
+
+The accountant reconciles Stripe's deposits to the checking account, and a
+deposit is not a payment: Stripe collects a week's payments from every form,
+takes its fees and any refunds out, and pays the rest in as one line on the
+bank statement. Until this, the service kept one Stripe fact per order -- the
+payment intent, in `submissions.payment_ref` -- and nothing about fees, nets or
+deposits at all.
+
+**Stripe can say exactly what is in a deposit it scheduled itself.** An
+automatic payout's balance transactions are listed with
+`GET /v1/balance_transactions?payout=po_…`, and expanding each one's `source`
+reaches the charge, refund or dispute behind it, each of which names its
+payment intent. That intent is the one this service recorded when the payment
+was confirmed, so it is the whole join, and no metadata needs to travel. A
+payout somebody starts by hand is just an amount and Stripe cannot break it
+down; it is kept with no lines, and the page says why. The office's payouts
+are automatic.
+
+**Pulled hourly, not pushed.** A webhook would be a fifth event on the
+endpoint, beside four whose absence already fails silently, and a deposit is
+not urgent -- it reaches the bank days after the payments in it.
+`cmd/dropin-forms/deposits.go` is a third ticker of `unpaid.go`'s shape. Each
+sync lists payouts created since thirty days before the newest kept one, and
+reads the lines of each that is paid, not yet kept, and (if automatic)
+reconciled by Stripe. That last condition matters: Stripe works out a payout's
+lines after paying it, and a list read too early would be short and kept
+short forever.
+
+**Kept, not fetched per view.** A paid payout does not change, so each is read
+once into `payouts` and `payout_lines` and never pruned; they are the ledger.
+A form's page needs every deposit holding any of its money, with the whole of
+each deposit beside the form's share, and fetching that from Stripe on every
+view would be slow and would spend the rate limit on reloads.
+
+**Four kinds, by Stripe's reporting category.** Sale, refund, dispute and
+other. The category is what Stripe's own reconciliation reports group by; the
+transaction type has dozens of values, several of them older names for the
+same thing. The type is still kept, for the export, because somebody checking
+a line against the dashboard looks for that word.
+
+**Every line is kept, ours or not.** The account may carry payments this
+service did not take, and Stripe's own fees appear as lines of their own. A
+deposit's lines must add up to the deposit or the page cannot show a form's
+share beside the bank line with the rest accounted for, so each deposit is
+shown as this form, other forms, and not from a form. When the kept lines do
+not add up to the payout, the payout is marked and the log says so at Error,
+rather than showing a breakdown that quietly fails to match the bank.
+
+**A line traced late is traced on the next sync.** If a payment's confirmation
+reached this service after its deposit was kept -- a webhook failing for a day
+-- the line was kept as not from a form. Every sync looks those up again. It is
+one indexed lookup per such line, and on an account used only by this service
+there are none.
+
+**Stripe stays in `stripepay`.** `stripepay.Deposits` implements
+`depositbus.Ledger`, so stripe-go is still imported by one package (section
+10). It reads responses into the SDK's structs, unlike the webhook: an event
+arrives at whatever API version its endpoint was made at, but a response to a
+request this binary makes is at the version the SDK pins. A 403 -- the key
+lacks a permission -- becomes a sentence naming the permission to add on the
+API keys page, with Stripe's own spelling of it alongside.
+
 ## 10. Dependencies
 
 A dependency needs a comment naming the standard-library answer that was

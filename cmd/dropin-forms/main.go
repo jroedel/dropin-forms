@@ -28,6 +28,8 @@ import (
 	"github.com/jroedel/dropin-forms/business/domain/access/stores/accessdb"
 	"github.com/jroedel/dropin-forms/business/domain/apikey/apikeybus"
 	"github.com/jroedel/dropin-forms/business/domain/apikey/stores/apikeydb"
+	"github.com/jroedel/dropin-forms/business/domain/deposit/depositbus"
+	"github.com/jroedel/dropin-forms/business/domain/deposit/stores/depositdb"
 	"github.com/jroedel/dropin-forms/business/domain/feed/feedbus"
 	"github.com/jroedel/dropin-forms/business/domain/feed/stores/feeddb"
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
@@ -163,6 +165,13 @@ func run() error {
 		return err
 	}
 
+	// The deposits Stripe has paid into the bank. No ordering constraint: a
+	// line names a submission by identifier, not by foreign key, for the
+	// reason depositdb's schema gives.
+	if err := depositdb.Init(ctx, db); err != nil {
+		return err
+	}
+
 	// After userdb, because a notification preference belongs to an account
 	// and its row references one.
 	if err := notifydb.Init(ctx, db); err != nil {
@@ -201,7 +210,7 @@ func run() error {
 	expected := sqldb.Expected{}
 	for _, part := range []sqldb.Expected{
 		sqldb.Infrastructure, userdb.Expected, accessdb.Expected, submissiondb.Expected,
-		paydb.Expected, notifydb.Expected, formdb.Expected, feeddb.Expected, apikeydb.Expected,
+		paydb.Expected, depositdb.Expected, notifydb.Expected, formdb.Expected, feeddb.Expected, apikeydb.Expected,
 	} {
 		for table, columns := range part {
 			if _, clash := expected[table]; clash {
@@ -246,6 +255,11 @@ func run() error {
 	}
 
 	payments, howPay, err := newPayments(log, cfg, db, submissions)
+	if err != nil {
+		return err
+	}
+
+	deposits, err := newDeposits(log, cfg, db, submissions)
 	if err != nil {
 		return err
 	}
@@ -423,6 +437,10 @@ func run() error {
 	// working looks exactly like an afternoon when nobody bought anything.
 	reported := unpaidWatch{notify: notifier}.start(ctx)
 
+	// And the deposits to the bank, read from Stripe into the ledger the
+	// accountant reconciles against. Closed at once when Stripe is off.
+	fetched := depositWatch{log: log, deposits: deposits}.start(ctx)
+
 	// Two listeners, not three. The webhook lives on the embed one, mounted
 	// outside its origin gate -- see muxer.Embed for why that is the whole of
 	// what it needs, and why it is not enough for it merely to pass the gate.
@@ -433,6 +451,7 @@ func run() error {
 
 	<-swept
 	<-reported
+	<-fetched
 
 	return err
 }
@@ -471,6 +490,26 @@ func newPayments(log *slog.Logger, cfg config, db *sql.DB, submissions *submissi
 	}
 
 	return paybus.NewBusiness(log, gateway, paydb.NewStore(db), submissions), mode, nil
+}
+
+// newDeposits builds the deposit domain, and nil when Stripe is not
+// configured -- newPayments's shape, and with no deposits page to show either.
+//
+// The same key as the payment step. A second, read-only key was considered
+// and is not worth it here: both run in this one process from this one config
+// file, so a leak of either is a leak of both. What limits the key is that it
+// is a restricted one; secrets.env.example lists what it may do.
+func newDeposits(log *slog.Logger, cfg config, db *sql.DB, submissions *submissionbus.Business) (*depositbus.Business, error) {
+	if cfg.Stripe.SecretKey == "" {
+		return nil, nil
+	}
+
+	ledger, err := stripepay.NewDeposits(cfg.Stripe.SecretKey)
+	if err != nil {
+		return nil, err
+	}
+
+	return depositbus.NewBusiness(log, ledger, depositdb.NewStore(db), submissions), nil
 }
 
 // newSender builds the outbound mailer, and returns a word for the log saying

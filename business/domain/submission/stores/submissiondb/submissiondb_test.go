@@ -482,6 +482,66 @@ func TestSetStatusRecordsThePayment(t *testing.T) {
 	}
 }
 
+func TestAPaymentIsTracedBackToItsSubmissionHiddenOrNot(t *testing.T) {
+	_, store := open(t)
+
+	paid, hidden, pending, other := sample(t), sample(t), sample(t), sample(t)
+	other.Form = mustSlug(t, "retreat-2026")
+	other.Answers.FormID = other.Form
+
+	for i, sub := range []submissionbus.Submission{paid, hidden, pending, other} {
+		if _, err := store.Accept(t.Context(), sub, fmt.Sprintf("nonce-%d", i)); err != nil {
+			t.Fatalf("Accept: %v", err)
+		}
+	}
+
+	for _, s := range []struct {
+		id  types.ID
+		ref string
+	}{{paid.ID, "pi_paid"}, {hidden.ID, "pi_hidden"}, {other.ID, "pi_other"}} {
+		if err := store.SetStatus(t.Context(), s.id, submissionbus.StatusPaid, s.ref, now); err != nil {
+			t.Fatalf("SetStatus: %v", err)
+		}
+	}
+
+	if _, _, err := store.Hide(t.Context(), submissionbus.Hiding{SubmissionID: hidden.ID, Form: hidden.Form, HiddenAt: now, HiddenBy: types.NewID()}); err != nil {
+		t.Fatalf("Hide: %v", err)
+	}
+
+	for ref, want := range map[string]types.ID{"pi_paid": paid.ID, "pi_hidden": hidden.ID, "pi_other": other.ID} {
+		got, err := store.ByPaymentRef(t.Context(), ref)
+		if err != nil {
+			t.Fatalf("ByPaymentRef(%q): %v", ref, err)
+		}
+		if got.ID != want {
+			t.Errorf("ByPaymentRef(%q) = %s, want %s", ref, got.ID, want)
+		}
+	}
+
+	// The empty reference every unpaid row carries must never match one of
+	// them, or every unattributed deposit line would land on an arbitrary
+	// pending order.
+	for _, ref := range []string{"", "pi_nobody"} {
+		if _, err := store.ByPaymentRef(t.Context(), ref); !errors.Is(err, submissionbus.ErrNotFound) {
+			t.Errorf("ByPaymentRef(%q) = %v, want ErrNotFound", ref, err)
+		}
+	}
+
+	got, err := store.Paid(t.Context(), paid.Form)
+	if err != nil {
+		t.Fatalf("Paid: %v", err)
+	}
+
+	ids := []types.ID{}
+	for _, s := range got {
+		ids = append(ids, s.ID)
+	}
+
+	if len(ids) != 2 || !slices.Contains(ids, paid.ID) || !slices.Contains(ids, hidden.ID) {
+		t.Errorf("Paid = %v, want the paid and the hidden paid order and nothing else", ids)
+	}
+}
+
 func TestPruningForgetsOldNoncesAndNotRecentOnes(t *testing.T) {
 	_, store := open(t)
 
