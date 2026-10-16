@@ -466,7 +466,7 @@ func newPayments(log *slog.Logger, cfg config, db *sql.DB, submissions *submissi
 	// the log that answers "are we taking real money" -- and it is the
 	// question somebody asks at the worst moment. Never the key itself.
 	mode := "test"
-	if strings.HasPrefix(cfg.Stripe.SecretKey, "sk_live_") {
+	if stripeLive(cfg.Stripe.SecretKey) {
 		mode = "LIVE"
 	}
 
@@ -514,11 +514,22 @@ func stripeMode(cfg config) string {
 	switch {
 	case cfg.Stripe.SecretKey == "":
 		return "off: a form that sells will store orders as pending"
-	case strings.HasPrefix(cfg.Stripe.SecretKey, "sk_live_"):
+	case stripeLive(cfg.Stripe.SecretKey):
 		return "LIVE: real cards will be charged"
 	default:
 		return "test mode"
 	}
+}
+
+// stripeLive reports whether a Stripe key charges real cards.
+//
+// Both kinds of secret key are named, rather than looking for "_live_"
+// anywhere in the string, so that the two places above cannot disagree with
+// each other or with what config.go accepts. Before restricted keys were
+// accepted this was a bare sk_live_ prefix test in each place, and an rk_live_
+// key would have reported itself as test mode while taking real money.
+func stripeLive(key string) bool {
+	return strings.HasPrefix(key, "sk_live_") || strings.HasPrefix(key, "rk_live_")
 }
 
 // either is a ternary for a log line, so the -check output above stays a list

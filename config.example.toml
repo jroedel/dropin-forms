@@ -117,9 +117,11 @@ bootstrap_secret = ""
 # /stripe/webhook, mounted outside that surface's origin gate -- so the URL for
 # the Stripe dashboard is https://f.schoenstatt.link/stripe/webhook.
 
-# The API key, sk_test_... while rehearsing and sk_live_... when selling. The
-# log says which mode it is on every start, from the prefix; it never prints
-# the key.
+# The API key: a restricted key, rk_test_... while rehearsing and rk_live_...
+# when selling, made with the permissions secrets.env.example lists. A full
+# sk_test_... or sk_live_... key also works, and can do far more than this
+# service needs. The log says which mode it is on every start, from the
+# prefix; it never prints the key.
 secret_key = ""
 
 # The endpoint's signing secret, whsec_..., and a DIFFERENT credential from the

@@ -627,6 +627,21 @@ Three Makefile targets:
 `.gitignore` gains `/secrets.env`. The generated `config.toml` is already
 ignored.
 
+**The Stripe key is a restricted one.** It was a full `sk_live_` key until
+deposits were reconciled, which made the service's Stripe needs grow from
+"create a checkout page" to "and read payouts". That was the moment to ask
+what the key in `config.toml` could do if it leaked from a shared host, and
+the answer for a full key is everything: refund, pay out, read every customer.
+A restricted key (`rk_`) is a drop-in replacement limited to Checkout Sessions
+write plus three reads (Payouts, Balance, Balance transaction sources), listed
+beside `STRIPE_SECRET_KEY` in `secrets.env.example` because that is where
+somebody making the key is looking. `config.go` accepts both prefixes, and the
+live/test word in the log is decided by `stripeLive`, which names both — before
+that, the check was `sk_live_` alone, and a restricted live key would have
+reported itself as test mode while taking real money. One key rather than one
+per use: both uses run in one process from one config file, so a second key
+would separate nothing.
+
 ### 8.6 CD
 
 The template is `mta-flowers/.github/workflows/deploy.yml` (itself derived from
@@ -2494,7 +2509,8 @@ and each is asserted by `scripts/secrets-render-test.sh` rather than trusted:
 - **Nothing else in the config differs between the modes.** Same ports, same
   origins, same grant key, same database. A rehearsal against a different
   configuration is a rehearsal of something else.
-- **`render test` refuses a `STRIPE_TEST_SECRET_KEY` that is not `sk_test_`.**
+- **`render test` refuses a `STRIPE_TEST_SECRET_KEY` that is not `sk_test_`
+  or `rk_test_`.**
   That slot has one meaning, and a live key pasted into it would charge a real
   card during a rehearsal. The other direction is deliberately *not* checked:
   the `STRIPE_*` keys are whatever the installation runs on, and they were
