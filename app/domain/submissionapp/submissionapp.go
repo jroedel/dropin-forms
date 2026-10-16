@@ -156,6 +156,11 @@ type Config struct {
 	CanEdit     bool
 	CanWillCall bool
 
+	// CanDeposits says the deposits page is mounted. It is behind results,
+	// the same gate as this page, so the only questions are whether it is
+	// there and whether the form sells anything.
+	CanDeposits bool
+
 	// Notifications is optional. Without it the list simply does not mention
 	// email, which is right for an installation that cannot record the
 	// preference: a column offering a choice that will not stick is worse than
@@ -467,6 +472,11 @@ type listView struct {
 	Edit     bool
 	People   bool
 	WillCall bool
+
+	// Deposits is whether to link to the deposits page, which is beside the
+	// collected total rather than in the line above: it is the next question
+	// about that number -- how much of it has reached the bank.
+	Deposits bool
 }
 
 type rowView struct {
@@ -537,6 +547,10 @@ func (a app) list(w http.ResponseWriter, r *http.Request) {
 		view.ShowingHidden = true
 		subs = hidden
 	}
+
+	// Anybody who can read this page can read that one, so it needs no grant
+	// of its own: only the form has to sell something.
+	view.Deposits = a.cfg.CanDeposits && f.Sells()
 
 	// A failure to read a grant costs a link and not the page: the
 	// submissions are what somebody came for, and the gate in front of every
