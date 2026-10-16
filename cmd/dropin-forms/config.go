@@ -97,7 +97,8 @@ type config struct {
 	} `toml:"auth"`
 
 	Stripe struct {
-		// SecretKey is the Stripe API key, sk_test_… or sk_live_…. Empty
+		// SecretKey is the Stripe API key: a restricted rk_test_… or
+		// rk_live_… for preference, or a full sk_test_… or sk_live_…. Empty
 		// switches the payment step off entirely: forms still validate and
 		// store, and a form that sells shows no way to pay. That is a
 		// deliberate degradation rather than a startup failure, so that this
@@ -259,11 +260,21 @@ func loadConfig(path string) (config, error) {
 	case st.WebhookSecret == "":
 		return config{}, fmt.Errorf("%s has stripe.secret_key but no stripe.webhook_secret; without it nothing could tell a real payment notification from a forged one, and no order would ever be marked paid. It is the whsec_... value Stripe shows when you create the endpoint", path)
 
-	case !strings.HasPrefix(st.SecretKey, "sk_"):
+	case !strings.HasPrefix(st.SecretKey, "sk_") && !strings.HasPrefix(st.SecretKey, "rk_"):
 		// Named rather than guessed at. A publishable key (pk_...) in this
 		// slot is a plausible mistake and produces an authentication failure
 		// from Stripe on the first order somebody places.
-		return config{}, fmt.Errorf("%s has a stripe.secret_key that does not begin with sk_; a publishable pk_ key cannot create a payment", path)
+		//
+		// A restricted key (rk_...) is accepted alongside the full secret
+		// key, and is the one to use: it can be limited to creating checkout
+		// pages and reading deposits, so a leaked config.toml cannot refund,
+		// pay out or read customers. secrets.env.example lists the
+		// permissions it needs. Stripe answers a request the key is not
+		// permitted to make with an error naming the permission, so a key
+		// with too little shows up in the log on the first order rather than
+		// here, and that is the price of not keeping a copy of Stripe's
+		// permission table in this file.
+		return config{}, fmt.Errorf("%s has a stripe.secret_key that begins with neither rk_ nor sk_; use a restricted key (rk_...) from the API keys page in the Stripe dashboard. A publishable pk_ key cannot create a payment", path)
 
 	case !strings.HasPrefix(st.WebhookSecret, "whsec_"):
 		return config{}, fmt.Errorf("%s has a stripe.webhook_secret that does not begin with whsec_; that is the endpoint's signing secret, not the API key", path)

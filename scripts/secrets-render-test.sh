@@ -182,8 +182,30 @@ wrong=$(fixture \
 	'STRIPE_TEST_WEBHOOK_SECRET=whsec_thesandboxone')
 
 out=$(render "$wrong" test)
-says "a live key in the test slot is refused" "$out" 'does not begin sk_test_'
+says "a live key in the test slot is refused" "$out" 'does not begin sk_test_ or rk_test_'
 denies "and nothing was rendered" "$out" '[stripe]'
+
+# A restricted live key is just as live, and the refusal must not be a prefix
+# test that only knows the sk_ spelling.
+wrong=$(fixture \
+	'STRIPE_SECRET_KEY=rk_live_theconfiguredone' \
+	'STRIPE_WEBHOOK_SECRET=whsec_theconfiguredone' \
+	'STRIPE_TEST_SECRET_KEY=rk_live_pastedintothewrongslot' \
+	'STRIPE_TEST_WEBHOOK_SECRET=whsec_thesandboxone')
+
+out=$(render "$wrong" test)
+says "a restricted live key in the test slot is refused" "$out" 'does not begin sk_test_ or rk_test_'
+denies "and nothing was rendered" "$out" '[stripe]'
+
+# A restricted sandbox key is what secrets.env.example asks for.
+restricted=$(fixture \
+	'STRIPE_SECRET_KEY=rk_live_theconfiguredone' \
+	'STRIPE_WEBHOOK_SECRET=whsec_theconfiguredone' \
+	'STRIPE_TEST_SECRET_KEY=rk_test_thesandboxone' \
+	'STRIPE_TEST_WEBHOOK_SECRET=whsec_thesandboxone')
+
+out=$(render "$restricted" test)
+says "a restricted sandbox key renders in test mode" "$out" 'secret_key = "rk_test_thesandboxone"'
 
 # The other direction is deliberately allowed: the STRIPE_* keys are whatever
 # this installation runs on, and they were sandbox keys until the day it went
