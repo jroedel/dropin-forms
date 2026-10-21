@@ -2409,6 +2409,32 @@ request this binary makes is at the version the SDK pins. A 403 -- the key
 lacks a permission -- becomes a sentence naming the permission to add on the
 API keys page, with Stripe's own spelling of it alongside.
 
+#### The page
+
+`GET /forms/{slug}/deposits` and its `.csv`, in `depositapp`, behind
+`results` -- the role that reads and exports and changes nothing, which is
+what the person reconciling should hold. The results page links to it beside
+"Collected …" on a form that sells, because the next question about that
+number is how much of it has reached the bank.
+
+Deposits are grouped by the month they arrived, newest first, each a
+`<details>` whose summary is the bank line -- date, amount, this form's net --
+and which opens into the breakdown (sales, refunds, disputes, Stripe's fees,
+this form; then other forms and not from a form; then the deposit) and this
+form's payments, each linked to its order. Below the months, the paid orders
+not yet in any deposit, by name, because "why is the bank short" is usually
+answered by money still in Stripe's balance. Amounts carry the minus sign in
+front of the currency symbol, where a ledger puts it.
+
+The CSV is one row per line of this form's, with the deposit's date, payout
+and amount on every row, so a spreadsheet can total lines into deposits and
+group them any way the books need; the reverse is not possible from a file of
+deposits.
+
+What it does not do: mark a deposit reconciled. Asked about and left out --
+the accountant's books are where that is recorded, and a second place to tick
+it off is a second place to disagree.
+
 ## 10. Dependencies
 
 A dependency needs a comment naming the standard-library answer that was

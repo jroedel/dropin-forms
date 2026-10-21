@@ -936,3 +936,35 @@ form.role button {
   padding: 0.35rem 0.7rem;
   font-size: 0.9rem;
 }
+
+/* --- deposits to the bank ------------------------------------------------
+
+   One <details> per deposit, so a month of them reads as a list of bank lines
+   -- date, amount, this form's share -- and opens into the breakdown and the
+   payments only for the one somebody is checking. No script, for the reason
+   the adder above gives. */
+
+details.deposit {
+  margin: 0 0 .6rem;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+details.deposit > summary {
+  cursor: pointer;
+  padding: .6rem .8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+details.deposit > summary:hover { background: var(--tint); }
+
+details.deposit > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+details.deposit[open] { padding: 0 .8rem .4rem; border-left: 3px solid var(--accent); }
+
+details.deposit[open] > summary { margin: 0 -.8rem .8rem; border-bottom: 1px solid var(--rule); }
+
+details.deposit .detail { width: auto; min-width: 18rem; }

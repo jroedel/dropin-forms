@@ -1,0 +1,113 @@
+{{define "title"}}Deposits: {{.Title}}{{end}}
+
+{{define "masthead"}}<a href="/forms">Forms</a>{{end}}
+
+{{define "content"}}
+<h1>Deposits to the bank</h1>
+
+<p class="crumb"><a href="/forms/{{.FormID}}/submissions">{{.Title}}</a></p>
+
+<div class="summary-cards">
+<p><strong>{{.Deposited}}</strong> deposited so far</p>
+<p><strong>{{.Fees}}</strong> kept by Stripe in fees</p>
+<p><strong>{{.Waiting}}</strong> paid, not yet deposited</p>
+</div>
+
+<p class="aside">Each deposit below is one line on the bank statement. Its amount is
+the whole deposit; this form's share is broken out, and the rest is other forms and
+money that did not come through a form (Stripe's own charges, or a payment taken in
+the Stripe dashboard). The three always add up to the deposit.
+{{.Checked}}</p>
+
+<p><a class="go" href="/forms/{{.FormID}}/deposits.csv">Download this form's lines as CSV</a></p>
+
+{{range .Months}}
+<h2>{{.Name}}</h2>
+<p class="money">This form's share of the month's deposits: <strong>{{.Net}}</strong></p>
+
+{{range .Deposits}}
+<details class="deposit" id="{{.Payout}}">
+<summary><strong>{{.Arrived}}</strong>: deposit of <strong>{{.Amount}}</strong>, of which this form {{.Net}}</summary>
+
+{{if .Mismatch}}
+<p class="problem">Stripe's list of what is in this deposit does not add up to the
+deposit itself, so the figures below will not match the bank. Check this one against
+payout {{.Payout}} in the Stripe dashboard.</p>
+{{end}}
+
+<table class="detail">
+<tbody>
+<tr><th scope="row">Sales</th><td class="figure">{{.Sales}}</td></tr>
+{{if .HasRefunds}}<tr><th scope="row">Refunds</th><td class="figure">{{.Refunds}}</td></tr>{{end}}
+{{if .HasDisputes}}<tr><th scope="row">Disputes</th><td class="figure">{{.Disputes}}</td></tr>{{end}}
+{{if .HasOther}}<tr><th scope="row">Other</th><td class="figure">{{.Other}}</td></tr>{{end}}
+<tr><th scope="row">Stripe fees</th><td class="figure">{{.Fees}}</td></tr>
+<tr><th scope="row">This form</th><td class="figure"><strong>{{.Net}}</strong></td></tr>
+{{if .HasOtherForms}}<tr><th scope="row">Other forms</th><td class="figure">{{.OtherForms}}</td></tr>{{end}}
+{{if .HasNotFromAForm}}<tr><th scope="row">Not from a form</th><td class="figure">{{.NotFromAForm}}</td></tr>{{end}}
+<tr><th scope="row">Deposit</th><td class="figure"><strong>{{.Amount}}</strong></td></tr>
+</tbody>
+</table>
+
+<div class="scroller">
+<table class="listing">
+<thead>
+<tr>
+<th scope="col">When</th>
+<th scope="col">What</th>
+<th scope="col">Who</th>
+<th scope="col" class="figure">Amount</th>
+<th scope="col" class="figure">Fee</th>
+<th scope="col" class="figure">Net</th>
+</tr>
+</thead>
+<tbody>
+{{range .Lines}}
+<tr>
+<td>{{.When}}</td>
+<td>{{.Kind}}</td>
+<td>{{if .Order}}<a href="/forms/{{$.FormID}}/submissions/{{.Order}}">{{.Who}}</a>{{end}}</td>
+<td class="figure">{{.Amount}}</td>
+<td class="figure">{{.Fee}}</td>
+<td class="figure">{{.Net}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+</div>
+
+<p class="aside">Stripe payout {{.Payout}}</p>
+</details>
+{{end}}
+{{else}}
+<p>No deposit has included money from this form yet. Stripe pays a sale into the bank a
+few days after it is made, and this page is updated within the hour after that.</p>
+{{end}}
+
+{{if .Undeposited}}
+<h2>Paid, not yet deposited</h2>
+<p>These orders are paid and are not in any deposit yet: usually because Stripe has not
+paid them out, and sometimes because the payment was refunded before it was.</p>
+
+<div class="scroller">
+<table class="listing">
+<thead>
+<tr>
+<th scope="col">Ordered</th>
+<th scope="col">Who</th>
+<th scope="col" class="figure">Amount</th>
+</tr>
+</thead>
+<tbody>
+{{range .Undeposited}}
+<tr>
+<td>{{.When}}</td>
+<td><a href="/forms/{{$.FormID}}/submissions/{{.Order}}">{{.Who}}</a></td>
+<td class="figure">{{.Amount}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+</div>
+{{end}}
+{{end}}
