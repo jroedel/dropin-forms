@@ -33,7 +33,8 @@ func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 // Expected is what CheckSchema verifies at startup: the columns this binary
 // will read.
 var Expected = sqldb.Expected{
-	"payouts": {"id", "amount", "currency", "created_at", "arrival_date", "automatic", "mismatch", "fetched_at"},
+	"payouts": {"id", "amount", "currency", "created_at", "arrival_date", "automatic", "mismatch", "fetched_at",
+		"destination", "bank", "last4", "trace_id", "trace_status"},
 	"payout_lines": {"id", "payout_id", "kind", "type", "description", "amount", "fee", "net", "created_at",
 		"payment_ref", "form_slug", "submission_id"},
 }
@@ -94,6 +95,25 @@ CREATE INDEX IF NOT EXISTS payout_lines_unattributed ON payout_lines (payment_re
 		return fmt.Errorf("creating the deposit tables: %w", err)
 	}
 
+	// Where each payout went and the bank's reference for it, added after the
+	// first deposits were kept. Only here and not also in the CREATE above,
+	// so that a fresh database and an upgraded one get the columns from the
+	// same five lines and cannot drift apart.
+	//
+	// Empty rather than NULL for "not known yet", as everywhere in this
+	// schema; depositbus.Payout.Described says when a row is complete.
+	for _, c := range [][2]string{
+		{"destination", "TEXT NOT NULL DEFAULT ''"},
+		{"bank", "TEXT NOT NULL DEFAULT ''"},
+		{"last4", "TEXT NOT NULL DEFAULT ''"},
+		{"trace_id", "TEXT NOT NULL DEFAULT ''"},
+		{"trace_status", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		if err := sqldb.AddColumn(ctx, db, "payouts", c[0], c[1]); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -122,11 +142,12 @@ func (s *Store) Save(ctx context.Context, p depositbus.Payout, lines []depositbu
 	}
 	defer tx.Rollback()
 
-	const qp = `INSERT INTO payouts (id, amount, currency, created_at, arrival_date, automatic, mismatch, fetched_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	const qp = `INSERT INTO payouts (id, amount, currency, created_at, arrival_date, automatic, mismatch, fetched_at,
+destination, bank, last4, trace_id, trace_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err = tx.ExecContext(ctx, qp, p.ID, int64(p.Amount), p.Currency, msOf(p.Created), msOf(p.ArrivalDate),
-		boolOf(p.Automatic), boolOf(p.Mismatch), msOf(p.FetchedAt))
+		boolOf(p.Automatic), boolOf(p.Mismatch), msOf(p.FetchedAt),
+		p.Destination, p.Bank, p.Last4, p.TraceID, p.TraceStatus)
 
 	switch {
 	case sqldb.IsPrimaryKeyViolation(err):
@@ -151,6 +172,40 @@ payment_ref, form_slug, submission_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("keeping the deposit: %w", err)
+	}
+
+	return nil
+}
+
+// undescribed is the condition for a payout not yet depositbus.Payout.Described,
+// written once because two statements carry it and must agree.
+const undescribed = `(destination = '' OR trace_status = '' OR trace_status = 'pending')`
+
+// Undescribed is when the oldest payout created at or after since that is not
+// yet described was created.
+func (s *Store) Undescribed(ctx context.Context, since time.Time) (time.Time, bool, error) {
+	const q = `SELECT MIN(created_at) FROM payouts WHERE created_at >= ? AND ` + undescribed
+
+	var ms sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, q, msOf(since)).Scan(&ms); err != nil {
+		return time.Time{}, false, fmt.Errorf("reading the deposits without a trace: %w", err)
+	}
+
+	if !ms.Valid {
+		return time.Time{}, false, nil
+	}
+
+	return timeOf(ms.Int64), true, nil
+}
+
+// Describe records where a kept payout went and its trace, if the row is not
+// yet described.
+func (s *Store) Describe(ctx context.Context, p depositbus.Payout) error {
+	const q = `UPDATE payouts SET destination = ?, bank = ?, last4 = ?, trace_id = ?, trace_status = ?
+WHERE id = ? AND ` + undescribed
+
+	if _, err := s.db.ExecContext(ctx, q, p.Destination, p.Bank, p.Last4, p.TraceID, p.TraceStatus, p.ID); err != nil {
+		return fmt.Errorf("recording where the deposit went: %w", err)
 	}
 
 	return nil
@@ -198,7 +253,8 @@ func (s *Store) Attribute(ctx context.Context, line string, form types.Slug, sub
 func (s *Store) ForForm(ctx context.Context, form types.Slug) ([]depositbus.Payout, map[string][]depositbus.Line, error) {
 	const touching = `SELECT DISTINCT payout_id FROM payout_lines WHERE form_slug = ?`
 
-	const qp = `SELECT id, amount, currency, created_at, arrival_date, automatic, mismatch, fetched_at
+	const qp = `SELECT id, amount, currency, created_at, arrival_date, automatic, mismatch, fetched_at,
+destination, bank, last4, trace_id, trace_status
 FROM payouts WHERE id IN (` + touching + `) ORDER BY arrival_date DESC, id DESC`
 
 	rows, err := s.db.QueryContext(ctx, qp, form.String())
@@ -215,7 +271,8 @@ FROM payouts WHERE id IN (` + touching + `) ORDER BY arrival_date DESC, id DESC`
 			automatic, mismatch               int64
 		)
 
-		if err := rows.Scan(&p.ID, &amount, &p.Currency, &created, &arrival, &automatic, &mismatch, &fetched); err != nil {
+		if err := rows.Scan(&p.ID, &amount, &p.Currency, &created, &arrival, &automatic, &mismatch, &fetched,
+			&p.Destination, &p.Bank, &p.Last4, &p.TraceID, &p.TraceStatus); err != nil {
 			return nil, nil, fmt.Errorf("reading a deposit: %w", err)
 		}
 

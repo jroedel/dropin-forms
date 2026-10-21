@@ -118,28 +118,10 @@ func CheckSchema(ctx context.Context, db *sql.DB, want Expected) error {
 			return fmt.Errorf("table name %q is not a plain identifier", table)
 		}
 
-		// A PRAGMA takes no bind parameters, so the name is interpolated. It
-		// comes from a compiled-in constant rather than from a request, and
-		// safeIdentifier above is the belt to that braces.
-		rows, err := db.QueryContext(ctx, `SELECT name FROM pragma_table_info('`+table+`')`)
+		have, err := columnsOf(ctx, db, table)
 		if err != nil {
-			return fmt.Errorf("reading the columns of %s: %w", table, err)
+			return err
 		}
-
-		var have []string
-		for rows.Next() {
-			var name string
-			if err := rows.Scan(&name); err != nil {
-				rows.Close()
-				return fmt.Errorf("reading the columns of %s: %w", table, err)
-			}
-			have = append(have, name)
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return fmt.Errorf("reading the columns of %s: %w", table, err)
-		}
-		rows.Close()
 
 		if len(have) == 0 {
 			return fmt.Errorf("table %s is missing", table)
@@ -153,6 +135,71 @@ func CheckSchema(ctx context.Context, db *sql.DB, want Expected) error {
 	}
 
 	return nil
+}
+
+// AddColumn adds a column to an existing table unless it is already there.
+//
+// This is the "ALTER with a DEFAULT" that Init's comment promises a later
+// column arrives as. SQLite has no ADD COLUMN IF NOT EXISTS, so the table's
+// columns are read first; that keeps a store's Init idempotent, which it has
+// to be because it runs at every startup. On a fresh database the store's
+// CREATE TABLE already made the column and this finds nothing to do.
+//
+// definition is the rest of the column clause -- type, NOT NULL, DEFAULT --
+// and like the names it comes from a compiled-in constant, never a request.
+// SQLite refuses a NOT NULL column without a DEFAULT on a table with rows,
+// so a definition missing one fails here at startup rather than later.
+func AddColumn(ctx context.Context, db *sql.DB, table, column, definition string) error {
+	if !safeIdentifier(table) || !safeIdentifier(column) {
+		return fmt.Errorf("adding %q to %q: not a plain identifier", column, table)
+	}
+
+	have, err := columnsOf(ctx, db, table)
+	if err != nil {
+		return err
+	}
+
+	if len(have) == 0 {
+		return fmt.Errorf("adding %s to %s: the table is missing", column, table)
+	}
+
+	if slices.Contains(have, column) {
+		return nil
+	}
+
+	if _, err := db.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN `+column+` `+definition); err != nil {
+		return fmt.Errorf("adding %s to %s: %w", column, table, err)
+	}
+
+	return nil
+}
+
+// columnsOf reads a table's column names, and none for a table that does not
+// exist.
+func columnsOf(ctx context.Context, db *sql.DB, table string) ([]string, error) {
+	// A PRAGMA takes no bind parameters, so the name is interpolated. It
+	// comes from a compiled-in constant rather than from a request, and every
+	// caller checks it with safeIdentifier first.
+	rows, err := db.QueryContext(ctx, `SELECT name FROM pragma_table_info('`+table+`')`)
+	if err != nil {
+		return nil, fmt.Errorf("reading the columns of %s: %w", table, err)
+	}
+	defer rows.Close()
+
+	var have []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("reading the columns of %s: %w", table, err)
+		}
+		have = append(have, name)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading the columns of %s: %w", table, err)
+	}
+
+	return have, nil
 }
 
 func safeIdentifier(s string) bool {

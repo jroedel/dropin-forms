@@ -1,6 +1,7 @@
 package depositapp
 
 import (
+	"cmp"
 	"strings"
 
 	"github.com/jroedel/dropin-forms/business/domain/deposit/depositbus"
@@ -64,6 +65,16 @@ type depositView struct {
 	// refunds row reading 0.00 on every deposit is noise somebody has to read
 	// past to find the one that is not.
 	HasRefunds, HasDisputes, HasOther, HasOtherForms, HasNotFromAForm bool
+
+	// To is the account it went to, "CHASE BANK ••••2013", or Stripe's
+	// identifier for it when that is all there is.
+	To    string
+	Last4 string
+
+	// Trace is the bank's reference for the transfer, or a sentence saying
+	// why there is none yet.
+	Trace   string
+	TraceID bool
 
 	// Mismatch is Stripe's lines not adding up to the deposit. Said in words
 	// on the deposit, because a breakdown that does not match the bank is
@@ -136,7 +147,11 @@ func build(f formbus.Form, shares []depositbus.Share, orders map[types.ID]submis
 			HasOtherForms:   s.OtherForms != 0,
 			HasNotFromAForm: s.NotFromAForm != 0,
 			Mismatch:        s.Payout.Mismatch,
+			To:              cmp.Or(destination(s.Payout), "not yet known"),
+			Last4:           s.Payout.Last4,
+			TraceID:         s.Payout.TraceID != "",
 		}
+		d.Trace = trace(s.Payout)
 
 		for _, l := range s.Lines {
 			d.Lines = append(d.Lines, lineView{
@@ -183,6 +198,31 @@ func show(m types.Money, currency string) string {
 	}
 
 	return formbus.Show(m, currency)
+}
+
+// destination is where a payout went, as somebody looking at their bank
+// accounts would name it, or empty when Stripe has not said.
+func destination(p depositbus.Payout) string {
+	switch {
+	case p.Last4 != "":
+		return strings.TrimSpace(p.Bank + " ••••" + p.Last4)
+	default:
+		return p.Destination
+	}
+}
+
+// trace is the bank's reference for a payout, or why there is none.
+func trace(p depositbus.Payout) string {
+	switch {
+	case p.TraceID != "":
+		return p.TraceID
+	case p.TraceStatus == depositbus.TraceUnsupported:
+		return "not given by this bank"
+	default:
+		// Pending, or a payout kept before traces were recorded and not yet
+		// described by a later sync. Either way Stripe may still say.
+		return "not yet known; Stripe usually has it within a few days of the deposit"
+	}
 }
 
 // kindWord is a line's kind as the page says it.

@@ -27,7 +27,7 @@ the Stripe dashboard). The three always add up to the deposit.
 
 {{range .Deposits}}
 <details class="deposit" id="{{.Payout}}">
-<summary><strong>{{.Arrived}}</strong>: deposit of <strong>{{.Amount}}</strong>, of which this form {{.Net}}</summary>
+<summary><strong>{{.Arrived}}</strong>: deposit of <strong>{{.Amount}}</strong>{{if .Last4}} to ••••{{.Last4}}{{end}}, of which this form {{.Net}}</summary>
 
 {{if .Mismatch}}
 <p class="problem">Stripe's list of what is in this deposit does not add up to the
@@ -76,7 +76,16 @@ payout {{.Payout}} in the Stripe dashboard.</p>
 </table>
 </div>
 
-<p class="aside">Stripe payout {{.Payout}}</p>
+<table class="detail">
+<tbody>
+<tr><th scope="row">Sent to</th><td>{{.To}}</td></tr>
+<tr><th scope="row">Bank trace number</th><td>{{if .TraceID}}<code>{{.Trace}}</code>{{else}}{{.Trace}}{{end}}</td></tr>
+<tr><th scope="row">Stripe payout</th><td><code>{{.Payout}}</code></td></tr>
+</tbody>
+</table>
+<p class="aside">If this deposit cannot be found on the bank statement by its amount, the bank
+can look it up by the trace number. Stripe's deposits usually appear on the statement
+under the name STRIPE rather than under this organization's.</p>
 </details>
 {{end}}
 {{else}}

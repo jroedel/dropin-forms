@@ -64,6 +64,8 @@ func deposited(t *testing.T, a harness) {
 	a.ledger.payouts = []depositbus.Payout{{
 		ID: "po_october", Amount: 4407, Currency: "usd", Created: arrived.Add(-48 * time.Hour), ArrivalDate: arrived,
 		Automatic: true, Paid: true, Reconciled: true,
+		Destination: "ba_chase", Bank: "JPMORGAN CHASE BANK, NA", Last4: "2013",
+		TraceID: "021000029876543", TraceStatus: depositbus.TraceSupported,
 	}}
 	a.ledger.lines = map[string][]depositbus.Line{"po_october": lines}
 
@@ -152,6 +154,9 @@ func TestTheDepositsPageShowsTheBankLineAndThisFormsShare(t *testing.T) {
 		"Paid, not yet deposited", // Joe's money is still in Stripe's balance
 		"Joe Waiting",
 		"Checked with Stripe at",
+		"to ••••2013", // which account, in the line somebody scans
+		"JPMORGAN CHASE BANK, NA ••••2013", // and in full when opened
+		"021000029876543",                  // what the bank can search for
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the page does not show %q", want)
@@ -168,7 +173,7 @@ func TestTheDepositsPageShowsTheBankLineAndThisFormsShare(t *testing.T) {
 		t.Fatalf("the export has %d rows, want a header and Maria's line:\n%s", len(rows), w.Body)
 	}
 
-	for _, want := range []string{"2026-10-14", "po_october", "44.07", "sale", "Maria O'Neill", "36.00", "1.34", "34.66", "pi_maria", "txn_maria"} {
+	for _, want := range []string{"2026-10-14", "po_october", "44.07", "021000029876543", "••••2013", "sale", "Maria O'Neill", "36.00", "1.34", "34.66", "pi_maria", "txn_maria"} {
 		if !strings.Contains(rows[1], want) {
 			t.Errorf("the export row %q does not contain %q", rows[1], want)
 		}

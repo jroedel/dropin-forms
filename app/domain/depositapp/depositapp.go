@@ -148,7 +148,7 @@ func (a app) export(w http.ResponseWriter, r *http.Request) {
 	out := csv.NewWriter(&body)
 
 	header := []string{
-		"deposit_date", "payout_id", "deposit_amount", "currency",
+		"deposit_date", "payout_id", "deposit_amount", "currency", "sent_to", "trace_id",
 		"kind", "stripe_type", "created_at", "submission_id", "name", "email",
 		"amount", "fee", "net", "payment_reference", "balance_transaction",
 	}
@@ -173,6 +173,8 @@ func (a app) export(w http.ResponseWriter, r *http.Request) {
 				s.Payout.ID,
 				s.Payout.Amount.String(),
 				s.Payout.Currency,
+				destination(s.Payout),
+				s.Payout.TraceID,
 				string(l.Kind),
 				l.Type,
 				l.Created.UTC().Format(time.RFC3339),

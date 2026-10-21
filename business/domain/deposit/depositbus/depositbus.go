@@ -103,6 +103,38 @@ type Payout struct {
 
 	// FetchedAt is when it was read from Stripe.
 	FetchedAt time.Time
+
+	// Destination is Stripe's identifier for where the money went, and Bank
+	// and Last4 are that account as a person recognises it: "CHASE ••••2013".
+	// Kept because "the deposit is not in the account" is the first question
+	// anybody reconciling asks, and the answer is sometimes that it went to a
+	// different account. Destination alone is still worth showing when it is
+	// not a bank account at all, or the key may not read the account.
+	Destination string
+	Bank        string
+	Last4       string
+
+	// TraceID is the bank's own reference for the transfer, which the bank
+	// can search for when a deposit cannot be found on the statement by its
+	// amount. Stripe only knows it some time after paying -- TraceStatus
+	// says whether it is pending, supported (TraceID is set) or unsupported
+	// by the receiving bank.
+	TraceID     string
+	TraceStatus string
+}
+
+// The trace statuses Stripe reports.
+const (
+	TracePending     = "pending"
+	TraceSupported   = "supported"
+	TraceUnsupported = "unsupported"
+)
+
+// Described reports whether everything Stripe will ever say about where a
+// payout went is known: its destination, and a trace that is no longer
+// pending.
+func (p Payout) Described() bool {
+	return p.Destination != "" && p.TraceStatus != "" && p.TraceStatus != TracePending
 }
 
 // Line is one movement of money inside a deposit.
@@ -162,6 +194,14 @@ type Storer interface {
 	// is kept.
 	Latest(ctx context.Context) (time.Time, bool, error)
 
+	// Undescribed is when the oldest kept payout created after since that is
+	// not yet [Payout.Described] was created, and false when there is none.
+	Undescribed(ctx context.Context, since time.Time) (time.Time, bool, error)
+
+	// Describe records where a kept payout went and its trace, if the kept
+	// row is not yet described. A payout already described is left alone.
+	Describe(ctx context.Context, p Payout) error
+
 	// Unattributed lists the lines that name a payment and no form.
 	Unattributed(ctx context.Context) ([]Line, error)
 
@@ -192,6 +232,15 @@ type Submissions interface {
 // that takes; the cost of looking further back is a list of payouts that are
 // already kept and are skipped by identifier.
 const lookback = 30 * 24 * time.Hour
+
+// describeFor is how long after it was created a payout's trace is still
+// asked about.
+//
+// Stripe says a trace can stay pending for up to ten days after the payout
+// arrives. Sixty is far past that; a payout still pending then is one the
+// receiving bank will never report, and asking about it forever would keep
+// every sync listing two months of payouts it already has.
+const describeFor = 60 * 24 * time.Hour
 
 // Business is the set of operations on deposits.
 type Business struct {
@@ -238,6 +287,17 @@ func (b *Business) Sync(ctx context.Context, now time.Time) error {
 		since = latest.Add(-lookback)
 	}
 
+	// Further back, if a kept payout is still waiting for its trace -- or was
+	// kept before this service recorded traces at all. The list Stripe
+	// returns is what describes it, so it has to reach that far.
+	oldest, ok, err := b.store.Undescribed(ctx, now.Add(-describeFor))
+	if err != nil {
+		return fmt.Errorf("reading which deposits still lack a trace: %w", err)
+	}
+	if ok && oldest.Before(since) {
+		since = oldest
+	}
+
 	payouts, err := b.ledger.Payouts(ctx, since)
 	if err != nil {
 		return fmt.Errorf("listing the deposits: %w", err)
@@ -255,7 +315,8 @@ func (b *Business) Sync(ctx context.Context, now time.Time) error {
 		if kept {
 			b.log.Info("deposit read from Stripe",
 				"payout", p.ID, "amount", p.Amount.String(), "currency", p.Currency,
-				"arrival", p.ArrivalDate.Format(time.DateOnly), "automatic", p.Automatic)
+				"arrival", p.ArrivalDate.Format(time.DateOnly), "automatic", p.Automatic,
+				"to", p.Bank+" "+p.Last4, "destination", p.Destination, "trace", p.TraceStatus)
 		}
 	}
 
@@ -294,7 +355,12 @@ func (b *Business) keep(ctx context.Context, now time.Time, p Payout) (bool, err
 		return false, err
 	}
 	if has {
-		return false, nil
+		// Kept already, and its lines never change. Its trace can: Stripe
+		// learns it after paying, so a payout kept with its trace pending --
+		// or kept before traces were recorded -- is described here on a
+		// later sync. The store writes only to a row not yet described, so
+		// this is a no-op for the rest.
+		return false, b.store.Describe(ctx, p)
 	}
 
 	var lines []Line
