@@ -50,7 +50,14 @@ var Templates = templates
 
 // home is where signing in lands somebody who was not going anywhere in
 // particular.
-const home = "/account"
+//
+// The forms list, which shows only the forms this account may open -- for
+// most people that is one or two, and each is a click from its submissions.
+// It was the account page, and people new to the service read a page of
+// backup codes as the service itself and did not know where to go next. The
+// account page is for something done once; the bare hostname already sent a
+// signed-in visitor to the forms list for the same reason (see muxer.Admin).
+const home = "/forms"
 
 // SiteAdminEnsurer is the one thing this app needs from the access domain, and
 // only on the bootstrap path. Named as an interface rather than taking the
