@@ -901,8 +901,17 @@ func (a app) invite(u userbus.User, f formbus.Form, role accessbus.Role, created
 	// else would say which addresses have accounts. So the cost of the guess
 	// is somebody waiting for a message that is never coming, and this is what
 	// removes the guess.
+	//
+	// And the form they were given travels too, so that signing in opens it
+	// rather than a list they have to find it in. Its submissions page,
+	// because every role can read that one.
+	link := url.Values{
+		"email": {u.Email.String()},
+		"next":  {"/forms/" + f.ID.String() + "/submissions"},
+	}
+
 	b.WriteString("Sign in here and we will email you a code:\r\n\r\n" +
-		a.cfg.BaseURL + "/signin?email=" + url.QueryEscape(u.Email.String()) + "\r\n\r\n")
+		a.cfg.BaseURL + "/signin?" + link.Encode() + "\r\n\r\n")
 
 	if a.cfg.Notifications != nil {
 		b.WriteString("You will also get an email each time somebody submits this form. " +

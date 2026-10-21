@@ -162,6 +162,10 @@ func TestGivingAccessToANewAddressMakesAnAccountAndTellsThem(t *testing.T) {
 		// address is typed, because saying anything else would say which
 		// addresses have accounts.
 		t.Errorf("the invitation does not carry the address to sign in with:\n%s", m.Text)
+	case !strings.Contains(m.Text, "&next=%2Fforms%2F"+theForm+"%2Fsubmissions"):
+		// And the form, so signing in opens it rather than a list to find
+		// it in.
+		t.Errorf("the invitation does not open the form after signing in:\n%s", m.Text)
 	case codePattern.MatchString(m.Text):
 		t.Errorf("the invitation carries a sign-in code, which expires long before it is read:\n%s", m.Text)
 	}

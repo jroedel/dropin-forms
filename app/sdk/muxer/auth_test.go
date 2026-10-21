@@ -939,3 +939,48 @@ func TestTheSignInPageFillsInAnAddressFromTheLink(t *testing.T) {
 		t.Errorf("the page echoed something that is not an address:\n%s", w.Body)
 	}
 }
+
+// Signing in with nowhere in particular to go lands on the forms list, not
+// the account page: somebody new to the service read a page of backup codes as
+// the service and did not know where to go from it.
+func TestSigningInWithNowhereToGoLandsOnTheForms(t *testing.T) {
+	a := newAdmin(t, "")
+	u := reader(t, a, "accountant@schoenstatt.test")
+
+	if w := a.post(t, "/signin", url.Values{"email": {u.Email.String()}}, ""); w.Code != http.StatusOK {
+		t.Fatalf("POST /signin = %d", w.Code)
+	}
+
+	w := a.post(t, "/signin/verify", url.Values{"email": {u.Email.String()}, "code": {signInCode(t, a)}}, "")
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/forms" {
+		t.Fatalf("signing in = %d to %q, want a redirect to /forms", w.Code, w.Header().Get("Location"))
+	}
+
+	// And the list there names the form this account was given.
+	page := a.get(t, "/forms", sessionCookie(t, w))
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), `href="/forms/`+theForm+`/submissions"`) {
+		t.Errorf("GET /forms = %d, and does not offer the form:\n%s", page.Code, page.Body)
+	}
+}
+
+// The link in an invitation carries the form it was for, and signing in
+// through it opens that form.
+func TestSigningInFromAnInvitationOpensTheForm(t *testing.T) {
+	a := newAdmin(t, "")
+	u := reader(t, a, "accountant@schoenstatt.test")
+	form := "/forms/" + theForm + "/submissions"
+
+	page := a.get(t, "/signin?"+url.Values{"email": {u.Email.String()}, "next": {form}}.Encode(), "")
+	if !strings.Contains(page.Body.String(), `value="`+form+`"`) {
+		t.Fatalf("the sign-in page does not keep where to go:\n%s", page.Body)
+	}
+
+	if w := a.post(t, "/signin", url.Values{"email": {u.Email.String()}, "next": {form}}, ""); w.Code != http.StatusOK {
+		t.Fatalf("POST /signin = %d", w.Code)
+	}
+
+	w := a.post(t, "/signin/verify", url.Values{"email": {u.Email.String()}, "code": {signInCode(t, a)}, "next": {form}}, "")
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != form {
+		t.Errorf("signing in = %d to %q, want a redirect to %s", w.Code, w.Header().Get("Location"), form)
+	}
+}
