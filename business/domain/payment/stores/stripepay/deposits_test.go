@@ -21,11 +21,7 @@ import (
 func fakeStripe(t *testing.T, routes map[string]string, status int) (*stripepay.Deposits, *[]string) {
 	t.Helper()
 
-	var asked []string
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		asked = append(asked, r.URL.Path+"?"+r.URL.Query().Encode())
-
+	return fakeStripeFunc(t, func(w http.ResponseWriter, r *http.Request) {
 		body, ok := routes[r.URL.Path]
 		if !ok {
 			http.NotFound(w, r)
@@ -35,6 +31,19 @@ func fakeStripe(t *testing.T, routes map[string]string, status int) (*stripepay.
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(body))
+	})
+}
+
+// fakeStripeFunc is a fake Stripe answering with handle, for a test whose
+// answer depends on what was asked.
+func fakeStripeFunc(t *testing.T, handle http.HandlerFunc) (*stripepay.Deposits, *[]string) {
+	t.Helper()
+
+	var asked []string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.URL.Path+"?"+r.URL.Query().Encode())
+		handle(w, r)
 	}))
 	t.Cleanup(srv.Close)
 
@@ -50,6 +59,79 @@ func fakeStripe(t *testing.T, routes map[string]string, status int) (*stripepay.
 	}
 
 	return d, &asked
+}
+
+func TestAPayoutSaysWhichAccountItWentToAndItsTrace(t *testing.T) {
+	d, asked := fakeStripe(t, map[string]string{"/v1/payouts": `{
+  "object": "list", "has_more": false, "url": "/v1/payouts",
+  "data": [
+    {"id": "po_traced", "object": "payout", "amount": 35708, "currency": "usd", "created": 1760700000,
+     "arrival_date": 1760832000, "automatic": true, "status": "paid", "reconciliation_status": "completed",
+     "destination": {"id": "ba_chase", "object": "bank_account", "bank_name": "JPMORGAN CHASE BANK, NA", "last4": "2013"},
+     "trace_id": {"status": "supported", "value": "021000029876543"}},
+    {"id": "po_waiting", "object": "payout", "amount": 23531, "currency": "usd", "created": 1760786400,
+     "arrival_date": 1760918400, "automatic": true, "status": "paid", "reconciliation_status": "completed",
+     "destination": {"id": "ba_chase", "object": "bank_account", "bank_name": "JPMORGAN CHASE BANK, NA", "last4": "2013"},
+     "trace_id": {"status": "pending", "value": null}}
+  ]}`}, http.StatusOK)
+
+	got, err := d.Payouts(t.Context(), time.Time{})
+	if err != nil {
+		t.Fatalf("Payouts: %v", err)
+	}
+
+	if len(got) != 2 {
+		t.Fatalf("Payouts = %d, want 2", len(got))
+	}
+
+	traced, waiting := got[0], got[1]
+
+	if traced.Destination != "ba_chase" || traced.Bank != "JPMORGAN CHASE BANK, NA" || traced.Last4 != "2013" {
+		t.Errorf("destination = %q %q %q", traced.Destination, traced.Bank, traced.Last4)
+	}
+	if traced.TraceID != "021000029876543" || traced.TraceStatus != "supported" || !traced.Described() {
+		t.Errorf("trace = %q %q, described %v", traced.TraceID, traced.TraceStatus, traced.Described())
+	}
+	if waiting.TraceID != "" || waiting.TraceStatus != "pending" || waiting.Described() {
+		t.Errorf("a pending trace = %q %q, described %v", waiting.TraceID, waiting.TraceStatus, waiting.Described())
+	}
+
+	if len(*asked) != 1 || !strings.Contains((*asked)[0], "=data.destination") {
+		t.Errorf("asked %v, want one list with the destination expanded", *asked)
+	}
+}
+
+// A key that may read payouts and not the bank account behind them still
+// reconciles: the payouts come back naming their destination by identifier.
+func TestAKeyThatMayNotReadTheBankAccountStillListsPayouts(t *testing.T) {
+	d, asked := fakeStripeFunc(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if strings.Contains(r.URL.RawQuery, "expand") {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error": {"type": "invalid_request_error", "message": "The provided key does not have the required permissions."}}`))
+
+			return
+		}
+
+		_, _ = w.Write([]byte(`{"object": "list", "has_more": false, "url": "/v1/payouts", "data": [
+  {"id": "po_1", "object": "payout", "amount": 1000, "currency": "usd", "created": 1760700000,
+   "arrival_date": 1760832000, "automatic": true, "status": "paid", "reconciliation_status": "completed",
+   "destination": "ba_chase", "trace_id": {"status": "supported", "value": "021000029876543"}}]}`))
+	})
+
+	got, err := d.Payouts(t.Context(), time.Time{})
+	if err != nil {
+		t.Fatalf("Payouts: %v", err)
+	}
+
+	if len(got) != 1 || got[0].Destination != "ba_chase" || got[0].Last4 != "" || got[0].TraceID != "021000029876543" {
+		t.Errorf("Payouts = %+v", got)
+	}
+
+	if len(*asked) != 2 {
+		t.Errorf("asked %v, want the expanded list and then the plain one", *asked)
+	}
 }
 
 func TestPayoutsAreReadWithTheirStatus(t *testing.T) {

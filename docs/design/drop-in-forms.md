@@ -2431,6 +2431,28 @@ and amount on every row, so a spreadsheet can total lines into deposits and
 group them any way the books need; the reverse is not possible from a file of
 deposits.
 
+**Where each deposit went, and the bank's reference for it.** Added the week
+the page went live, when the accountant could not find the deposits in the
+checking account and Stripe said they were paid. Each deposit now names the
+account it was sent to -- "JPMORGAN CHASE BANK, NA ••••2013", from the payout's
+expanded destination -- and the ACH trace number, which the bank can search for
+when an entry is not recognisable by amount (Stripe's appear under the name
+STRIPE, not the organization's). Both are in the CSV.
+
+Stripe learns the trace after paying, sometimes days after, so a deposit kept
+with its trace pending is described by a later sync: each sync lists back to
+the oldest kept payout still missing a destination or a trace, within sixty
+days, and fills in rows that are not yet complete and nothing else. Deposits
+kept before this change are filled in the same way. The columns were the
+first added to a table already holding rows, so `sqldb.AddColumn` now exists
+to make that idempotent.
+
+Reading the bank account behind a payout may take a permission a restricted
+key lacks. Rather than add one to the list, a refusal of the expanded list is
+answered by listing again without the expansion: the deposit then names its
+destination by Stripe's identifier, the trace is unaffected, and reconciling
+carries on.
+
 What it does not do: mark a deposit reconciled. Asked about and left out --
 the accountant's books are where that is recorded, and a second place to tick
 it off is a second place to disagree.

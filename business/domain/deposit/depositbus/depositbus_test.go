@@ -372,3 +372,58 @@ func TestUndepositedIsPaidOrdersNotYetInAnyDeposit(t *testing.T) {
 		t.Errorf("Undeposited = %+v, want only the order still waiting", got)
 	}
 }
+
+// Stripe learns a payout's trace after paying it, so a deposit kept with its
+// trace pending is described by a later sync -- even one well behind the
+// newest deposit, which the sync reaches back for.
+func TestATraceStripeLearnsLaterIsRecorded(t *testing.T) {
+	store := open(t)
+
+	maria := order(t, "feast-lunch", "pi_maria")
+
+	oldLines := []depositbus.Line{sale("txn_old", "pi_maria", 4500, now.Add(-50*24*time.Hour))}
+	newLines := []depositbus.Line{sale("txn_new", "pi_new", 1000, now)}
+
+	old := payout("po_old", oldLines, now.Add(-45*24*time.Hour))
+	old.Destination, old.Bank, old.Last4, old.TraceStatus = "ba_chase", "CHASE", "2013", depositbus.TracePending
+
+	recent := payout("po_new", newLines, now)
+	recent.Destination, recent.TraceStatus, recent.TraceID = "ba_chase", depositbus.TraceSupported, "021000020000001"
+
+	l := &ledger{
+		payouts: []depositbus.Payout{old, recent},
+		lines:   map[string][]depositbus.Line{"po_old": oldLines, "po_new": newLines},
+	}
+	b := business(l, store, orders{"pi_maria": maria})
+
+	if err := b.Sync(t.Context(), now); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	// Stripe now knows the old one's trace.
+	l.payouts[0].TraceStatus, l.payouts[0].TraceID = depositbus.TraceSupported, "021000029876543"
+
+	if err := b.Sync(t.Context(), now.Add(time.Hour)); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	// The second list reached back to the old deposit, forty-five days before
+	// the newest and so outside the ordinary thirty-day window.
+	if got := l.since[1]; got.After(old.Created) {
+		t.Errorf("the second sync listed from %v, after the undescribed deposit's %v", got, old.Created)
+	}
+
+	shares, err := b.ForForm(t.Context(), maria.Form)
+	if err != nil || len(shares) != 1 {
+		t.Fatalf("ForForm = %+v, %v", shares, err)
+	}
+
+	if p := shares[0].Payout; p.TraceID != "021000029876543" || p.Last4 != "2013" || !p.Described() {
+		t.Errorf("the old deposit = %+v, want it traced", p)
+	}
+
+	// Lines are read once however often the trace is asked about.
+	if len(l.asked) != 2 {
+		t.Errorf("lines were read for %v, want each deposit once", l.asked)
+	}
+}

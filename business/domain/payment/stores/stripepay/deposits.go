@@ -44,9 +44,33 @@ func NewDeposits(apiKey string, opts ...stripe.ClientOption) (*Deposits, error) 
 const pageSize = 100
 
 // Payouts lists the payouts created at or after since.
+//
+// The destination is expanded, so that each payout says which bank and which
+// account it went to -- the answer to "the deposit is not in the account".
+// Reading the account may need a permission the key does not have, and a key
+// that can read payouts but not bank accounts should still reconcile: so a
+// refusal of the expanded list is answered by asking again without it, and the
+// payouts come back naming their destination by identifier alone.
 func (d *Deposits) Payouts(ctx context.Context, since time.Time) ([]depositbus.Payout, error) {
+	out, err := d.payouts(ctx, since, true)
+	if se, ok := errors.AsType[*stripe.Error](err); ok && se.HTTPStatusCode == http.StatusForbidden {
+		out, err = d.payouts(ctx, since, false)
+	}
+
+	if err != nil {
+		return nil, refusal(err, "Payouts")
+	}
+
+	return out, nil
+}
+
+func (d *Deposits) payouts(ctx context.Context, since time.Time, expand bool) ([]depositbus.Payout, error) {
 	params := &stripe.PayoutListParams{}
 	params.Limit = stripe.Int64(pageSize)
+
+	if expand {
+		params.AddExpand("data.destination")
+	}
 
 	if !since.IsZero() {
 		params.CreatedRange = &stripe.RangeQueryParams{GreaterThanOrEqual: since.Unix()}
@@ -56,10 +80,10 @@ func (d *Deposits) Payouts(ctx context.Context, since time.Time) ([]depositbus.P
 
 	for p, err := range d.client.V1Payouts.List(ctx, params) {
 		if err != nil {
-			return nil, refusal(err, "Payouts")
+			return nil, err
 		}
 
-		out = append(out, depositbus.Payout{
+		po := depositbus.Payout{
 			ID:          p.ID,
 			Amount:      types.Money(p.Amount),
 			Currency:    string(p.Currency),
@@ -68,7 +92,24 @@ func (d *Deposits) Payouts(ctx context.Context, since time.Time) ([]depositbus.P
 			Automatic:   p.Automatic,
 			Paid:        p.Status == stripe.PayoutStatusPaid,
 			Reconciled:  p.ReconciliationStatus == stripe.PayoutReconciliationStatusCompleted,
-		})
+		}
+
+		if dest := p.Destination; dest != nil {
+			po.Destination = dest.ID
+
+			switch {
+			case dest.BankAccount != nil:
+				po.Bank, po.Last4 = dest.BankAccount.BankName, dest.BankAccount.Last4
+			case dest.Card != nil:
+				po.Bank, po.Last4 = string(dest.Card.Brand), dest.Card.Last4
+			}
+		}
+
+		if t := p.TraceID; t != nil {
+			po.TraceStatus, po.TraceID = t.Status, t.Value
+		}
+
+		out = append(out, po)
 	}
 
 	return out, nil
