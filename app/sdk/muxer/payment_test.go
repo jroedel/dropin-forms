@@ -209,7 +209,7 @@ func (k till) order(t *testing.T, values url.Values) submissionbus.Submission {
 		t.Fatalf("the submission = %d:\n%s", w.Code, short(w.Body.String()))
 	}
 
-	stored, err := k.subs.ByForm(t.Context(), mustSlug(t, theForm))
+	stored, err := allOf(t.Context(), k.subs, mustSlug(t, theForm))
 	if err != nil {
 		t.Fatalf("ByForm: %v", err)
 	}
@@ -385,7 +385,7 @@ func TestAnUnreachableStripeStillKeepsTheOrder(t *testing.T) {
 		t.Error("the page offers a payment link although the session was never created")
 	}
 
-	stored, err := k.subs.ByForm(t.Context(), mustSlug(t, theForm))
+	stored, err := allOf(t.Context(), k.subs, mustSlug(t, theForm))
 	if err != nil {
 		t.Fatalf("ByForm: %v", err)
 	}

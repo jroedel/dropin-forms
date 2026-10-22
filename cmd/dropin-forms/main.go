@@ -294,7 +294,6 @@ func run() error {
 		Grants:       access,
 		Accounts:     users,
 		Mutes:        notifydb.NewStore(db),
-		Reports:      notifydb.NewStore(db),
 		MuteKey:      muteKey,
 		Office:       cfg.Mail.Notify,
 		AdminBaseURL: cfg.Server.AdminBaseURL,
@@ -432,16 +431,13 @@ func run() error {
 		submissions: submissions,
 		users:       users,
 		payments:    payments,
-		notify:      notifier,
 	}.start(ctx)
 
-	// And the one sweep that sends mail rather than deleting rows: orders that
-	// were started and never paid for. Stripe reports a payment that fails and
-	// a payment that succeeds, and says nothing at all about a checkout page
-	// somebody closed -- so without this an abandoned order waits in the
-	// management app to be noticed, and a payment step that has stopped
-	// working looks exactly like an afternoon when nobody bought anything.
-	reported := unpaidWatch{notify: notifier}.start(ctx)
+	// And the orders whose payment page has closed unpaid, marked abandoned so
+	// that nothing reads them as still in progress. Stripe says nothing when
+	// somebody closes a checkout tab, and the deadline is ours, so this is a
+	// clock rather than a webhook. Closed at once when Stripe is off.
+	abandoned := abandonWatch{log: log, submissions: submissions, payments: payments}.start(ctx)
 
 	// And the deposits to the bank, read from Stripe into the ledger the
 	// accountant reconciles against. Closed at once when Stripe is off.
@@ -456,7 +452,7 @@ func run() error {
 	)
 
 	<-swept
-	<-reported
+	<-abandoned
 	<-fetched
 
 	return err

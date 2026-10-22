@@ -111,7 +111,38 @@ type Order struct {
 	// the frame there.
 	SuccessURL string
 	CancelURL  string
+
+	// ExpiresAt is when the payment page stops taking payment. Set by
+	// [Business.Start] from [CheckoutWindow]; anything the caller puts here is
+	// replaced, because the sweep that marks orders abandoned counts from the
+	// same number and the two must not disagree.
+	ExpiresAt time.Time
 }
+
+// CheckoutWindow is how long somebody has to pay once they have been handed a
+// payment page.
+//
+// Two hours. Long enough that somebody who leaves the tab open over lunch can
+// come back and finish; short enough that an order nobody is going to pay
+// stops looking like one in progress by the afternoon. Without it Stripe keeps
+// a page open for twenty-four hours, and the order sat "pending" all that time
+// and -- since nothing here knew the page had closed -- forever after. Stripe
+// accepts anything from thirty minutes to a day.
+//
+// When it runs out, Stripe's link stops taking payment, and the order is
+// marked abandoned; see [AbandonAfter].
+const CheckoutWindow = 2 * time.Hour
+
+// AbandonAfter is how old an unpaid order must be before it is marked
+// abandoned: the window, and a margin.
+//
+// The margin is because the two clocks are not the same clock. The order's
+// time is taken here before the payment page is made, and the deadline is
+// compared by Stripe against Stripe's clock, so an order marked at exactly the
+// window could be one whose page is still open for a few seconds -- or longer,
+// if this machine's clock is behind. Ten minutes covers both, and nobody is
+// waiting on the difference.
+const AbandonAfter = CheckoutWindow + 10*time.Minute
 
 // Handoff is where to send somebody, and what Stripe called it.
 type Handoff struct {
@@ -311,6 +342,11 @@ func (b *Business) Start(ctx context.Context, o Order) (Handoff, error) {
 	if sum != o.Total {
 		return Handoff{}, fmt.Errorf("%w: the lines come to %s and the total is %s", ErrUnbalanced, sum, o.Total)
 	}
+
+	// The system clock rather than an injected one, because the deadline is
+	// read by Stripe against Stripe's clock: what matters is that it is real
+	// time, not that a test can move it.
+	o.ExpiresAt = time.Now().Add(CheckoutWindow)
 
 	h, err := b.gateway.Checkout(ctx, o)
 	if err != nil {

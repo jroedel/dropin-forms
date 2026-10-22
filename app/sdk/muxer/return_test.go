@@ -145,7 +145,7 @@ func TestBackRendersTheFormAgainAndStoresNothing(t *testing.T) {
 		t.Errorf("the form came back empty, so Back means retyping everything:\n%s", short(body))
 	}
 
-	stored, err := k.subs.ByForm(t.Context(), mustSlug(t, theForm))
+	stored, err := allOf(t.Context(), k.subs, mustSlug(t, theForm))
 	if err != nil {
 		t.Fatalf("ByForm: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestBackRendersTheFormAgainAndStoresNothing(t *testing.T) {
 		t.Fatalf("the re-ordered submission = %d:\n%s", w.Code, short(w.Body.String()))
 	}
 
-	stored, err = k.subs.ByForm(t.Context(), mustSlug(t, theForm))
+	stored, err = allOf(t.Context(), k.subs, mustSlug(t, theForm))
 	if err != nil {
 		t.Fatalf("ByForm: %v", err)
 	}

@@ -173,14 +173,12 @@ func TestOnlyPaidOrdersAreOnTheList(t *testing.T) {
 	}
 
 	// And the unpaid one cannot be collected even by its id, which is the rule
-	// rather than the rendering.
+	// rather than the rendering. Not found rather than refused: an order
+	// nobody paid for is an administrator's alone to see, and the table is
+	// worked by volunteers. submissionbus refuses it too, a layer down.
 	w = a.post(t, willCallPage+"/"+pending.ID.String()+"/collect", url.Values{}, cookie)
-	if w.Code != http.StatusSeeOther {
-		t.Fatalf("collecting a pending order = %d, want a redirect:\n%s", w.Code, w.Body)
-	}
-
-	if to := w.Header().Get("Location"); !strings.Contains(to, "problem=") {
-		t.Errorf("collecting a pending order redirected to %q with no sentence", to)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("collecting a pending order = %d, want 404:\n%s", w.Code, w.Body)
 	}
 
 	handed, err := a.orders.Collected(t.Context(), mustSlug(t, theForm))

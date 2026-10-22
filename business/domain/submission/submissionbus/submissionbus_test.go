@@ -160,25 +160,41 @@ func (m *memStore) Settled(_ context.Context, form types.Slug, limit int) ([]sub
 	return out[:min(limit, len(out))], nil
 }
 
-func (m *memStore) Unpaid(_ context.Context, from, before time.Time) ([]submissionbus.Submission, error) {
+func (m *memStore) Abandon(_ context.Context, before, at time.Time) ([]types.Slug, error) {
 	if m.fail != nil {
 		return nil, m.fail
 	}
 
-	var out []submissionbus.Submission
-	for _, s := range m.subs {
-		if s.Status != submissionbus.StatusPending {
+	var out []types.Slug
+	for id, s := range m.subs {
+		open := s.Status == submissionbus.StatusPending || s.Status == submissionbus.StatusFailed
+		if !open || !s.CreatedAt.Before(before) {
 			continue
 		}
 
-		if s.CreatedAt.Before(from) || !s.CreatedAt.Before(before) {
-			continue
-		}
-
-		out = append(out, s)
+		s.Status, s.UpdatedAt = submissionbus.StatusAbandoned, at
+		m.subs[id] = s
+		out = append(out, s.Form)
 	}
 
 	return out, nil
+}
+
+func (m *memStore) Outcomes(_ context.Context, form types.Slug, since time.Time) (paid, abandoned int, err error) {
+	for _, s := range m.subs {
+		if s.Form != form || s.CreatedAt.Before(since) {
+			continue
+		}
+
+		switch s.Status {
+		case submissionbus.StatusPaid:
+			paid++
+		case submissionbus.StatusAbandoned:
+			abandoned++
+		}
+	}
+
+	return paid, abandoned, nil
 }
 
 func (m *memStore) CountSince(_ context.Context, form types.Slug, since time.Time) (int, error) {

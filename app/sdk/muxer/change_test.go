@@ -213,7 +213,7 @@ func (rh retreatHarness) save(t *testing.T, page string, answers url.Values) (in
 func (rh retreatHarness) only(t *testing.T) submissionbus.Submission {
 	t.Helper()
 
-	subs, err := rh.subs.ByForm(t.Context(), rh.form.ID)
+	subs, err := allOf(t.Context(), rh.subs, rh.form.ID)
 	if err != nil || len(subs) != 1 {
 		t.Fatalf("ByForm: %d submissions, %v; want exactly one", len(subs), err)
 	}

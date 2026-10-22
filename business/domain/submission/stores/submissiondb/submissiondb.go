@@ -582,42 +582,65 @@ func (s *Store) Settled(ctx context.Context, form types.Slug, limit int) ([]subm
 	return out, nil
 }
 
-// Unpaid lists submissions still waiting for money, oldest first, within a
-// window.
+// Abandon marks every pending or declined submission made before an instant
+// as abandoned, and reports the form of each row it changed.
 //
-// Two bounds rather than one. The upper is the grace period -- an order placed
-// four minutes ago is somebody typing a card number, not an abandoned one. The
-// lower is a floor under how far back this ever looks, so that a service whose
-// record of what it has already reported is lost cannot mail the office about
-// every order anybody ever abandoned.
-//
-// Oldest first, because the list goes into a message somebody reads top to
-// bottom and the one most likely to matter is the one that has been waiting
-// longest.
-func (s *Store) Unpaid(ctx context.Context, from, before time.Time) ([]submissionbus.Submission, error) {
-	const q = selectColumns + ` WHERE status = ? AND ` + notHidden + ` AND created_at >= ? AND created_at < ? ORDER BY created_at, rowid`
+// One UPDATE, conditional on the status, so it cannot overwrite a payment
+// confirmed while it ran: a row Stripe has just settled as paid is no longer
+// pending by the time this statement reaches it. Hidden rows are included --
+// hiding an order takes it out of the lists, and says nothing about whether it
+// was paid. The statuses are submissionbus's own constants rather than strings
+// written here, so that a status renamed there is renamed here.
+func (s *Store) Abandon(ctx context.Context, before, at time.Time) ([]types.Slug, error) {
+	const q = `UPDATE submissions SET status = ?, updated_at = ?
+WHERE status IN (?, ?) AND created_at < ?
+RETURNING form_slug`
 
-	rows, err := s.db.QueryContext(ctx, q, submissionbus.StatusPending.String(), msOf(from), msOf(before))
+	rows, err := s.db.QueryContext(ctx, q,
+		submissionbus.StatusAbandoned.String(), msOf(at),
+		submissionbus.StatusPending.String(), submissionbus.StatusFailed.String(), msOf(before))
 	if err != nil {
-		return nil, fmt.Errorf("querying the unpaid submissions: %w", err)
+		return nil, fmt.Errorf("marking the submissions abandoned: %w", err)
 	}
 	defer rows.Close()
 
-	var out []submissionbus.Submission
+	var out []types.Slug
 	for rows.Next() {
-		sub, err := scan(rows)
-		if err != nil {
-			return nil, fmt.Errorf("reading an unpaid submission: %w", err)
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, fmt.Errorf("reading an abandoned submission: %w", err)
 		}
 
-		out = append(out, sub)
+		form, err := types.ParseSlug(raw)
+		if err != nil {
+			return nil, fmt.Errorf("the form on an abandoned submission is unreadable: %w", err)
+		}
+
+		out = append(out, form)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("reading the unpaid submissions: %w", err)
+		return nil, fmt.Errorf("reading the abandoned submissions: %w", err)
 	}
 
 	return out, nil
+}
+
+// Outcomes counts a form's paid and abandoned submissions made since an
+// instant, hidden ones included: what it answers is whether the payment page
+// works, and hiding an order changes nothing about that.
+func (s *Store) Outcomes(ctx context.Context, form types.Slug, since time.Time) (paid, abandoned int, err error) {
+	const q = `SELECT COALESCE(SUM(status = ?), 0), COALESCE(SUM(status = ?), 0)
+FROM submissions WHERE form_slug = ? AND created_at >= ?`
+
+	err = s.db.QueryRowContext(ctx, q,
+		submissionbus.StatusPaid.String(), submissionbus.StatusAbandoned.String(),
+		form.String(), msOf(since)).Scan(&paid, &abandoned)
+	if err != nil {
+		return 0, 0, fmt.Errorf("counting the outcomes: %w", err)
+	}
+
+	return paid, abandoned, nil
 }
 
 // ByPaymentRef reads the submission a Stripe payment reference belongs to.

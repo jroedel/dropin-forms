@@ -34,6 +34,7 @@ func TestAnAdministratorHidesATestSubmissionAndPutsItBack(t *testing.T) {
 
 	o.sell(t, url.Values{"name": {"Real Person"}})
 	o.sell(t, url.Values{"name": {"TEST DO NOT COUNT"}})
+	o.payFor(t, theForm)
 
 	boss, cookie := o.reader(t, "office@schoenstatt.test")
 	o.grant(t, boss, theForm, accessbus.RoleAdmin)
@@ -98,6 +99,7 @@ func TestAResultsReaderCannotHide(t *testing.T) {
 	o := newOffice(t)
 
 	o.sell(t, nil)
+	o.payFor(t, theForm)
 
 	reader, cookie := o.reader(t, "kitchen@schoenstatt.test")
 	o.grant(t, reader, theForm, accessbus.RoleResults)

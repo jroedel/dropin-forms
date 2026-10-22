@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jroedel/dropin-forms/business/domain/notify/notifybus"
 	"github.com/jroedel/dropin-forms/business/domain/payment/paybus"
 	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
 	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
@@ -41,12 +40,6 @@ type housekeeper struct {
 	// everywhere else in this binary. Nothing to forget, rather than a
 	// special case.
 	payments *paybus.Business
-
-	// notify is nil when there is no relay, on the same terms. What it has to
-	// forget is which unpaid orders the office has already been told about --
-	// rows that must outlive the window the sweep looks back over, or
-	// forgetting one would be the same as sending the message again.
-	notify *notifybus.Business
 }
 
 // start runs the sweeps until ctx is done, and returns a channel closed when
@@ -106,12 +99,6 @@ func (h housekeeper) sweep(ctx context.Context) {
 	if h.payments != nil {
 		if err := h.payments.Forget(ctx, now); err != nil {
 			h.log.Error("the handled payment notifications could not be pruned", "error", err)
-		}
-	}
-
-	if h.notify != nil {
-		if err := h.notify.ForgetReports(ctx, now); err != nil {
-			h.log.Error("the reported unpaid orders could not be pruned", "error", err)
 		}
 	}
 

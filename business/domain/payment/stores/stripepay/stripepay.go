@@ -124,6 +124,13 @@ func (g *Gateway) Checkout(ctx context.Context, o paybus.Order) (paybus.Handoff,
 		ClientReferenceID: stripe.String(o.SubmissionID.String()),
 	}
 
+	// Our deadline rather than Stripe's default of a day, so that the order is
+	// marked abandoned when the page really has closed. Left to Stripe when
+	// unset, which only a caller that bypassed paybus.Start could do.
+	if !o.ExpiresAt.IsZero() {
+		params.ExpiresAt = stripe.Int64(o.ExpiresAt.Unix())
+	}
+
 	// The idempotency key dedupes *our own retry of this one API call* -- a
 	// timeout where the session may or may not have been created. It dedupes
 	// nothing a person does: what stops a second order is the single-use

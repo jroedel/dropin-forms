@@ -1124,13 +1124,12 @@ answers are trusted no further than being put back in the boxes they came out
 of; the next submission is validated from scratch.
 
 Its one cost, named because it is a real one: **the order already stored stays
-stored, as pending.** There is no "abandoned" status to move it to, and this
-surface has no business inventing one — a stranger holding a submission's id is
-not proof of anything, and a public route that could retire somebody's order is
-a route that retires orders. So going back and ordering again leaves a pending
-row nobody will pay. That is the same footprint as clicking Continue and then
-closing the Stripe tab, which already happens, and what the office reads a
-pending row as is "not paid", which remains true.
+stored, as pending,** until its payment page closes and the sweep marks it
+abandoned. This surface does not retire it sooner — a stranger holding a
+submission's id is not proof of anything, and a public route that could retire
+somebody's order is a route that retires orders. So going back and ordering
+again leaves a row nobody will pay: the same footprint as clicking Continue and
+then closing the Stripe tab, and out of every list but an administrator's.
 
 **After paying, nothing said so.** This was the round trip recorded here as
 deliberately unbuilt, and it is now built. Stripe sends the browser back to the
@@ -1387,9 +1386,8 @@ another about a paid one.
 and it is about timing rather than wording. Somebody who has just been handed a
 payment page has not finished; an email saying "we have your order" arriving
 while they are still typing their card number either reads as a receipt for
-something they have not paid for, or as a reason to stop. The office sees
-pending rows in the management app, which is where a half-finished order
-belongs. A declined card sends nothing either: the person is on Stripe's page
+something they have not paid for, or as a reason to stop. Nor is anything
+sent later: see "Orders that were started and never paid for". A declined card sends nothing either: the person is on Stripe's page
 and has already been told, by the only party that knows what was wrong with
 their card.
 
@@ -1523,60 +1521,63 @@ is about the reader rather than about the form.
 
 ### Orders that were started and never paid for
 
-The notification step had a hole in it that took a while to name. Stripe sends
-an event when a payment succeeds and an event when one fails, and **nothing at
-all when somebody closes the checkout tab**. `checkout.session.expired` is not
-one of the four events this endpoint subscribes to, and even with it the notice
-would arrive a day later. So an abandoned order sat `pending` in the management
-app and waited to be noticed by somebody who thought to look.
+Stripe sends an event when a payment succeeds and an event when one fails, and
+**nothing at all when somebody closes the checkout tab**. So an order whose
+person walked away sat `pending` -- and since nothing here knew the payment
+page had closed, it sat `pending` for ever. That word was the problem. Several
+people reading the list took it for something under way and asked what it was
+waiting for; the honest answer was nothing.
 
-That is a quiet failure mode by nature, and the quiet part is the dangerous
-one: **a payment step that has broken entirely looks exactly like an afternoon
-when nobody bought anything.** Both are an empty inbox.
+**What was here first, and why it went.** `notifybus.ReportUnpaid` swept
+hourly and mailed the office one message per form listing orders started and
+not paid for, with a ledger (`unpaid_notices`) so each was reported once. It
+closed a real gap -- a payment step that has broken entirely looks exactly like
+an afternoon when nobody bought anything -- and in use it was noise. A closed
+payment page is ordinary, nobody acted on being told, and to anybody reading a
+form's results the rows were worse than nothing: the same name twice, once
+unpaid and once paid, read as two people. The email, its ticker and its table
+are gone; `notifydb.Init` drops the table.
 
-`notifybus.ReportUnpaid` closes it, on a timer rather than on a request.
+**A deadline of our own: two hours.** `paybus.CheckoutWindow` is passed to
+Stripe as the session's `expires_at`, replacing Stripe's default of a day. Long
+enough that somebody who leaves the tab open over lunch can come back and
+finish; short enough that an order nobody will pay stops looking like one by
+the afternoon. After it Stripe's link no longer takes payment, and somebody who
+still wants to pay fills the form in again.
 
-**Nothing is sent at the time, and that part has not changed.** Somebody who
-has just been handed a payment page has not finished, and an email saying "we
-have your order" arriving while they are still typing their card number would
-either read as a receipt or as a reason to stop. The grace period is an hour:
-somebody four minutes in is typing a card number, somebody who was going to
-finish has finished. The sweep runs hourly, so an abandoned order is reported
-between one and two hours later.
+**And a status that says so: `abandoned`.** `submissionbus.Business.Abandon`
+runs every fifteen minutes (`cmd/dropin-forms/abandon.go`) and marks every
+`pending` or `failed` order older than `paybus.AbandonAfter` -- the window and
+ten minutes, because the order's time is ours and the deadline is compared on
+Stripe's clock. A declined card is included: past the deadline it is in the
+position of a closed tab, since the page that could have taken a second card
+has gone. One conditional `UPDATE`, so a payment confirmed while it runs is not
+overwritten. The clock is the authority rather than `checkout.session.expired`,
+because the deadline is a number we chose; subscribing to that event would be
+a fifth webhook to configure in Stripe's dashboard for no information we do not
+have. Forwards only, with one exception: an abandoned order may still become
+`paid`, if a confirmation ever arrives -- Stripe says it will not complete a
+payment on an expired page, but if it does the money is real. A late failure
+changes nothing.
 
-**One message per form, not one per order.** An abandoned order is worth
-knowing about and is not worth an email of its own. The message lists what has
-been sitting there -- when, who, how much, and a link to each -- and says
-plainly that nothing has been charged, because the first question a message
-like this provokes is "have we been paid or not" and the second is "is
-something broken".
+**Out of everybody's view but an administrator's.** `submissionbus.ByForm` is
+the settled submissions alone, and every list, total, download, spreadsheet
+feed and API answer reads it, so a page added next year is right without
+knowing this. `Unsettled` is the way back, and only the submissions list asks
+it, for somebody holding `admin` on the form: their rows sit behind the "Show
+the N not paid" box, labelled *in checkout* or *abandoned* rather than with the
+stored word, and an "i" beside the box says that people pay on Stripe's
+website and that not paid means they never finished there. For an
+administrator these are a question about the form -- how many reach the
+payment page and stop -- and nobody else is given them: a results reader
+opening one by address gets a 404, and so does the will-call table. They are
+in no download, for anybody.
 
-**The submitter is told nothing, ever.** They did not pay, they may well have
-meant not to, and chasing them is not this service's business.
-
-**Each order is reported once**, and `unpaid_notices` is what makes that true.
-An unpaid order stays unpaid forever, so without a record of what has been said
-the office would hear about the same one every hour until they stopped reading
-these messages -- which would cost them the ones that matter. The claim is a
-single `INSERT ... ON CONFLICT DO NOTHING` that reports whether it inserted,
-the same shape `userbus` uses for its single-use credentials, so a restart
-cannot land between "has this been reported" and "record that it has".
-
-**The order of operations is recipients, then claim, then send**, and the first
-two are that way round deliberately. Claiming before knowing there is anybody
-to tell would spend the one notice an order gets on a service whose
-notification list happens to be empty, and the day somebody was finally given
-the form they would hear about none of it. Claiming before *sending*, on the
-other hand, is the right way round: a send that fails costs one message and a
-loud line in the log, where a claim that fails would cost a message an hour
-forever.
-
-**Two bounds on how far back it looks.** The upper one is the grace period. The
-lower is a floor of thirty days, and it exists for the day somebody restores a
-database without the ledger: unbounded, the next sweep would mail the office
-about every order anybody ever abandoned. The notices are pruned at ninety
-days, which has to stay longer than that floor -- forget a notice while the
-order it names is still in the window and the next sweep sends it again.
+**What is left of the alarm.** The one thing the email caught that nothing else
+would is a payment page that has stopped working. `Abandon` checks each form it
+touched, and three abandoned with none paid in a day is a warning in the log --
+which costs nobody's attention until somebody goes looking, which is the right
+price for something that is usually a quiet day.
 
 ### Giving somebody access, as built
 
@@ -2079,9 +2080,9 @@ form that took money.
 
 **Left out by the store, not by each reader.** Every listing query carries the
 same `NOT IN (SELECT submission_id FROM hidden_submissions)`: `ByForm`,
-`Settled` and `Unpaid`. Through them a hidden submission leaves the admin list
-and its totals, the CSV, the index counts, the will-call table, the list
-beneath a form and the unpaid-order mail — and a page added next year that
+and `Settled`. Through them a hidden submission leaves the admin list and its
+totals, the CSV, the index counts, the will-call table and the list beneath a
+form — and a page added next year that
 lists submissions is correct without knowing hiding exists. Two readers keep
 them on purpose: `ByID`, so the submission's page can say it is hidden and
 offer to put it back, and `CountSince`, because the daily cap is an abuse
@@ -2368,7 +2369,7 @@ are automatic.
 **Pulled hourly, not pushed.** A webhook would be a fifth event on the
 endpoint, beside four whose absence already fails silently, and a deposit is
 not urgent -- it reaches the bank days after the payments in it.
-`cmd/dropin-forms/deposits.go` is a third ticker of `unpaid.go`'s shape. Each
+`cmd/dropin-forms/deposits.go` is a third ticker of `abandon.go`'s shape. Each
 sync lists payouts created since thirty days before the newest kept one, and
 reads the lines of each that is paid, not yet kept, and (if automatic)
 reconciled by Stripe. That last condition matters: Stripe works out a payout's

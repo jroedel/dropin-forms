@@ -679,7 +679,7 @@ func TestCountSinceCountsOneFormsRecentRows(t *testing.T) {
 	}
 }
 
-func TestUnpaidFindsOrdersInsideTheWindowOnly(t *testing.T) {
+func TestAbandonClosesOnlyOpenOrdersPastTheDeadline(t *testing.T) {
 	_, store := open(t)
 
 	write := func(status submissionbus.Status, at time.Time) types.ID {
@@ -699,33 +699,69 @@ func TestUnpaidFindsOrdersInsideTheWindowOnly(t *testing.T) {
 		return s.ID
 	}
 
-	old := write(submissionbus.StatusPending, now.Add(-72*time.Hour))
-	older := write(submissionbus.StatusPending, now.Add(-48*time.Hour))
+	// Past the deadline, both the ways an order can still be open: a closed
+	// tab and a declined card. The second is hidden, and is closed anyway --
+	// hiding an order says nothing about whether it was paid.
+	closed := write(submissionbus.StatusPending, now.Add(-3*time.Hour))
+	declined := write(submissionbus.StatusFailed, now.Add(-3*time.Hour))
 
-	// Inside the grace period: somebody typing a card number, not gone.
-	write(submissionbus.StatusPending, now.Add(-10*time.Minute))
+	if _, _, err := store.Hide(t.Context(), submissionbus.Hiding{
+		SubmissionID: declined, Form: sample(t).Form, HiddenAt: now, HiddenBy: types.NewID(),
+	}); err != nil {
+		t.Fatalf("Hide: %v", err)
+	}
 
-	// Before the floor, which is what stops a restored database mailing the
-	// office about every order anybody ever abandoned.
-	write(submissionbus.StatusPending, now.Add(-90*24*time.Hour))
+	// Inside it: somebody who may still come back to the tab.
+	open := write(submissionbus.StatusPending, now.Add(-10*time.Minute))
 
-	// Settled, in both the ways a submission can be.
-	write(submissionbus.StatusPaid, now.Add(-48*time.Hour))
-	write(submissionbus.StatusReceived, now.Add(-48*time.Hour))
+	// Settled, in both the ways a submission can be. A payment confirmed
+	// while the sweep ran is this case, and must not be overwritten.
+	paid := write(submissionbus.StatusPaid, now.Add(-3*time.Hour))
+	received := write(submissionbus.StatusReceived, now.Add(-3*time.Hour))
 
-	got, err := store.Unpaid(t.Context(), now.Add(-30*24*time.Hour), now.Add(-time.Hour))
+	forms, err := store.Abandon(t.Context(), now.Add(-2*time.Hour), now)
 	if err != nil {
-		t.Fatalf("Unpaid: %v", err)
+		t.Fatalf("Abandon: %v", err)
 	}
 
-	if len(got) != 2 {
-		t.Fatalf("Unpaid returned %d rows, want the two pending ones inside the window", len(got))
+	if len(forms) != 2 || forms[0] != sample(t).Form || forms[1] != sample(t).Form {
+		t.Errorf("Abandon reported %v, want the form twice", forms)
 	}
 
-	// Oldest first, because the list goes into a message somebody reads top to
-	// bottom and the one that has been waiting longest matters most.
-	if got[0].ID != old || got[1].ID != older {
-		t.Errorf("Unpaid returned them out of order: %v, %v", got[0].CreatedAt, got[1].CreatedAt)
+	want := map[types.ID]submissionbus.Status{
+		closed:   submissionbus.StatusAbandoned,
+		declined: submissionbus.StatusAbandoned,
+		open:     submissionbus.StatusPending,
+		paid:     submissionbus.StatusPaid,
+		received: submissionbus.StatusReceived,
+	}
+
+	for id, status := range want {
+		got, err := store.ByID(t.Context(), id)
+		if err != nil {
+			t.Fatalf("ByID: %v", err)
+		}
+
+		if got.Status != status {
+			t.Errorf("a %s order is now %s", status, got.Status)
+		}
+	}
+
+	// Twice is nothing: the statement only touches what is still open.
+	again, err := store.Abandon(t.Context(), now.Add(-2*time.Hour), now)
+	if err != nil {
+		t.Fatalf("the second Abandon: %v", err)
+	}
+	if len(again) != 0 {
+		t.Errorf("the second Abandon changed %d rows", len(again))
+	}
+
+	paidCount, abandoned, err := store.Outcomes(t.Context(), sample(t).Form, now.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatalf("Outcomes: %v", err)
+	}
+	if paidCount != 1 || abandoned != 2 {
+		t.Errorf("Outcomes = %d paid, %d abandoned; want 1 and 2", paidCount, abandoned)
 	}
 }
 
@@ -902,8 +938,8 @@ func TestUncollectLetsAnOrderBeHandedOverAgain(t *testing.T) {
 	}
 }
 
-// A hidden submission leaves every listing query -- ByForm, Settled and
-// Unpaid -- and stays readable by id, counted by CountSince, and listed by
+// A hidden submission leaves every listing query -- ByForm and Settled --
+// and stays readable by id, counted by CountSince, and listed by
 // Hidden. Unhiding puts it back.
 func TestAHiddenSubmissionLeavesEveryListAndComesBack(t *testing.T) {
 	_, store := open(t)
@@ -947,10 +983,6 @@ func TestAHiddenSubmissionLeavesEveryListAndComesBack(t *testing.T) {
 
 	if settled, err := store.Settled(t.Context(), lunch, 10); err != nil || len(settled) != 1 {
 		t.Errorf("Settled = %d rows, %v; want only the one not hidden", len(settled), err)
-	}
-
-	if owed, err := store.Unpaid(t.Context(), now.Add(-time.Hour), now.Add(time.Hour)); err != nil || len(owed) != 0 {
-		t.Errorf("Unpaid = %d rows, %v; a hidden unpaid order must not be reported", len(owed), err)
 	}
 
 	if n, err := store.CountSince(t.Context(), lunch, now.Add(-time.Hour)); err != nil || n != 3 {

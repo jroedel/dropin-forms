@@ -247,6 +247,46 @@ func TestTheLinesSentToStripeAddUpToTheDerivedTotal(t *testing.T) {
 
 // And Start actually refuses when they disagree, which is what makes the
 // property above load-bearing rather than incidental.
+// The payment page closes on our deadline rather than Stripe's day-long
+// default, and whatever the caller put there is replaced: the sweep that
+// marks orders abandoned counts from the same number, and the two must agree.
+func TestStartSetsTheDeadline(t *testing.T) {
+	g := &gateway{}
+	b := paybus.NewBusiness(quiet(), g, newSeen(), newSettler())
+
+	o := paybus.Order{
+		SubmissionID: types.NewID(),
+		Form:         mustSlug(t, "feast-lunch-2026"),
+		Currency:     "usd",
+		SuccessURL:   "https://example.test/lunch?dropin=x",
+		CancelURL:    "https://example.test/lunch?dropin=y",
+		Lines:        []paybus.Line{{Label: "Lunch ticket", Qty: 1, Unit: 1200}},
+		Total:        1200,
+		ExpiresAt:    time.Now().Add(24 * time.Hour),
+	}
+
+	before := time.Now()
+
+	if _, err := b.Start(t.Context(), o); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	got := g.orders[0].ExpiresAt
+	if got.Before(before.Add(paybus.CheckoutWindow)) || got.After(time.Now().Add(paybus.CheckoutWindow)) {
+		t.Errorf("ExpiresAt = %v, want %v from now", got, paybus.CheckoutWindow)
+	}
+
+	// Stripe refuses a deadline outside half an hour to a day, and would
+	// refuse every order with it.
+	if paybus.CheckoutWindow < 30*time.Minute || paybus.CheckoutWindow > 24*time.Hour {
+		t.Errorf("CheckoutWindow = %v, which Stripe will not accept", paybus.CheckoutWindow)
+	}
+
+	if paybus.AbandonAfter <= paybus.CheckoutWindow {
+		t.Errorf("AbandonAfter = %v; an order must not be abandoned while its page may still be open", paybus.AbandonAfter)
+	}
+}
+
 func TestStartRefusesAnOrderThatDoesNotAddUp(t *testing.T) {
 	g := &gateway{}
 	b := paybus.NewBusiness(quiet(), g, newSeen(), newSettler())

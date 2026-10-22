@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
@@ -65,10 +66,22 @@ const (
 
 	// StatusFailed is a payment Stripe told us would not happen.
 	StatusFailed Status = "failed"
+
+	// StatusAbandoned is an order whose payment page has closed without being
+	// paid. It is the end of the road and it is meant to read like one: the
+	// person was sent to Stripe, and the page Stripe gave them has expired, so
+	// there is nothing left that could take their money for this order.
+	//
+	// It exists because "pending" said the opposite. A row marked pending a
+	// week later reads as something still in progress, and people asked what
+	// it was waiting for; the answer was nothing. Set by [Business.Abandon] on
+	// a timer, never by a webhook -- Stripe sends nothing when somebody closes
+	// a tab, and the deadline is one we chose, so the clock is the authority.
+	StatusAbandoned Status = "abandoned"
 )
 
 // statuses is every Status, in the order a submission moves through them.
-var statuses = []Status{StatusReceived, StatusPending, StatusPaid, StatusFailed}
+var statuses = []Status{StatusReceived, StatusPending, StatusPaid, StatusFailed, StatusAbandoned}
 
 // The errors this package returns.
 var (
@@ -249,9 +262,15 @@ type Storer interface {
 	// which is what a daily cap is measured against.
 	CountSince(ctx context.Context, form types.Slug, since time.Time) (int, error)
 
-	// Unpaid lists submissions still waiting for money that were made in the
-	// window [from, before), oldest first.
-	Unpaid(ctx context.Context, from, before time.Time) ([]Submission, error)
+	// Abandon marks every order still waiting for money that was made before
+	// an instant as abandoned, in one statement, and reports the form of each
+	// one it changed. One statement rather than a read and a write, so that a
+	// payment confirmed between the two cannot be overwritten.
+	Abandon(ctx context.Context, before, at time.Time) ([]types.Slug, error)
+
+	// Outcomes counts a form's paid and abandoned submissions made since an
+	// instant, hidden ones included.
+	Outcomes(ctx context.Context, form types.Slug, since time.Time) (paid, abandoned int, err error)
 
 	// SetStatus moves a submission forward, recording Stripe's reference.
 	SetStatus(ctx context.Context, id types.ID, to Status, ref string, at time.Time) error
@@ -434,15 +453,39 @@ func (b *Business) ByID(ctx context.Context, id types.ID) (Submission, error) {
 	return s, nil
 }
 
-// ByForm lists a form's submissions, newest first, leaving out any that have
-// been hidden -- see [Hiding] for which readers that reaches.
+// ByForm lists a form's settled submissions, newest first, leaving out any
+// that have been hidden -- see [Hiding] for which readers that reaches.
+//
+// Settled, which is the same line [Business.Recent] draws and for a wider
+// reason. An order nobody paid for is not a submission anybody needs to read:
+// the list, its totals, the download, the spreadsheet feed and the API all
+// come through here, and every one of them was being asked what a row of
+// somebody who closed the payment page meant. Leaving them out in one place
+// means a page added next year cannot forget to. [Business.Unsettled] is the
+// way back to them, for the one reader who asks.
 func (b *Business) ByForm(ctx context.Context, form types.Slug) ([]Submission, error) {
 	out, err := b.store.ByForm(ctx, form)
 	if err != nil {
 		return nil, fmt.Errorf("listing the submissions: %w", err)
 	}
 
-	return out, nil
+	return slices.DeleteFunc(out, func(s Submission) bool { return !s.Status.Settled() }), nil
+}
+
+// Unsettled lists a form's submissions that were started and not paid for,
+// newest first, leaving out any that have been hidden: the ones still in
+// checkout, the ones whose card was declined, and the abandoned.
+//
+// For an administrator looking at how a form is doing -- how many people
+// reached the payment page and stopped is a question about the form, not about
+// any one order. Nothing else should read it.
+func (b *Business) Unsettled(ctx context.Context, form types.Slug) ([]Submission, error) {
+	out, err := b.store.ByForm(ctx, form)
+	if err != nil {
+		return nil, fmt.Errorf("listing the unpaid submissions: %w", err)
+	}
+
+	return slices.DeleteFunc(out, func(s Submission) bool { return s.Status.Settled() }), nil
 }
 
 // ByPaymentRef reads the submission a Stripe payment reference belongs to.
@@ -500,29 +543,64 @@ func (b *Business) Recent(ctx context.Context, form types.Slug, limit int) ([]Su
 	return out, nil
 }
 
-// unpaidWindow is how far back [Business.Unpaid] will ever look.
+// abandonAlarm is how many orders on one form may be abandoned in
+// abandonLookback, with none paid, before the log says something.
 //
-// A floor rather than a policy about how long an order stays interesting. What
-// it protects against is the day somebody restores a database without the
-// record of which unpaid orders have already been reported: without a bound,
-// the next sweep would mail the office about every order anybody has ever
-// abandoned, which is the kind of message that gets notifications switched off
-// for good.
-const unpaidWindow = 30 * 24 * time.Hour
+// This is what is left of the unpaid-orders email. That email was noise to the
+// people it went to -- somebody who closed a payment page is not news -- but
+// it was also the only thing that would notice a payment step that had broken
+// entirely, which looks exactly like a quiet day: no orders paid, and nobody
+// told. Three abandoned and none paid in a day is not what a working form
+// does, and a log line costs nobody's attention until somebody goes looking.
+const (
+	abandonAlarm    = 3
+	abandonLookback = 24 * time.Hour
+)
 
-// Unpaid lists submissions that were started and never paid for, oldest first.
+// Abandon marks every order still unpaid after the given time as abandoned,
+// pending and declined alike, and reports how many it marked.
 //
-// grace is how long an order is given before it counts: somebody handed a
-// payment page four minutes ago is typing a card number, not gone. What the
-// number should be is a judgement about people rather than about storage,
-// which is why it is an argument and not a constant here.
-func (b *Business) Unpaid(ctx context.Context, now time.Time, grace time.Duration) ([]Submission, error) {
-	out, err := b.store.Unpaid(ctx, now.Add(-unpaidWindow), now.Add(-grace))
+// after is how long the payment page stays open, with whatever margin the
+// caller wants on top of it. It is passed in rather than known here because
+// the deadline is set where the payment page is made, and the two must be the
+// same number; see paybus.AbandonAfter.
+//
+// Called on a timer. A declined card is included because past the deadline it
+// is in exactly the position of a closed tab: the page that could have taken a
+// second card has gone.
+func (b *Business) Abandon(ctx context.Context, now time.Time, after time.Duration) (int, error) {
+	forms, err := b.store.Abandon(ctx, now.Add(-after), now.UTC())
 	if err != nil {
-		return nil, fmt.Errorf("listing the unpaid submissions: %w", err)
+		return 0, fmt.Errorf("marking the expired orders abandoned: %w", err)
 	}
 
-	return out, nil
+	if len(forms) == 0 {
+		return 0, nil
+	}
+
+	b.log.Info("orders abandoned", "count", len(forms))
+
+	// Asked only of the forms this pass touched, so the line is repeated at
+	// most once per newly abandoned order rather than on every tick for as
+	// long as the condition holds.
+	slices.SortFunc(forms, func(x, y types.Slug) int { return strings.Compare(x.String(), y.String()) })
+
+	for _, form := range slices.Compact(forms) {
+		paid, abandoned, err := b.store.Outcomes(ctx, form, now.Add(-abandonLookback))
+		if err != nil {
+			b.log.Error("whether a form's payments are working could not be read",
+				"form", form.String(), "error", err)
+
+			continue
+		}
+
+		if paid == 0 && abandoned >= abandonAlarm {
+			b.log.Warn("orders on this form are being abandoned and none have been paid; check that its payment page opens and takes a card",
+				"form", form.String(), "abandoned", abandoned, "paid", paid, "since", abandonLookback.String())
+		}
+	}
+
+	return len(forms), nil
 }
 
 // Settle records what Stripe said about a payment.
@@ -550,6 +628,17 @@ func (b *Business) Settle(ctx context.Context, now time.Time, id types.ID, to St
 	if s.Status.Settled() {
 		b.log.Warn("ignoring a status change to a settled submission",
 			"submission_id", id.String(), "from", s.Status, "to", to)
+
+		return nil
+	}
+
+	// An abandoned order may still be paid and may not become anything else.
+	// Stripe will not complete a payment on a page that has expired, so the
+	// first should never happen -- but if a confirmation does arrive, the money
+	// is real and the status follows it. A late failure says nothing new.
+	if s.Status == StatusAbandoned && to != StatusPaid {
+		b.log.Warn("ignoring a status change to an abandoned submission",
+			"submission_id", id.String(), "to", to)
 
 		return nil
 	}
