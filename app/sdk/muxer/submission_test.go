@@ -203,6 +203,7 @@ func TestTheSubmissionListShowsWhatWasSubmitted(t *testing.T) {
 
 	o.sell(t, nil)
 	o.sell(t, url.Values{"name": {"Tomás Ó Braonáin"}, "email": {"tomas@example.org"}})
+	o.payFor(t, theForm)
 
 	u, cookie := o.reader(t, "reader@schoenstatt.us")
 	o.grant(t, u, theForm, accessbus.RoleResults)
@@ -241,6 +242,7 @@ func TestTheDetailPageShowsOneSubmission(t *testing.T) {
 	o := newOffice(t)
 
 	o.sell(t, url.Values{"notes": {"No shellfish, please"}})
+	o.payFor(t, theForm)
 
 	u, cookie := o.reader(t, "reader@schoenstatt.us")
 	o.grant(t, u, theForm, accessbus.RoleResults)
@@ -280,6 +282,7 @@ func TestTheExportHasAColumnPerFieldAndNoAddresses(t *testing.T) {
 	o := newOffice(t)
 
 	o.sell(t, url.Values{"notes": {"Two of us, one vegetarian"}})
+	o.payFor(t, theForm)
 
 	u, cookie := o.reader(t, "reader@schoenstatt.us")
 	o.grant(t, u, theForm, accessbus.RoleResults)
@@ -334,8 +337,8 @@ func TestTheExportHasAColumnPerFieldAndNoAddresses(t *testing.T) {
 	}
 
 	row := rows[1]
-	if row[2] != "pending" {
-		t.Errorf("the status column is %q, want pending", row[2])
+	if row[2] != "paid" {
+		t.Errorf("the status column is %q, want paid", row[2])
 	}
 	if row[5] != "Maria O'Neill" {
 		t.Errorf("the name column is %q, and a CSV cell is not escaped HTML", row[5])
@@ -364,6 +367,7 @@ func TestAGrantOnOneFormCannotReadAnothersSubmission(t *testing.T) {
 	o := newOffice(t)
 
 	o.sell(t, nil)
+	o.payFor(t, theForm)
 
 	// One account that may read the lunch form, to find an identifier the
 	// honest way, and another that may read only the picnic.
@@ -403,6 +407,7 @@ func TestTheIndexListsOnlyFormsYouHoldAGrantOn(t *testing.T) {
 	o := newOffice(t)
 
 	o.sell(t, nil)
+	o.payFor(t, theForm)
 
 	only, onlyCookie := o.reader(t, "picnic@schoenstatt.us")
 	o.grant(t, only, otherForm, accessbus.RoleResults)

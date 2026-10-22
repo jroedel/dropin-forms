@@ -276,8 +276,10 @@ A question (`fields[]`):
 Oldest first. `answers` has a key for every question the form asks now, set
 to `null` when it was not answered and to a list for a `choices` question. It
 also keeps any answer to a question that has since been removed. `status` is
-`received` (nothing to pay), `pending`, `paid` or `failed`. Submissions somebody
-has hidden from the lists are left out, as they are from the download.
+`received` (nothing to pay) or `paid`. Orders that were started and never paid
+for are left out, as they are from the download and the spreadsheet: somebody
+sent to Stripe who did not finish is not a submission. So are submissions
+somebody has hidden from the lists.
 
 ### What is not here
 

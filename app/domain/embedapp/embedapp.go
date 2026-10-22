@@ -689,14 +689,14 @@ func (a app) submit(w http.ResponseWriter, r *http.Request) {
 // validated from scratch against the definition, so an edited hidden field
 // buys exactly the same as typing in the box.
 //
-// And the order that was already stored stays stored, as pending. There is no
-// "abandoned" status to move it to and this surface has no business inventing
-// one: a stranger holding a submission's id is not proof of anything, and a
-// route on the public form that could retire somebody's order is a route that
-// retires orders. So going back and ordering again leaves one pending row
-// nobody will pay -- which is the same footprint as clicking Continue and then
-// closing the Stripe tab, and that already happens. What the office reads a
-// pending row as is "not paid", which remains true.
+// And the order that was already stored stays stored, as pending, until its
+// payment page closes and the sweep marks it abandoned. This surface does not
+// retire it sooner: a stranger holding a submission's id is not proof of
+// anything, and a route on the public form that could retire somebody's order
+// is a route that retires orders. So going back and ordering again leaves one
+// row nobody will pay -- the same footprint as clicking Continue and then
+// closing the Stripe tab -- and it is out of every list but an
+// administrator's, where it reads as abandoned within a few hours.
 func (a app) edit(w http.ResponseWriter, r *http.Request) {
 	f, ok := a.form(w, r)
 	if !ok {

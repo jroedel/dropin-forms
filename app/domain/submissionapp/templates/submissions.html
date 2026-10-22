@@ -26,27 +26,25 @@ shown or counted here. <a href="/forms/{{.FormID}}/submissions?hidden=1">Show
 <div class="summary-cards">
 <p><strong>{{.Summary.Count}}</strong> submission{{if ne .Summary.Count 1}}s{{end}}</p>
 {{if .Summary.Paid}}<p><strong>{{.Summary.Paid}}</strong> paid</p>{{end}}
-{{if .Summary.Pending}}<p><strong>{{.Summary.Pending}}</strong> awaiting payment</p>{{end}}
 {{if .Summary.Received}}<p><strong>{{.Summary.Received}}</strong> received</p>{{end}}
-{{if .Summary.Failed}}<p><strong>{{.Summary.Failed}}</strong> failed</p>{{end}}
 </div>
 
 {{if .Summary.Items}}
 <table class="listing tallies">
-<caption>Confirmed is what to cater for. Awaiting payment is what somebody
-started and has not paid for.</caption>
+<caption>Confirmed is what to cater for: paid for, or received on a form that
+charges nothing.</caption>
 <thead>
-<tr><th scope="col">Item</th><th scope="col">Confirmed</th><th scope="col">Awaiting payment</th></tr>
+<tr><th scope="col">Item</th><th scope="col">Confirmed</th></tr>
 </thead>
 <tbody>
 {{range .Summary.Items}}
-<tr><th scope="row">{{.Label}}</th><td class="figure">{{.Confirmed}}</td><td class="figure">{{.Pending}}</td></tr>
+<tr><th scope="row">{{.Label}}</th><td class="figure">{{.Confirmed}}</td></tr>
 {{end}}
 </tbody>
 </table>
 {{end}}
 
-<p class="money">Collected <strong>{{.Summary.PaidTotal}}</strong>{{if ne .Summary.OwedTotal "0.00"}}, with {{.Summary.OwedTotal}} started but not paid{{end}}.
+<p class="money">Collected <strong>{{.Summary.PaidTotal}}</strong>.
 {{- if .Deposits}} <a href="/forms/{{.FormID}}/deposits">See the deposits to the bank</a>.{{end}}</p>
 
 <p><a class="go" href="/forms/{{.FormID}}/submissions.csv">Download as CSV</a>{{if .Feed}}
@@ -56,11 +54,30 @@ or <a href="/forms/{{.FormID}}/feed">keep a Google Sheet up to date</a>{{end}}</
 {{/* The box shows the rows it names. A stylesheet rule hides every
      tr.unpaid while it is clear, so this works with no script -- the admin
      surface has none -- and a browser without :has() shows every row and a
-     box that does nothing, which loses nothing. */}}
-{{if .Unpaid}}<p class="choice">
+     box that does nothing, which loses nothing. Only an administrator is
+     given these rows, so only an administrator sees the box.
+
+     The "i" beside it is a <details> for the same reason: it opens and closes
+     with no script, and a browser that ignores the styling shows a working
+     disclosure. A div rather than a p, because a p cannot hold one. */}}
+{{if .Unpaid}}<div class="choice">
 <input type="checkbox" id="show-unpaid">
 <label for="show-unpaid">Show the {{.Unpaid}} not paid</label>
-</p>{{end}}
+<details class="info">
+<summary title="What does not paid mean?"><span class="visually-hidden">What does not paid mean?</span></summary>
+<div class="info-body">
+<p>People who fill in this form pay on Stripe&rsquo;s website, not on this one.
+An order that is not paid is one where somebody filled in the form, was sent on
+to Stripe, and never finished paying there. Nothing has been charged.</p>
+<p><em>In checkout</em> means their payment page is still open, which it stays
+for {{.Window}} hour{{if ne .Window 1}}s{{end}}. After that Stripe closes it
+and the order is marked <em>abandoned</em>: it can no longer be paid, and
+somebody who still wants to pay fills the form in again.</p>
+<p>Only administrators of this form see these. They are not in the counts or
+the totals above, the download, or the spreadsheet.</p>
+</div>
+</details>
+</div>{{end}}
 <div class="scroller wide">
 <table class="listing">
 <thead>

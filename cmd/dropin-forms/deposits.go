@@ -19,7 +19,7 @@ const depositsEvery = time.Hour
 // depositWatch reads Stripe's deposits into the ledger the deposits page shows.
 //
 // Its own ticker rather than a job on the housekeeping sweep, for the reason
-// unpaidWatch gives: the sweep forgets rows every six hours, and this fetches
+// abandonWatch gives: the sweep forgets rows every six hours, and this fetches
 // from outside on a different clock.
 type depositWatch struct {
 	log      *slog.Logger
@@ -42,7 +42,7 @@ func (d depositWatch) start(ctx context.Context) <-chan struct{} {
 	go func() {
 		defer close(done)
 
-		// Once at startup, for unpaidWatch's reason: a deploy restarts this
+		// Once at startup, for abandonWatch's reason: a deploy restarts this
 		// more often than the interval. A deposit already kept is skipped by
 		// its identifier, so a restart costs one list request.
 		d.sync(ctx)

@@ -95,7 +95,7 @@ func TestATemporalAnswerIsStoredInItsOneShape(t *testing.T) {
 		t.Fatalf("POST = %d:\n%s", w.Code, short(w.Body.String()))
 	}
 
-	stored, err := subs.ByForm(t.Context(), mustSlug(t, "visit"))
+	stored, err := allOf(t.Context(), subs, mustSlug(t, "visit"))
 	if err != nil || len(stored) != 1 {
 		t.Fatalf("ByForm = %d, %v; want one", len(stored), err)
 	}
@@ -207,7 +207,7 @@ func TestADatetimeOutsideItsRangeIsRefused(t *testing.T) {
 		}
 	}
 
-	if stored, _ := subs.ByForm(t.Context(), mustSlug(t, "visit")); len(stored) != 1 {
+	if stored, _ := allOf(t.Context(), subs, mustSlug(t, "visit")); len(stored) != 1 {
 		t.Errorf("%d stored, want only the one inside the range", len(stored))
 	}
 }

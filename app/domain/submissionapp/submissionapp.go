@@ -56,6 +56,7 @@ import (
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/domain/form/stores/formtoml"
+	"github.com/jroedel/dropin-forms/business/domain/payment/paybus"
 	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
 	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/business/types"
@@ -79,11 +80,13 @@ type Forms interface {
 // Submissions is the slice of the submission domain this app needs. Read-only:
 // nothing here changes a submission, which is why Settle is absent.
 //
-// ByForm leaves out hidden submissions, so the list, its totals, the CSV and
-// the index counts do too without a line here saying so. Hidden and HidingOf
-// are the two ways back to them.
+// ByForm leaves out hidden submissions and unpaid ones, so the list, its
+// totals, the CSV and the index counts do too without a line here saying so.
+// Hidden and HidingOf are the two ways back to the first; Unsettled is the way
+// back to the second, and only an administrator's page asks it.
 type Submissions interface {
 	ByForm(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error)
+	Unsettled(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error)
 	ByID(ctx context.Context, id types.ID) (submissionbus.Submission, error)
 	Hidden(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error)
 	HidingOf(ctx context.Context, id types.ID) (submissionbus.Hiding, bool, error)
@@ -447,18 +450,26 @@ type listView struct {
 	Hidden        int
 	ShowingHidden bool
 
-	// Unpaid is how many of the rows are not paid -- awaiting payment, or
-	// failed -- which the list leaves out until somebody ticks the box that
-	// says this number. Zero draws no box.
+	// Unpaid is how many of the rows are not paid -- still in checkout, or
+	// abandoned -- which the list leaves out until somebody ticks the box that
+	// says this number. Zero draws no box, and it is zero for everybody but an
+	// administrator of the form, because nobody else is given these rows.
 	//
-	// Out by default because the list is read for who is coming, and on a
-	// form that sells, a third of the rows can be somebody who reached
-	// Stripe and stopped: the same name twice, once unpaid and once paid,
-	// reads as two people. In the list rather than in a second page because
-	// the office still needs them -- to ring somebody whose card failed --
-	// and a tick is closer than a link. Only the rows: the counts and totals
-	// above already separate the two, and the CSV is everything.
+	// Only an administrator, because for anybody else they were worse than
+	// nothing. The list is read for who is coming, and on a form that sells, a
+	// third of the rows can be somebody who reached Stripe and stopped: the
+	// same name twice, once unpaid and once paid, reads as two people, and a
+	// row marked pending read as something still in progress. For an
+	// administrator they are a question about the form -- how many reach the
+	// payment page and stop -- and a tick is closer than a link. Never in the
+	// counts, the totals or the CSV, which are about what was sold.
 	Unpaid int
+
+	// Window is how many hours a payment page stays open, for the sentence
+	// beside that box which says what "not paid" means. From
+	// paybus.CheckoutWindow, so the page cannot say two hours while the
+	// deadline says something else.
+	Window int
 
 	// Feed is whether to link to the spreadsheet page: mounted, and this
 	// reader administers the form.
@@ -493,30 +504,22 @@ type rowView struct {
 	Unpaid bool
 }
 
-// summaryView is the headline. Counts by status rather than one total,
-// because "sold" and "started but never paid" are different numbers and
-// conflating them is how somebody orders the wrong amount of food.
+// summaryView is the headline: how many, and how much was collected. Only
+// what was paid for or received -- an order nobody paid for is not in any of
+// these numbers, because they are what somebody caters from, and a figure for
+// what was started and never paid was read as food to order.
 type summaryView struct {
 	Count    int
 	Paid     int
-	Pending  int
 	Received int
-	Failed   int
 
 	Items     []itemTally
 	PaidTotal string
-	OwedTotal string
 }
 
 type itemTally struct {
-	Label string
-
-	// Confirmed counts only what is settled -- paid, or received on a form
-	// that charges nothing. Pending is what somebody started and has not paid
-	// for, kept separate because you cater for the first number and hope for
-	// the second.
+	Label     string
 	Confirmed int
-	Pending   int
 }
 
 func (a app) list(w http.ResponseWriter, r *http.Request) {
@@ -525,38 +528,13 @@ func (a app) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hidden, err := a.cfg.Submissions.Hidden(r.Context(), f.ID)
-	if err != nil {
-		a.oops(w, r, "the hidden submissions could not be listed", err)
-
-		return
-	}
-
-	view := listView{
-		Form:    f,
-		FormID:  f.ID.String(),
-		Columns: columnsOf(f),
-		Summary: summarise(f, subs),
-		Hidden:  len(hidden),
-	}
-
-	// The hidden ones, instead of the rest, with the totals still those of
-	// the rest: the summary is what to cater for, and a hidden row is by
-	// definition not in it.
-	if r.URL.Query().Get("hidden") != "" {
-		view.ShowingHidden = true
-		subs = hidden
-	}
-
-	// Anybody who can read this page can read that one, so it needs no grant
-	// of its own: only the form has to sell something.
-	view.Deposits = a.cfg.CanDeposits && f.Sells()
-
 	// A failure to read a grant costs a link and not the page: the
 	// submissions are what somebody came for, and the gate in front of every
 	// linked page asks the same question again.
+	may := func(accessbus.Role) bool { return false }
+
 	if me, ok := mid.UserFrom(r.Context()); ok {
-		may := func(role accessbus.Role) bool {
+		may = func(role accessbus.Role) bool {
 			allowed, err := a.cfg.Grants.Allowed(r.Context(), me.ID, f.ID, role)
 			if err != nil {
 				a.cfg.Log.Error("whether the reader may open this form's other pages could not be read",
@@ -565,17 +543,65 @@ func (a app) list(w http.ResponseWriter, r *http.Request) {
 
 			return allowed
 		}
-
-		admin := may(accessbus.RoleAdmin)
-
-		view.Feed = admin && a.cfg.CanFeed
-		view.Edit = admin && a.cfg.CanEdit
-		view.People = admin
-		view.WillCall = a.cfg.CanWillCall && (admin || may(accessbus.RoleDoor))
 	}
 
+	admin := may(accessbus.RoleAdmin)
+
+	hidden, err := a.cfg.Submissions.Hidden(r.Context(), f.ID)
+	if err != nil {
+		a.oops(w, r, "the hidden submissions could not be listed", err)
+
+		return
+	}
+
+	// Hidden is every status, because hiding an order says nothing about
+	// whether it was paid. What an unpaid one is to anybody but an
+	// administrator is the same whether it is hidden or not.
+	if !admin {
+		hidden = slices.DeleteFunc(hidden, func(s submissionbus.Submission) bool { return !s.Status.Settled() })
+	}
+
+	view := listView{
+		Form:    f,
+		FormID:  f.ID.String(),
+		Columns: columnsOf(f),
+		Summary: summarise(f, subs),
+		Hidden:  len(hidden),
+		Window:  int(paybus.CheckoutWindow / time.Hour),
+	}
+
+	// The hidden ones, instead of the rest, with the totals still those of
+	// the rest: the summary is what to cater for, and a hidden row is by
+	// definition not in it.
+	if r.URL.Query().Get("hidden") != "" {
+		view.ShowingHidden = true
+		subs = hidden
+	} else if admin && f.Sells() {
+		unpaid, err := a.cfg.Submissions.Unsettled(r.Context(), f.ID)
+		if err != nil {
+			a.oops(w, r, "the unpaid submissions could not be listed", err)
+
+			return
+		}
+
+		// Into the one list, in time order, so that somebody who stopped at
+		// the payment page and came back to pay reads as two rows next to
+		// each other rather than as a row at the bottom.
+		subs = append(subs, unpaid...)
+		slices.SortStableFunc(subs, func(x, y submissionbus.Submission) int { return y.CreatedAt.Compare(x.CreatedAt) })
+	}
+
+	// Anybody who can read this page can read that one, so it needs no grant
+	// of its own: only the form has to sell something.
+	view.Deposits = a.cfg.CanDeposits && f.Sells()
+
+	view.Feed = admin && a.cfg.CanFeed
+	view.Edit = admin && a.cfg.CanEdit
+	view.People = admin
+	view.WillCall = a.cfg.CanWillCall && (admin || may(accessbus.RoleDoor))
+
 	for _, s := range subs {
-		unpaid := s.Status == submissionbus.StatusPending || s.Status == submissionbus.StatusFailed
+		unpaid := !s.Status.Settled()
 
 		// The hidden list shows what it was asked for, all of it: a row put
 		// out of the way once is not put out of the way again.
@@ -587,13 +613,33 @@ func (a app) list(w http.ResponseWriter, r *http.Request) {
 			Unpaid: unpaid && !view.ShowingHidden,
 			ID:     s.ID.String(),
 			When:   s.CreatedAt.Local().Format("2 Jan 2006, 15:04"),
-			Status: s.Status.String(),
+			Status: statusWords(s.Status),
 			Total:  formbus.Show(s.Answers.Total, f.Currency),
 			Cells:  cellsOf(f, s),
 		})
 	}
 
 	a.cfg.Render.Render(w, r, http.StatusOK, "submissions", view)
+}
+
+// statusWords is how a status reads on these pages.
+//
+// Not the stored word, for two of the three that are not settled. "pending"
+// is what the database calls an order whose payment page is open, and people
+// read it as something under way long after it had stopped being anything;
+// "failed" is a declined card, which is not a failure of anything here and is
+// still payable with another card until the page closes. Only these pages ever
+// show either: the CSV and the API carry settled submissions alone, in the
+// stored words a formula or a program matches on.
+func statusWords(s submissionbus.Status) string {
+	switch s {
+	case submissionbus.StatusPending:
+		return "in checkout"
+	case submissionbus.StatusFailed:
+		return "card declined"
+	}
+
+	return s.String()
 }
 
 // oneView is a single submission in full.
@@ -688,12 +734,21 @@ func (a app) one(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An order nobody paid for is an administrator's alone, here as in the
+	// list -- and this is reachable without the list, from a link in an
+	// email sent before these were taken out of everybody else's view.
+	if !s.Status.Settled() && !a.administers(r, f.ID) {
+		a.notFound(w, r)
+
+		return
+	}
+
 	view := oneView{
 		Form:   f,
 		FormID: f.ID.String(),
 		ID:     s.ID.String(),
 		When:   s.CreatedAt.Local().Format(longWhen),
-		Status: s.Status.String(),
+		Status: statusWords(s.Status),
 		Email:  s.Email.String(),
 		Total:  formbus.Show(s.Answers.Total, f.Currency),
 		Ref:    s.PaymentRef,
@@ -946,7 +1001,7 @@ func cellsOf(f formbus.Form, s submissionbus.Submission) []string {
 
 // summarise counts what somebody came to the page to find out.
 func summarise(f formbus.Form, subs []submissionbus.Submission) summaryView {
-	s := summaryView{Count: len(subs)}
+	var s summaryView
 
 	tally := map[string]*itemTally{}
 	order := make([]string, 0, len(f.Items))
@@ -956,27 +1011,26 @@ func summarise(f formbus.Form, subs []submissionbus.Submission) summaryView {
 		order = append(order, it.ID)
 	}
 
-	var paid, owed types.Money
+	var paid types.Money
 
 	for _, sub := range subs {
+		// ByForm has already left these out. Asked again here because this is
+		// where an unpaid order counted by mistake would become food ordered
+		// for somebody who is not coming.
+		if !sub.Status.Settled() {
+			continue
+		}
+
+		s.Count++
+
 		switch sub.Status {
 		case submissionbus.StatusPaid:
 			s.Paid++
-		case submissionbus.StatusPending:
-			s.Pending++
 		case submissionbus.StatusReceived:
 			s.Received++
-		case submissionbus.StatusFailed:
-			s.Failed++
 		}
 
-		settled := sub.Status.Settled()
-
-		if settled {
-			paid += sub.Answers.Total
-		} else if sub.Status == submissionbus.StatusPending {
-			owed += sub.Answers.Total
-		}
+		paid += sub.Answers.Total
 
 		for _, l := range sub.Answers.Lines {
 			t, known := tally[l.ItemID]
@@ -988,12 +1042,7 @@ func summarise(f formbus.Form, subs []submissionbus.Submission) summaryView {
 				continue
 			}
 
-			switch {
-			case settled:
-				t.Confirmed += l.Qty
-			case sub.Status == submissionbus.StatusPending:
-				t.Pending += l.Qty
-			}
+			t.Confirmed += l.Qty
 		}
 	}
 
@@ -1002,7 +1051,6 @@ func summarise(f formbus.Form, subs []submissionbus.Submission) summaryView {
 	}
 
 	s.PaidTotal = formbus.Show(paid, f.Currency)
-	s.OwedTotal = formbus.Show(owed, f.Currency)
 
 	return s
 }
@@ -1022,6 +1070,24 @@ func (a app) formAndSubmissions(w http.ResponseWriter, r *http.Request) (formbus
 	}
 
 	return f, subs, true
+}
+
+// administers reports whether the reader holds admin on a form. A failure to
+// read the grant is a no, logged: what it decides is whether an unpaid order is
+// shown, and the safe answer is not to.
+func (a app) administers(r *http.Request, form types.Slug) bool {
+	me, ok := mid.UserFrom(r.Context())
+	if !ok {
+		return false
+	}
+
+	allowed, err := a.cfg.Grants.Allowed(r.Context(), me.ID, form, accessbus.RoleAdmin)
+	if err != nil {
+		a.cfg.Log.Error("whether the reader administers this form could not be read",
+			"request_id", web.RequestIDFrom(r.Context()), "form", form.String(), "error", err)
+	}
+
+	return allowed
 }
 
 // form resolves the slug in the path.

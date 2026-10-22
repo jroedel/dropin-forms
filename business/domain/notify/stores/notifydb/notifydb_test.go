@@ -223,67 +223,28 @@ func TestTheSchemaMatchesWhatIsExpected(t *testing.T) {
 	}
 }
 
-// The ledger of what the office has been told, which is what stops an unpaid
-// order -- a thing that stays unpaid forever -- being reported every hour.
+// The table that remembered which unpaid orders had been emailed about went
+// with the email. A database from before carries it, and the next start drops
+// it -- running Init twice is the ordinary case, since it runs at every start.
+func TestTheRetiredLedgerIsDropped(t *testing.T) {
+	db, _ := open(t)
 
-func TestAnUnpaidNoticeIsClaimedOnce(t *testing.T) {
-	_, store := open(t)
-
-	id := types.NewID()
-
-	first, err := store.ClaimUnpaidNotice(t.Context(), id, now)
-	if err != nil {
-		t.Fatalf("ClaimUnpaidNotice: %v", err)
-	}
-	if !first {
-		t.Fatal("the first claim was refused")
+	if _, err := db.ExecContext(t.Context(),
+		`CREATE TABLE unpaid_notices (submission_id TEXT PRIMARY KEY, sent_at INTEGER NOT NULL) STRICT`); err != nil {
+		t.Fatalf("creating the old table: %v", err)
 	}
 
-	// The second is the one that matters: a read followed by a write is two
-	// statements a restart can land between, and this is one.
-	again, err := store.ClaimUnpaidNotice(t.Context(), id, now.Add(time.Hour))
-	if err != nil {
-		t.Fatalf("the second ClaimUnpaidNotice: %v", err)
-	}
-	if again {
-		t.Error("the same order was claimed twice")
+	if err := notifydb.Init(t.Context(), db); err != nil {
+		t.Fatalf("Init over the old table: %v", err)
 	}
 
-	// A different order is unaffected.
-	other, err := store.ClaimUnpaidNotice(t.Context(), types.NewID(), now)
-	if err != nil {
-		t.Fatalf("ClaimUnpaidNotice for another order: %v", err)
-	}
-	if !other {
-		t.Error("claiming one order refused another")
-	}
-}
-
-func TestForgettingANoticeLetsItBeReportedAgain(t *testing.T) {
-	_, store := open(t)
-
-	id := types.NewID()
-
-	if _, err := store.ClaimUnpaidNotice(t.Context(), id, now); err != nil {
-		t.Fatalf("ClaimUnpaidNotice: %v", err)
+	var n int
+	if err := db.QueryRowContext(t.Context(),
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'unpaid_notices'`).Scan(&n); err != nil {
+		t.Fatalf("looking for the old table: %v", err)
 	}
 
-	// Younger than the cutoff: kept, because forgetting a notice while the
-	// order it names is still inside the window the sweep looks at would be
-	// the same as sending the message again.
-	if err := store.ForgetUnpaidNotices(t.Context(), now.Add(-time.Hour)); err != nil {
-		t.Fatalf("ForgetUnpaidNotices: %v", err)
-	}
-
-	if claimed, _ := store.ClaimUnpaidNotice(t.Context(), id, now); claimed {
-		t.Fatal("a notice newer than the cutoff was forgotten")
-	}
-
-	if err := store.ForgetUnpaidNotices(t.Context(), now.Add(time.Hour)); err != nil {
-		t.Fatalf("ForgetUnpaidNotices: %v", err)
-	}
-
-	if claimed, _ := store.ClaimUnpaidNotice(t.Context(), id, now); !claimed {
-		t.Error("a notice older than the cutoff was kept")
+	if n != 0 {
+		t.Error("the retired unpaid_notices table is still there")
 	}
 }

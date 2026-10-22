@@ -195,7 +195,7 @@ func TestASubmissionIsAcceptedAndConfirmedInPlace(t *testing.T) {
 		t.Errorf("the receipt does not show the derived total:\n%s", short(body))
 	}
 
-	stored, err := subs.ByForm(t.Context(), mustSlug(t, theForm))
+	stored, err := allOf(t.Context(), subs, mustSlug(t, theForm))
 	if err != nil {
 		t.Fatalf("ByForm: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestAPriceInTheBodyIsIgnored(t *testing.T) {
 		t.Fatalf("POST = %d:\n%s", w.Code, short(w.Body.String()))
 	}
 
-	stored, err := subs.ByForm(t.Context(), mustSlug(t, theForm))
+	stored, err := allOf(t.Context(), subs, mustSlug(t, theForm))
 	if err != nil {
 		t.Fatalf("ByForm: %v", err)
 	}
@@ -281,7 +281,7 @@ func TestARefusalExplainsItselfAndKeepsTheAnswers(t *testing.T) {
 		t.Error("the re-rendered page carries the same grant")
 	}
 
-	stored, err := subs.ByForm(t.Context(), mustSlug(t, theForm))
+	stored, err := allOf(t.Context(), subs, mustSlug(t, theForm))
 	if err != nil {
 		t.Fatalf("ByForm: %v", err)
 	}
@@ -331,7 +331,7 @@ func TestADonationWithNoTicketIsAccepted(t *testing.T) {
 		t.Fatalf("POST = %d:\n%s", w.Code, short(w.Body.String()))
 	}
 
-	stored, err := subs.ByForm(t.Context(), mustSlug(t, theForm))
+	stored, err := allOf(t.Context(), subs, mustSlug(t, theForm))
 	if err != nil {
 		t.Fatalf("ByForm: %v", err)
 	}
@@ -364,7 +364,7 @@ func TestAReplayedSubmissionIsNotStoredTwice(t *testing.T) {
 		t.Errorf("the second answer does not say it was already received:\n%s", short(w.Body.String()))
 	}
 
-	stored, err := subs.ByForm(t.Context(), mustSlug(t, theForm))
+	stored, err := allOf(t.Context(), subs, mustSlug(t, theForm))
 	if err != nil {
 		t.Fatalf("ByForm: %v", err)
 	}
@@ -390,7 +390,7 @@ func TestASubmissionWithNoGrantIsRefusedAndReRendered(t *testing.T) {
 		t.Errorf("the answer does not offer a fresh page:\n%s", short(w.Body.String()))
 	}
 
-	stored, err := subs.ByForm(t.Context(), mustSlug(t, theForm))
+	stored, err := allOf(t.Context(), subs, mustSlug(t, theForm))
 	if err != nil {
 		t.Fatalf("ByForm: %v", err)
 	}
@@ -426,7 +426,7 @@ func TestAGrantFromAnotherKeyIsRefused(t *testing.T) {
 		t.Fatalf("POST = %d:\n%s", w.Code, short(w.Body.String()))
 	}
 
-	stored, err := subs.ByForm(t.Context(), mustSlug(t, theForm))
+	stored, err := allOf(t.Context(), subs, mustSlug(t, theForm))
 	if err != nil {
 		t.Fatalf("ByForm: %v", err)
 	}
@@ -453,7 +453,7 @@ func TestACrossSiteSubmissionIsRefused(t *testing.T) {
 		t.Errorf("a cross-site POST was accepted: %d", w.Code)
 	}
 
-	stored, err := subs.ByForm(t.Context(), mustSlug(t, theForm))
+	stored, err := allOf(t.Context(), subs, mustSlug(t, theForm))
 	if err != nil {
 		t.Fatalf("ByForm: %v", err)
 	}
