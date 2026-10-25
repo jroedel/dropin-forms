@@ -25,7 +25,15 @@ readonly PIDFILE="$APP.pid"
 readonly LOGFILE="$APP.log"
 readonly LOCKFILE=supervise.lock
 
-log() { printf '%s supervise: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
+# Two kinds of line, because cron mails whatever a job prints. The watchdog
+# runs every five minutes, and a routine start -- after the host stopped the
+# app overnight, as it does -- printed to stdout became a cron mail every day:
+# news nobody needed, sent through a mailbox redirect that fails DMARC. So
+# `log` records an event in the app's log only, and `warn` also writes it to
+# stderr, for the cases somebody must act on. A deploy or a person at the
+# shell sees the warnings; the starts and stops are in the log either way.
+log() { printf '%s supervise: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >>"$LOGFILE"; }
+warn() { printf '%s supervise: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$LOGFILE" >&2; }
 
 # running checks two things, because a pid file alone is a lie waiting to
 # happen. kill -0 says something holds that pid; the cmdline check says it is
@@ -46,7 +54,7 @@ start() {
 	# Serialise against the watchdog firing while a deploy is mid-restart.
 	exec 9>"$LOCKFILE"
 	if ! flock -w 30 9; then
-		log "another supervise holds the lock; giving up"
+		warn "another supervise holds the lock; giving up"
 		exit 1
 	fi
 
@@ -55,7 +63,7 @@ start() {
 	fi
 
 	[ -x "./$APP" ] || {
-		log "./$APP is missing or not executable"
+		warn "./$APP is missing or not executable"
 		exit 1
 	}
 
@@ -72,8 +80,9 @@ start() {
 	done
 
 	if ! running; then
-		log "did not come up; last lines of $LOGFILE:"
+		# The tail first: written after it, the warning would be its own last line.
 		tail -n 20 "$LOGFILE" >&2 || true
+		warn "did not come up; above, the last lines of $LOGFILE"
 		exit 1
 	fi
 
@@ -103,7 +112,7 @@ stop() {
 	done
 
 	if running; then
-		log "pid $pid ignored SIGINT for 30s; killing"
+		warn "pid $pid ignored SIGINT for 30s; killing"
 		kill -KILL "$pid" 2>/dev/null || true
 		sleep 1
 	fi
