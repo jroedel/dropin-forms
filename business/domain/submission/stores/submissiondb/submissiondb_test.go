@@ -106,7 +106,7 @@ func TestASubmissionRoundTrips(t *testing.T) {
 	_, store := open(t)
 	want := sample(t)
 
-	spent, err := store.Accept(t.Context(), want, "nonce-one")
+	spent, err := store.Accept(t.Context(), want, "nonce-one", nil)
 	if err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestASubmissionWithNothingInItRoundTrips(t *testing.T) {
 		UpdatedAt: now,
 	}
 
-	if _, err := store.Accept(t.Context(), bare, "nonce-bare"); err != nil {
+	if _, err := store.Accept(t.Context(), bare, "nonce-bare", nil); err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
 
@@ -233,13 +233,13 @@ func TestAReplayedGrantIsRefusedAndWritesNothing(t *testing.T) {
 	_, store := open(t)
 
 	first := sample(t)
-	if spent, err := store.Accept(t.Context(), first, "one-grant"); err != nil || !spent {
+	if spent, err := store.Accept(t.Context(), first, "one-grant", nil); err != nil || !spent {
 		t.Fatalf("the first Accept: spent = %v, err = %v", spent, err)
 	}
 
 	second := sample(t)
 
-	spent, err := store.Accept(t.Context(), second, "one-grant")
+	spent, err := store.Accept(t.Context(), second, "one-grant", nil)
 	if err != nil {
 		t.Fatalf("the second Accept: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestConcurrentReplaysProduceExactlyOneSubmission(t *testing.T) {
 		sub := sample(t)
 
 		wg.Go(func() {
-			spent, err := store.Accept(t.Context(), sub, "the-one-nonce")
+			spent, err := store.Accept(t.Context(), sub, "the-one-nonce", nil)
 
 			mu.Lock()
 			defer mu.Unlock()
@@ -322,7 +322,7 @@ func TestByFormIsNewestFirstAndScoped(t *testing.T) {
 		sub.CreatedAt = at
 		sub.UpdatedAt = at
 
-		if _, err := store.Accept(t.Context(), sub, string(rune('a'+i))); err != nil {
+		if _, err := store.Accept(t.Context(), sub, string(rune('a'+i)), nil); err != nil {
 			t.Fatalf("Accept: %v", err)
 		}
 	}
@@ -331,7 +331,7 @@ func TestByFormIsNewestFirstAndScoped(t *testing.T) {
 	other.Form = retreat
 	other.Answers.FormID = retreat
 
-	if _, err := store.Accept(t.Context(), other, "other"); err != nil {
+	if _, err := store.Accept(t.Context(), other, "other", nil); err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
 
@@ -370,7 +370,7 @@ func TestATieIsBrokenByArrival(t *testing.T) {
 	for i := range 10 {
 		sub := sample(t)
 
-		if _, err := store.Accept(t.Context(), sub, fmt.Sprintf("nonce-%d", i)); err != nil {
+		if _, err := store.Accept(t.Context(), sub, fmt.Sprintf("nonce-%d", i), nil); err != nil {
 			t.Fatalf("Accept: %v", err)
 		}
 
@@ -412,7 +412,7 @@ func TestSettledIsNewestFirstBoundedAndSkipsTheUnpaid(t *testing.T) {
 		sub.CreatedAt = now.Add(time.Duration(i) * time.Minute)
 		sub.UpdatedAt = sub.CreatedAt
 
-		if _, err := store.Accept(t.Context(), sub, string(rune('a'+i))); err != nil {
+		if _, err := store.Accept(t.Context(), sub, string(rune('a'+i)), nil); err != nil {
 			t.Fatalf("Accept: %v", err)
 		}
 	}
@@ -446,7 +446,7 @@ func TestSetStatusRecordsThePayment(t *testing.T) {
 	_, store := open(t)
 	sub := sample(t)
 
-	if _, err := store.Accept(t.Context(), sub, "nonce"); err != nil {
+	if _, err := store.Accept(t.Context(), sub, "nonce", nil); err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
 
@@ -490,7 +490,7 @@ func TestAPaymentIsTracedBackToItsSubmissionHiddenOrNot(t *testing.T) {
 	other.Answers.FormID = other.Form
 
 	for i, sub := range []submissionbus.Submission{paid, hidden, pending, other} {
-		if _, err := store.Accept(t.Context(), sub, fmt.Sprintf("nonce-%d", i)); err != nil {
+		if _, err := store.Accept(t.Context(), sub, fmt.Sprintf("nonce-%d", i), nil); err != nil {
 			t.Fatalf("Accept: %v", err)
 		}
 	}
@@ -549,12 +549,12 @@ func TestPruningForgetsOldNoncesAndNotRecentOnes(t *testing.T) {
 	old.CreatedAt = now.Add(-48 * time.Hour)
 	old.UpdatedAt = old.CreatedAt
 
-	if _, err := store.Accept(t.Context(), old, "old-nonce"); err != nil {
+	if _, err := store.Accept(t.Context(), old, "old-nonce", nil); err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
 
 	recent := sample(t)
-	if _, err := store.Accept(t.Context(), recent, "recent-nonce"); err != nil {
+	if _, err := store.Accept(t.Context(), recent, "recent-nonce", nil); err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
 
@@ -565,13 +565,13 @@ func TestPruningForgetsOldNoncesAndNotRecentOnes(t *testing.T) {
 	// The old nonce is forgotten, so it would be accepted again -- which is
 	// safe only because no grant carrying it can still be valid.
 	replay := sample(t)
-	if spent, err := store.Accept(t.Context(), replay, "old-nonce"); err != nil || !spent {
+	if spent, err := store.Accept(t.Context(), replay, "old-nonce", nil); err != nil || !spent {
 		t.Errorf("a pruned nonce was not reusable: spent = %v, err = %v", spent, err)
 	}
 
 	// The recent one is still remembered.
 	again := sample(t)
-	if spent, err := store.Accept(t.Context(), again, "recent-nonce"); err != nil || spent {
+	if spent, err := store.Accept(t.Context(), again, "recent-nonce", nil); err != nil || spent {
 		t.Errorf("a recent nonce was pruned: spent = %v, err = %v", spent, err)
 	}
 
@@ -645,7 +645,7 @@ func TestCountSinceCountsOneFormsRecentRows(t *testing.T) {
 		s.CreatedAt = at
 		s.UpdatedAt = at
 
-		ok, err := store.Accept(t.Context(), s, s.ID.String())
+		ok, err := store.Accept(t.Context(), s, s.ID.String(), nil)
 		if err != nil || !ok {
 			t.Fatalf("Accept: ok=%v err=%v", ok, err)
 		}
@@ -691,7 +691,7 @@ func TestAbandonClosesOnlyOpenOrdersPastTheDeadline(t *testing.T) {
 		s.CreatedAt = at
 		s.UpdatedAt = at
 
-		ok, err := store.Accept(t.Context(), s, s.ID.String())
+		ok, err := store.Accept(t.Context(), s, s.ID.String(), nil)
 		if err != nil || !ok {
 			t.Fatalf("Accept: ok=%v err=%v", ok, err)
 		}
@@ -775,7 +775,7 @@ func TestOnlyOneCollectionIsEverRecorded(t *testing.T) {
 	_, store := open(t)
 
 	sub := sample(t)
-	if _, err := store.Accept(t.Context(), sub, "a-nonce"); err != nil {
+	if _, err := store.Accept(t.Context(), sub, "a-nonce", nil); err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
 
@@ -817,7 +817,7 @@ func TestConcurrentCollectionsProduceOneWinner(t *testing.T) {
 	_, store := open(t)
 
 	sub := sample(t)
-	if _, err := store.Accept(t.Context(), sub, "a-nonce"); err != nil {
+	if _, err := store.Accept(t.Context(), sub, "a-nonce", nil); err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
 
@@ -866,7 +866,7 @@ func TestCollectionsAreReadBackByForm(t *testing.T) {
 	_, store := open(t)
 
 	mine := sample(t)
-	if _, err := store.Accept(t.Context(), mine, "nonce-one"); err != nil {
+	if _, err := store.Accept(t.Context(), mine, "nonce-one", nil); err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
 
@@ -874,7 +874,7 @@ func TestCollectionsAreReadBackByForm(t *testing.T) {
 	other.Form = mustSlug(t, "supper-2026")
 	other.Answers.FormID = other.Form
 
-	if _, err := store.Accept(t.Context(), other, "nonce-two"); err != nil {
+	if _, err := store.Accept(t.Context(), other, "nonce-two", nil); err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
 
@@ -911,7 +911,7 @@ func TestUncollectLetsAnOrderBeHandedOverAgain(t *testing.T) {
 	_, store := open(t)
 
 	sub := sample(t)
-	if _, err := store.Accept(t.Context(), sub, "a-nonce"); err != nil {
+	if _, err := store.Accept(t.Context(), sub, "a-nonce", nil); err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
 
@@ -957,7 +957,7 @@ func TestAHiddenSubmissionLeavesEveryListAndComesBack(t *testing.T) {
 	unpaid.CreatedAt = now.Add(2 * time.Minute)
 
 	for i, s := range []submissionbus.Submission{keep, test, unpaid} {
-		if _, err := store.Accept(t.Context(), s, string(rune('a'+i))); err != nil {
+		if _, err := store.Accept(t.Context(), s, string(rune('a'+i)), nil); err != nil {
 			t.Fatalf("Accept: %v", err)
 		}
 	}

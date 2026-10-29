@@ -573,3 +573,43 @@ latest = "2026-10-13T18:00"
 		t.Errorf("range = %q to %q", fld.Earliest, fld.Latest)
 	}
 }
+
+// A limit on an option, and approval, reach the domain type, for the reason
+// the daily cap test gives: one that parses and goes nowhere is a time slot
+// anybody can take twice, or a sign-up nobody was asked to approve.
+func TestAnOptionsLimitAndApprovalAreRead(t *testing.T) {
+	store, err := formtoml.Load(fstest.MapFS{"alpha.toml": {Data: []byte(minimal("alpha", "needs_approval = true") + `
+[[field]]
+name = "slot"
+label = "Time slot"
+kind = "radio"
+
+[[field.option]]
+value = "a"
+label = "Monday 9 am"
+limit = 1
+
+[[field.option]]
+value = "any"
+label = "Whenever suits"
+`)}})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	alpha, _ := types.ParseSlug("alpha")
+
+	f, err := store.ByID(alpha)
+	if err != nil {
+		t.Fatalf("ByID: %v", err)
+	}
+
+	opts := f.Fields[1].Options
+	if opts[0].Limit != 1 || opts[1].Limit != 0 {
+		t.Errorf("limits = %d and %d, want 1 and none", opts[0].Limit, opts[1].Limit)
+	}
+
+	if !f.NeedsApproval {
+		t.Error("needs_approval was read as false")
+	}
+}

@@ -186,7 +186,8 @@ func tools() []tool {
 			Name:  "list_submissions",
 			Title: "List submissions",
 			Description: "Everything submitted to a form, oldest first, leaving out submissions somebody has hidden. " +
-				"Each has an answer for every question the form asks (null when unanswered), what was ordered, and the total in cents.",
+				"Each has an answer for every question the form asks (null when unanswered), what was ordered, and the total in cents. " +
+				"On a form with limited options, places lists each one with how many hold it and its limit.",
 			InputSchema: object(map[string]any{"slug": slugProp()}, "slug"),
 			Annotations: readOnly(),
 			request:     onSlug(http.MethodGet, "/submissions"),
@@ -245,6 +246,7 @@ func definitionSchema(creating bool) map[string]any {
 	option := object(map[string]any{
 		"value": str("What is stored and exported. Keep it stable once people have answered."),
 		"label": str("What the person reads. Omit to use value."),
+		"limit": integer("How many submissions may hold this option at once, such as 1 for a time slot one person may take. Omit for no limit. Full options are shown as taken; a pending checkout holds its place."),
 	}, "value")
 
 	field := object(map[string]any{
@@ -300,6 +302,7 @@ func definitionSchema(creating bool) map[string]any {
 		"max_total":        integer("Largest total, in cents."),
 		"payment_required": boolean("Refuse a submission that comes to nothing. Needs payment_note."),
 		"payment_note":     str("What to tell somebody whose submission comes to nothing, when payment_required."),
+		"needs_approval":   boolean("Hold each submission until somebody who can read the results approves or declines it. A waiting one keeps its limited place; declining frees it. Not allowed on a form that sells anything."),
 		"daily_cap":        integer("An abuse control: most submissions in 24 hours. Leave it out unless asked."),
 		"confirmation":     str("Shown after somebody submits."),
 		"notify":           list(map[string]any{"type": "string"}, "Extra email addresses told about each submission."),

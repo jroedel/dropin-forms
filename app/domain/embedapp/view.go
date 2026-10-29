@@ -108,11 +108,19 @@ type fieldView struct {
 	Problems []formbus.Violation
 }
 
-// optionView is one choice, with whether it was chosen.
+// optionView is one choice, with whether it was chosen and whether it can
+// still be.
+//
+// Taken is an option whose places are all held by somebody else. It is drawn
+// disabled rather than left out, so a person looking for the slot they were
+// told about sees that it went, and it is never drawn chosen: a disabled
+// input is not submitted, and a page that showed one checked would be saying
+// something the submission would not.
 type optionView struct {
 	Value  string
 	Label  string
 	Chosen bool
+	Taken  bool
 }
 
 // itemView is one thing for sale.
@@ -169,12 +177,12 @@ type sectionView struct {
 
 // viewGroups turns the definition's fields into what the template renders,
 // grouped under their section headings.
-func viewGroups(f formbus.Form, values formbus.Values, problems formbus.Invalid) []groupView {
+func viewGroups(f formbus.Form, values formbus.Values, problems formbus.Invalid, taken formbus.Taken) []groupView {
 	var out []groupView
 
 	current := groupView{}
 
-	for _, v := range viewFields(f, values, problems) {
+	for _, v := range viewFields(f, values, problems, taken) {
 		if v.Section == nil {
 			current.Fields = append(current.Fields, v)
 
@@ -199,7 +207,7 @@ func viewGroups(f formbus.Form, values formbus.Values, problems formbus.Invalid)
 
 // viewFields turns the definition's fields into what the template renders,
 // in order, with each section heading as an entry carrying only its Section.
-func viewFields(f formbus.Form, values formbus.Values, problems formbus.Invalid) []fieldView {
+func viewFields(f formbus.Form, values formbus.Values, problems formbus.Invalid, taken formbus.Taken) []fieldView {
 	out := make([]fieldView, 0, len(f.Fields))
 	public := f.Listed()
 
@@ -308,10 +316,13 @@ func viewFields(f formbus.Form, values formbus.Values, problems formbus.Invalid)
 			v.Options = make([]optionView, 0, len(fld.Options))
 
 			for _, o := range fld.Options {
+				full := taken.Full(fld.Name, o.Value, o.Limit)
+
 				v.Options = append(v.Options, optionView{
 					Value:  o.Value,
 					Label:  o.Label,
-					Chosen: chosen(v.Values, o.Value),
+					Chosen: !full && chosen(v.Values, o.Value),
+					Taken:  full,
 				})
 			}
 		}

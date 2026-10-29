@@ -141,9 +141,17 @@ func (k Kind) Bounded() bool {
 // Value is what is submitted, stored and exported; Label is what is shown. They
 // are separate so that renaming what a person reads does not rewrite history
 // in the submissions already collected.
+//
+// Limit is how many submissions may hold this option at once, and zero means
+// no limit. It is a property of one option rather than of the field because
+// the case it exists for -- a time slot that one person may take -- is a list
+// whose entries run out one at a time; a field-wide number would be a second
+// daily cap. Who counts as holding a place is decided where submissions are,
+// not here; see [Form.Claims].
 type Option struct {
 	Value string
 	Label string
+	Limit int
 }
 
 // Condition hides a field unless another field holds one of the listed values.
@@ -294,6 +302,22 @@ type Form struct {
 	// come back later -- and moving it in a hurry must not throw away every
 	// half-filled tab, which is the line DailyCap and ReturnURL are on.
 	ChangeableUntil time.Time
+
+	// NeedsApproval holds every new submission until somebody who can read
+	// the form's results approves or declines it. While it waits it holds
+	// any limited place it chose -- the time slot is kept for it -- and
+	// declining gives the place back. The person is told when it is decided,
+	// and the public list beneath the form shows only what was approved.
+	//
+	// Not on a form that takes money, which Check refuses: approval after
+	// payment would need a refund on every decline, and this service cannot
+	// make one. Paying only once approved is a different flow, and a later
+	// one.
+	//
+	// Left out of the fingerprint, for ChangeableUntil's reason: it decides
+	// what happens to a submission after it is saved, not which answers are
+	// acceptable.
+	NeedsApproval bool
 
 	// ClosedNote is shown instead of the form when it is not taking
 	// submissions -- where to write, or when it will open. Empty gets a
@@ -498,6 +522,11 @@ func (f *Form) Check() error {
 			add("its answers can be changed until %s, which is not after it opens at %s",
 				f.ChangeableUntil.Format(time.RFC3339), f.OpensAt.Format(time.RFC3339))
 		}
+	}
+	if f.NeedsApproval && f.Sells() {
+		// See NeedsApproval: a decline after a payment is a refund, and there
+		// is no refund here to make.
+		add("it waits for approval and it takes money; a declined order would need a refund, which this service cannot make")
 	}
 	switch {
 	case len(f.Fields) == 0:
@@ -784,6 +813,10 @@ func (fld *Field) checkOptions(where string) []string {
 
 		if strings.TrimSpace(opt.Label) == "" {
 			add("%s: the option %q has no label", where, opt.Value)
+		}
+
+		if opt.Limit < 0 {
+			add("%s: the option %q may be taken %d times; leave its limit out for no limit, or give a whole number of at least 1", where, opt.Value, opt.Limit)
 		}
 	}
 
@@ -1170,6 +1203,11 @@ func (f Form) Fingerprint() string {
 			h.Write([]byte("req|"))
 		}
 
+		// The value only. A limit is left out for the reason DailyCap is:
+		// raising one so that a full slot can take a second person must not
+		// send everyone halfway through the form back to the start, and the
+		// limit is enforced against storage at the moment of saving, not by
+		// what the page said when it was drawn.
 		for _, o := range fld.Options {
 			write("option", o.Value)
 		}

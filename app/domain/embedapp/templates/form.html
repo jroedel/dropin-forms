@@ -57,9 +57,9 @@ until {{.Until}}.</p>
   <span class="group-label">{{$fld.Label}}{{if $fld.Required}} <span class="required-mark" title="required">*</span>{{end}}</span>
   {{with $fld.Help}}<p class="help">{{.}}</p>{{end}}
   {{range $opt := $fld.Options}}
-  <label class="choice">
-  <input type="{{$fld.BoxType}}" name="{{$fld.Name}}" value="{{$opt.Value}}"{{if $opt.Chosen}} checked{{end}}>
-  <span>{{$opt.Label}}</span>
+  <label class="choice{{if $opt.Taken}} taken{{end}}">
+  <input type="{{$fld.BoxType}}" name="{{$fld.Name}}" value="{{$opt.Value}}"{{if $opt.Chosen}} checked{{end}}{{if $opt.Taken}} disabled{{end}}>
+  <span>{{$opt.Label}}{{if $opt.Taken}} — taken{{end}}</span>
   </label>
   {{end}}
 
@@ -75,7 +75,7 @@ until {{.Until}}.</p>
   {{with $fld.Help}}<p class="help">{{.}}</p>{{end}}
   <select id="f-{{$fld.Name}}" name="{{$fld.Name}}"{{if $fld.Required}} required{{end}}>
   <option value="">Please choose</option>
-  {{range $opt := $fld.Options}}<option value="{{$opt.Value}}"{{if $opt.Chosen}} selected{{end}}>{{$opt.Label}}</option>
+  {{range $opt := $fld.Options}}<option value="{{$opt.Value}}"{{if $opt.Chosen}} selected{{end}}{{if $opt.Taken}} disabled{{end}}>{{$opt.Label}}{{if $opt.Taken}} — taken{{end}}</option>
   {{end}}
   </select>
 

@@ -208,6 +208,8 @@ type form struct {
 	PaymentRequired bool   `toml:"payment_required"`
 	PaymentNote     string `toml:"payment_note"`
 
+	NeedsApproval bool `toml:"needs_approval"`
+
 	// DailyCap is an abuse control rather than a stock level -- see
 	// formbus.Form.DailyCap, which says why the number to write is far above
 	// any real day rather than near it.
@@ -283,6 +285,7 @@ type field struct {
 type option struct {
 	Value string `toml:"value"`
 	Label string `toml:"label"`
+	Limit int    `toml:"limit"`
 }
 
 type condition struct {
@@ -308,6 +311,7 @@ func (w form) toForm() (formbus.Form, error) {
 		MaxPerOrder:     w.MaxPerOrder,
 		PaymentRequired: w.PaymentRequired,
 		PaymentNote:     w.PaymentNote,
+		NeedsApproval:   w.NeedsApproval,
 		DailyCap:        w.DailyCap,
 		Confirmation:    w.Confirmation,
 		Notify:          w.Notify,
@@ -396,7 +400,7 @@ func (w field) toField() (formbus.Field, error) {
 	}
 
 	for _, o := range w.Options {
-		fld.Options = append(fld.Options, formbus.Option{Value: o.Value, Label: o.Label})
+		fld.Options = append(fld.Options, formbus.Option{Value: o.Value, Label: o.Label, Limit: o.Limit})
 	}
 
 	if w.ShowIf != nil {

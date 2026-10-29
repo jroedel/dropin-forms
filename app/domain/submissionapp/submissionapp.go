@@ -91,6 +91,8 @@ type Submissions interface {
 	Hidden(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error)
 	HidingOf(ctx context.Context, id types.ID) (submissionbus.Hiding, bool, error)
 	Revisions(ctx context.Context, s submissionbus.Submission) ([]submissionbus.Revision, error)
+	Taken(ctx context.Context, form types.Slug) (formbus.Taken, error)
+	Declined(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error)
 }
 
 // Grants answers which forms an account may reach, for the index page. The
@@ -147,6 +149,11 @@ type Config struct {
 	// CanHide says the routes that hide a submission are mounted. Without
 	// them the page draws no button, rather than one that answers 404.
 	CanHide bool
+
+	// CanReview says the routes that approve and decline are mounted, for
+	// the same reason. Anybody who can read this page may use them, so it
+	// needs no grant of its own -- reviewapp says why.
+	CanReview bool
 
 	// CanFeed says the spreadsheet feed is mounted, for the same reason: the
 	// list links to it only for a reader who may use it and only when it is
@@ -444,6 +451,17 @@ type listView struct {
 	// many, how much, and how much of it is still owed.
 	Summary summaryView
 
+	// Places is how full each time slot, or other limited option, is.
+	Places []placeTally
+
+	// Awaiting is how many of the rows are waiting for somebody to approve
+	// them, on a form that asks. Declined is how many were turned down, which
+	// leave the list the way hidden ones do, and ShowingDeclined says this
+	// page is the list of them instead.
+	Awaiting        int
+	Declined        int
+	ShowingDeclined bool
+
 	// Hidden is how many submissions are out of the list, and ShowingHidden
 	// says this page is the list of them instead. A count rather than nothing,
 	// so somebody who cannot find an order is told where it might be.
@@ -522,6 +540,55 @@ type itemTally struct {
 	Confirmed int
 }
 
+// placeTally is one option that only so many may take, and how many hold it.
+//
+// Held, not confirmed: an order waiting for its payment holds its place, so
+// this can be more than the rows listed beneath it. Over is a slot holding more
+// than its limit, which a payment arriving after its checkout was abandoned,
+// or a submission put back from hidden, can cause -- shown rather than
+// clipped, because it is a person somebody has to ring.
+type placeTally struct {
+	Question string
+	Label    string
+	Taken    int
+	Limit    int
+	Over     bool
+}
+
+// places is the tally of a form's limited options, in the definition's order.
+// A count that fails costs the table and not the page, for the reason the
+// grant check above costs a link.
+func (a app) places(r *http.Request, f formbus.Form) []placeTally {
+	if !f.Limited() {
+		return nil
+	}
+
+	taken, err := a.cfg.Submissions.Taken(r.Context(), f.ID)
+	if err != nil {
+		a.cfg.Log.Error("the places taken could not be counted",
+			"request_id", web.RequestIDFrom(r.Context()), "form", f.ID.String(), "error", err)
+
+		return nil
+	}
+
+	var out []placeTally
+
+	for _, fld := range f.Questions() {
+		for _, o := range fld.Options {
+			if o.Limit == 0 {
+				continue
+			}
+
+			n := taken.Count(fld.Name, o.Value)
+			out = append(out, placeTally{
+				Question: fld.Label, Label: o.Label, Taken: n, Limit: o.Limit, Over: n > o.Limit,
+			})
+		}
+	}
+
+	return out
+}
+
 func (a app) list(w http.ResponseWriter, r *http.Request) {
 	f, subs, ok := a.formAndSubmissions(w, r)
 	if !ok {
@@ -566,16 +633,33 @@ func (a app) list(w http.ResponseWriter, r *http.Request) {
 		FormID:  f.ID.String(),
 		Columns: columnsOf(f),
 		Summary: summarise(f, subs),
+		Places:  a.places(r, f),
 		Hidden:  len(hidden),
 		Window:  int(paybus.CheckoutWindow / time.Hour),
 	}
 
+	// Read on every form rather than only one that asks for approval now:
+	// a form that stopped asking still has the ones it declined, and this is
+	// the only way back to them.
+	declined, err := a.cfg.Submissions.Declined(r.Context(), f.ID)
+	if err != nil {
+		a.oops(w, r, "the declined submissions could not be listed", err)
+
+		return
+	}
+
+	view.Declined = len(declined)
+
 	// The hidden ones, instead of the rest, with the totals still those of
 	// the rest: the summary is what to cater for, and a hidden row is by
-	// definition not in it.
+	// definition not in it. The declined ones the same way, for the same
+	// reason.
 	if r.URL.Query().Get("hidden") != "" {
 		view.ShowingHidden = true
 		subs = hidden
+	} else if r.URL.Query().Get("declined") != "" {
+		view.ShowingDeclined = true
+		subs = declined
 	} else if admin && f.Sells() {
 		unpaid, err := a.cfg.Submissions.Unsettled(r.Context(), f.ID)
 		if err != nil {
@@ -609,11 +693,15 @@ func (a app) list(w http.ResponseWriter, r *http.Request) {
 			view.Unpaid++
 		}
 
+		if s.Review == submissionbus.ReviewAwaiting && !view.ShowingHidden {
+			view.Awaiting++
+		}
+
 		view.Rows = append(view.Rows, rowView{
 			Unpaid: unpaid && !view.ShowingHidden,
 			ID:     s.ID.String(),
 			When:   s.CreatedAt.Local().Format("2 Jan 2006, 15:04"),
-			Status: statusWords(s.Status),
+			Status: wordsFor(s),
 			Total:  formbus.Show(s.Answers.Total, f.Currency),
 			Cells:  cellsOf(f, s),
 		})
@@ -642,6 +730,23 @@ func statusWords(s submissionbus.Status) string {
 	return s.String()
 }
 
+// wordsFor is how a submission's standing reads on these pages: where it is
+// with the office, on a form that asks for approval, and otherwise where it is
+// with its payment. The two never both have something to say, because a form
+// that asks for approval sells nothing.
+func wordsFor(s submissionbus.Submission) string {
+	switch s.Review {
+	case submissionbus.ReviewAwaiting:
+		return "awaiting approval"
+	case submissionbus.ReviewApproved:
+		return "approved"
+	case submissionbus.ReviewDeclined:
+		return "declined"
+	}
+
+	return statusWords(s.Status)
+}
+
 // oneView is a single submission in full.
 type oneView struct {
 	Form   formbus.Form
@@ -664,6 +769,18 @@ type oneView struct {
 	HiddenBy string
 	HiddenAt string
 	CanHide  bool
+
+	// Review is where it stands with the office, on a form that asks for
+	// approval, and empty on any other. ReviewedBy and ReviewedAt say who last
+	// decided it and when, ReviewNote what a decline told the person.
+	// CanReview is whether the buttons are drawn, and Taken says a re-approval
+	// was just refused because its place has gone.
+	Review     string
+	ReviewedBy string
+	ReviewedAt string
+	ReviewNote string
+	CanReview  bool
+	Taken      bool
 
 	// Changed is when the person last changed these answers through the link
 	// we sent them, or empty if they never have. Earlier is what the answers
@@ -748,7 +865,7 @@ func (a app) one(w http.ResponseWriter, r *http.Request) {
 		FormID: f.ID.String(),
 		ID:     s.ID.String(),
 		When:   s.CreatedAt.Local().Format(longWhen),
-		Status: statusWords(s.Status),
+		Status: wordsFor(s),
 		Email:  s.Email.String(),
 		Total:  formbus.Show(s.Answers.Total, f.Currency),
 		Ref:    s.PaymentRef,
@@ -766,6 +883,7 @@ func (a app) one(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.hiding(r, s, &view)
+	a.review(r, s, &view)
 	a.history(r, f, s, &view)
 
 	a.cfg.Render.Render(w, r, http.StatusOK, "submission", view)
@@ -865,6 +983,31 @@ func (a app) hiding(r *http.Request, s submissionbus.Submission, view *oneView) 
 	}
 }
 
+// review fills in where the submission stands with the office.
+func (a app) review(r *http.Request, s submissionbus.Submission, view *oneView) {
+	if s.Review == submissionbus.ReviewNone {
+		return
+	}
+
+	view.Review = s.Review.String()
+	view.ReviewNote = s.ReviewNote
+	view.CanReview = a.cfg.CanReview && !view.Hidden
+	view.Taken = r.URL.Query().Get("taken") != ""
+
+	if s.ReviewedAt.IsZero() {
+		return
+	}
+
+	view.ReviewedAt = s.ReviewedAt.Local().Format(longWhen)
+	view.ReviewedBy = "somebody"
+
+	if a.cfg.Accounts != nil && !s.ReviewedBy.Zero() {
+		if u, err := a.cfg.Accounts.ByID(r.Context(), s.ReviewedBy); err == nil {
+			view.ReviewedBy = u.Email.String()
+		}
+	}
+}
+
 // export writes the CSV.
 //
 // encoding/csv, so quoting and embedded commas, quotes and newlines are the
@@ -888,6 +1031,14 @@ func (a app) export(w http.ResponseWriter, r *http.Request) {
 	header = append(header, columnsOf(f)...)
 	header = append(header, "payment_reference")
 
+	// A column only on a form that asks for approval, so every other form's
+	// download keeps the columns a spreadsheet was already built on. A
+	// declined submission is not in the download at all; "awaiting" and
+	// "approved" are what this column can say.
+	if f.NeedsApproval {
+		header = append(header, "review")
+	}
+
 	if err := out.Write(header); err != nil {
 		a.oops(w, r, "the export header could not be written", err)
 
@@ -907,6 +1058,10 @@ func (a app) export(w http.ResponseWriter, r *http.Request) {
 
 		row = append(row, cellsOf(f, s)...)
 		row = append(row, s.PaymentRef)
+
+		if f.NeedsApproval {
+			row = append(row, s.Review.String())
+		}
 
 		if err := out.Write(row); err != nil {
 			a.oops(w, r, "an export row could not be written", err)

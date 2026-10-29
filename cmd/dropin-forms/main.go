@@ -327,6 +327,7 @@ func run() error {
 		Submissions:  submissions,
 		Table:        submissions,
 		Hiding:       submissions,
+		Reviewing:    submissions,
 		Feeds:        feedbus.NewBusiness(log, feeddb.NewStore(db)),
 		FeedRows:     submissions,
 		Forms:        definitions,

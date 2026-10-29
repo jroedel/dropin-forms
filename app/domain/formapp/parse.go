@@ -50,8 +50,9 @@ func lines(raw string) []string {
 	return out
 }
 
-// parseOptions reads a choice field's options, one per line, as either
+// parseOptions reads a choice field's options, one per line, as any of
 //
+//	value | what the person reads | how many may take it
 //	value | what the person reads
 //	both at once
 //
@@ -59,37 +60,79 @@ func lines(raw string) []string {
 // somebody reads must not rewrite the answers already collected -- so a line
 // with no bar gets the same string for both, which is the right default and is
 // also what makes the simple case a list of words.
-func parseOptions(raw string) []formbus.Option {
-	var out []formbus.Option
+//
+// The limit is a third part, and only a whole number counts as one. A label
+// already written with a bar in it -- "Hall | upstairs" -- keeps its bar,
+// because the text after it is not a number, and a line with one bar is never
+// read as having a limit at all. That is why the rule is "a number after a
+// second bar" rather than "whatever follows the last bar": the second would
+// quietly turn half of somebody's label into an error message.
+//
+// A limit of nought is refused rather than read as none, because somebody who
+// typed one meant something by it, and "nobody may choose this" is an option
+// that should be deleted.
+func parseOptions(raw string) ([]formbus.Option, error) {
+	var (
+		out []formbus.Option
+		bad []string
+	)
 
 	for _, line := range lines(raw) {
 		v, label, split := strings.Cut(line, "|")
 
 		v = strings.TrimSpace(v)
 		label = strings.TrimSpace(label)
+		limit := 0
+
+		if at := strings.LastIndex(label, "|"); split && at >= 0 {
+			if tail := strings.TrimSpace(label[at+1:]); wholeNumber(tail) {
+				n, err := strconv.Atoi(tail)
+				if err != nil || n < 1 {
+					bad = append(bad, strconv.Quote(v))
+				}
+
+				limit = n
+				label = strings.TrimSpace(label[:at])
+			}
+		}
 
 		if !split || label == "" {
 			label = v
 		}
 
-		out = append(out, formbus.Option{Value: v, Label: label})
+		out = append(out, formbus.Option{Value: v, Label: label, Limit: limit})
 	}
 
-	return out
+	if len(bad) > 0 {
+		return out, fmt.Errorf("%s: how many may take it has to be a whole number of at least 1, or be left off", strings.Join(bad, ", "))
+	}
+
+	return out, nil
+}
+
+func wholeNumber(s string) bool {
+	return s != "" && strings.Trim(s, "0123456789") == ""
 }
 
 // writeOptions is parseOptions backwards, for putting a field back into the
 // box it was typed in. A pair that differs keeps the bar; one that does not
-// loses it, so a list somebody typed as words comes back as words.
+// loses it, so a list somebody typed as words comes back as words. An option
+// with a limit always has all three parts, since the limit is told from the
+// label by its position.
 func writeOptions(options []formbus.Option) string {
 	var b strings.Builder
 
 	for _, o := range options {
 		b.WriteString(o.Value)
 
-		if o.Label != o.Value {
+		if o.Label != o.Value || o.Limit > 0 {
 			b.WriteString(" | ")
 			b.WriteString(o.Label)
+		}
+
+		if o.Limit > 0 {
+			b.WriteString(" | ")
+			b.WriteString(strconv.Itoa(o.Limit))
 		}
 
 		b.WriteString("\n")

@@ -203,7 +203,26 @@ func (a app) change(w http.ResponseWriter, r *http.Request) {
 		Seen:     seen,
 		Answers:  answers,
 		RemoteIP: a.remoteIP(r),
+		Claims:   f.Claims(answers),
+
+		// A change to approved answers goes back to waiting, on a form that
+		// still asks.
+		NeedsApproval: f.NeedsApproval,
 	})
+
+	if full, ok := errors.AsType[submissionbus.OptionFull](err); ok {
+		// Moving to a slot somebody else took first. Their own slot is still
+		// theirs -- nothing was written -- and the page is drawn from the row
+		// as it stands, with what they typed back in the boxes.
+		sub, ok := a.own(w, r, f, id)
+		if !ok {
+			return
+		}
+
+		a.renderMine(w, r, http.StatusConflict, f, token, sub, seen, values, justTaken(full), "")
+
+		return
+	}
 
 	switch {
 	case err == nil:
@@ -460,7 +479,14 @@ func (a app) renderMine(
 	f formbus.Form, token string, sub submissionbus.Submission, seen time.Time,
 	values formbus.Values, problems formbus.Invalid, note string,
 ) {
-	view, ok := a.formView(w, r, f, values, problems, note)
+	// The places this submission already holds are given back to it, so the
+	// person sees their own time slot as theirs to keep rather than as taken.
+	taken := a.taken(r, f)
+	if taken != nil {
+		taken = taken.Without(sub.Answers)
+	}
+
+	view, ok := a.formView(w, r, f, values, problems, note, taken)
 	if !ok {
 		return
 	}

@@ -243,6 +243,22 @@ func TestCheckRefuses(t *testing.T) {
 			},
 			want: "has no label",
 		},
+		{
+			name: "approval on a form that sells",
+			break_: func(f *formbus.Form) {
+				f.NeedsApproval = true
+				f.Items = []formbus.Item{{ID: "lunch", Label: "Lunch", Price: 1200}}
+			},
+			want: "waits for approval and it takes money",
+		},
+		{
+			name: "option that may be taken a negative number of times",
+			break_: func(f *formbus.Form) {
+				f.Fields[0].Kind = formbus.KindRadio
+				f.Fields[0].Options = []formbus.Option{{Value: "a", Label: "9 am", Limit: -1}}
+			},
+			want: "may be taken -1 times",
+		},
 
 		// Bounds.
 		{

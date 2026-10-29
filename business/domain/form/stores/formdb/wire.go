@@ -41,6 +41,10 @@ type definition struct {
 	PaymentRequired bool   `json:"payment_required,omitempty"`
 	PaymentNote     string `json:"payment_note,omitempty"`
 
+	// Omitted when false, for option.Limit's reason: a form that does not
+	// ask for approval reads the same to a binary from before it existed.
+	NeedsApproval bool `json:"needs_approval,omitempty"`
+
 	DailyCap int `json:"daily_cap,omitempty"`
 
 	Confirmation string   `json:"confirmation,omitempty"`
@@ -108,6 +112,12 @@ type sortKey struct {
 type option struct {
 	Value string `json:"value"`
 	Label string `json:"label"`
+
+	// Omitted when there is none, so an option with no limit is written as it
+	// was before limits existed and a binary from before them can still read
+	// it: decode refuses unknown keys, and only a form that uses a limit
+	// carries one.
+	Limit int `json:"limit,omitempty"`
 }
 
 type condition struct {
@@ -140,6 +150,7 @@ func encode(f formbus.Form) (string, error) {
 		MaxTotal:        int64(f.MaxTotal),
 		PaymentRequired: f.PaymentRequired,
 		PaymentNote:     f.PaymentNote,
+		NeedsApproval:   f.NeedsApproval,
 		DailyCap:        f.DailyCap,
 		Confirmation:    f.Confirmation,
 		Notify:          f.Notify,
@@ -181,7 +192,7 @@ func encode(f formbus.Form) (string, error) {
 		}
 
 		for _, o := range fld.Options {
-			wf.Options = append(wf.Options, option{Value: o.Value, Label: o.Label})
+			wf.Options = append(wf.Options, option{Value: o.Value, Label: o.Label, Limit: o.Limit})
 		}
 
 		if fld.ShowIf != nil {
@@ -244,6 +255,7 @@ func decode(body string) (formbus.Form, error) {
 		MaxTotal:        types.Money(w.MaxTotal),
 		PaymentRequired: w.PaymentRequired,
 		PaymentNote:     w.PaymentNote,
+		NeedsApproval:   w.NeedsApproval,
 		DailyCap:        w.DailyCap,
 		Confirmation:    w.Confirmation,
 		Notify:          w.Notify,
@@ -290,7 +302,7 @@ func decode(body string) (formbus.Form, error) {
 		}
 
 		for _, o := range wf.Options {
-			fld.Options = append(fld.Options, formbus.Option{Value: o.Value, Label: o.Label})
+			fld.Options = append(fld.Options, formbus.Option{Value: o.Value, Label: o.Label, Limit: o.Limit})
 		}
 
 		if wf.ShowIf != nil {

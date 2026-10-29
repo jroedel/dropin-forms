@@ -25,18 +25,28 @@ import (
 // browser afterwards, so this is the only copy of their own answers they will
 // ever have. The confirmation text is the definition's own, so the words here
 // are the words the page showed them.
+//
+// On a form that waits for approval, the confirmation text is held back for
+// the message that says it was approved: it is written as "see you there", and
+// nobody has said that yet.
 func (b *Business) forSubmitter(f formbus.Form, sub submissionbus.Submission, paid bool) mail.Message {
 	var body strings.Builder
 
+	waiting := sub.Review == submissionbus.ReviewAwaiting
+
 	greeting := "We have your form."
-	if paid {
+	switch {
+	case paid:
 		greeting = "Thank you -- your payment has gone through and we have your order."
+	case waiting:
+		greeting = "We have your request. It is not confirmed yet: somebody here will look at it,\n" +
+			"and we will write again as soon as they have."
 	}
 
 	body.WriteString(greeting)
 	body.WriteString("\n\n")
 
-	if note := strings.TrimSpace(f.Confirmation); note != "" {
+	if note := strings.TrimSpace(f.Confirmation); note != "" && !waiting {
 		body.WriteString(note)
 		body.WriteString("\n\n")
 	}
@@ -61,11 +71,63 @@ func (b *Business) forSubmitter(f formbus.Form, sub submissionbus.Submission, pa
 	body.WriteString(b.wayBack(f, sub))
 
 	subject := f.Title + ": we have your form"
-	if paid {
+	switch {
+	case paid:
 		subject = f.Title + ": your payment is confirmed"
+	case waiting:
+		subject = f.Title + ": we have your request"
 	}
 
 	return mail.Message{Subject: subject, Text: body.String()}
+}
+
+// forDecided is the message to the person once somebody has approved or
+// declined what they sent.
+//
+// An approval is the receipt they would have had on a form that did not wait:
+// the form's own confirmation, their answers, and the way back. A decline says
+// so first, carries the note somebody wrote if there is one, and keeps their
+// answers so they know which request it was -- but no link, because the link
+// to a declined submission no longer works, and offering it would be offering
+// a page that says so.
+func (b *Business) forDecided(f formbus.Form, sub submissionbus.Submission) mail.Message {
+	var body strings.Builder
+
+	if sub.Review == submissionbus.ReviewDeclined {
+		body.WriteString("We are sorry: we cannot accept your request this time.\n\n")
+
+		if note := strings.TrimSpace(sub.ReviewNote); note != "" {
+			body.WriteString(note)
+			body.WriteString("\n\n")
+		}
+
+		if answers := answered(sub); answers != "" {
+			body.WriteString("What you sent us:\n\n")
+			body.WriteString(answers)
+			body.WriteString("\n")
+		}
+
+		body.WriteString("If you have a question, reply to this message.\n")
+
+		return mail.Message{Subject: f.Title + ": your request was not accepted", Text: body.String()}
+	}
+
+	body.WriteString("Your request is confirmed.\n\n")
+
+	if note := strings.TrimSpace(f.Confirmation); note != "" {
+		body.WriteString(note)
+		body.WriteString("\n\n")
+	}
+
+	if answers := answered(sub); answers != "" {
+		body.WriteString("What you sent us:\n\n")
+		body.WriteString(answers)
+		body.WriteString("\n")
+	}
+
+	body.WriteString(b.wayBack(f, sub))
+
+	return mail.Message{Subject: f.Title + ": confirmed", Text: body.String()}
 }
 
 // wayBack is the last paragraph of every message to a submitter: how to put
@@ -142,8 +204,15 @@ func (b *Business) forOffice(f formbus.Form, sub submissionbus.Submission, paid 
 		body.WriteString("\n")
 	}
 
+	waiting := sub.Review == submissionbus.ReviewAwaiting
+
 	if link := b.link(sub); link != "" {
-		body.WriteString("Read it here, with everything else that has come in:\n")
+		lead := "Read it here, with everything else that has come in:\n"
+		if waiting {
+			lead = "It is waiting for somebody to approve or decline it, here:\n"
+		}
+
+		body.WriteString(lead)
 		body.WriteString(link)
 		body.WriteString("\n")
 	}
@@ -152,8 +221,11 @@ func (b *Business) forOffice(f formbus.Form, sub submissionbus.Submission, paid 
 	body.WriteString(b.why(f, to))
 
 	subject := "New submission: " + f.Title
-	if paid {
+	switch {
+	case paid:
 		subject = fmt.Sprintf("Payment received, %s: %s", formbus.Show(sub.Answers.Total, f.Currency), f.Title)
+	case waiting:
+		subject = "Awaiting your approval: " + f.Title
 	}
 
 	return mail.Message{Subject: subject, Text: body.String()}

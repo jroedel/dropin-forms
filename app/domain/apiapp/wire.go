@@ -57,6 +57,7 @@ type definitionDoc struct {
 
 	PaymentRequired bool   `json:"payment_required,omitempty"`
 	PaymentNote     string `json:"payment_note,omitempty"`
+	NeedsApproval   bool   `json:"needs_approval,omitempty"`
 
 	DailyCap int `json:"daily_cap,omitempty"`
 
@@ -107,6 +108,11 @@ type optionDoc struct {
 	// Label is omitted to mean the same as Value, which is what the builder's
 	// "one per line" box does with a line that has no bar in it.
 	Label string `json:"label,omitempty"`
+
+	// Limit is how many submissions may hold this option at once. Omitted,
+	// or zero, for no limit -- item max's convention, so that the one way of
+	// saying "none" is the same everywhere in a definition.
+	Limit int `json:"limit,omitempty"`
 }
 
 type conditionDoc struct {
@@ -202,6 +208,7 @@ func formOf(d definitionDoc) (formbus.Form, []string) {
 		MaxTotal:        types.Money(d.MaxTotal),
 		PaymentRequired: d.PaymentRequired,
 		PaymentNote:     d.PaymentNote,
+		NeedsApproval:   d.NeedsApproval,
 		DailyCap:        d.DailyCap,
 		Confirmation:    d.Confirmation,
 		Notify:          slices.Clone(d.Notify),
@@ -267,7 +274,7 @@ func formOf(d definitionDoc) (formbus.Form, []string) {
 				label = o.Value
 			}
 
-			fld.Options = append(fld.Options, formbus.Option{Value: o.Value, Label: label})
+			fld.Options = append(fld.Options, formbus.Option{Value: o.Value, Label: label, Limit: o.Limit})
 		}
 
 		if fd.ShowIf != nil {
@@ -327,6 +334,7 @@ func definitionOf(f formbus.Form) definitionDoc {
 		MaxTotal:        int64(f.MaxTotal),
 		PaymentRequired: f.PaymentRequired,
 		PaymentNote:     f.PaymentNote,
+		NeedsApproval:   f.NeedsApproval,
 		DailyCap:        f.DailyCap,
 		Confirmation:    f.Confirmation,
 		Notify:          slices.Clone(f.Notify),
@@ -374,7 +382,7 @@ func definitionOf(f formbus.Form) definitionDoc {
 		}
 
 		for _, o := range fld.Options {
-			fd.Options = append(fd.Options, optionDoc{Value: o.Value, Label: o.Label})
+			fd.Options = append(fd.Options, optionDoc{Value: o.Value, Label: o.Label, Limit: o.Limit})
 		}
 
 		if fld.ShowIf != nil {
@@ -423,6 +431,24 @@ type submissionsDoc struct {
 	Fields      []questionDoc    `json:"fields"`
 	Submissions []submissionDoc  `json:"submissions"`
 	Items       []itemSummaryDoc `json:"items,omitzero"`
+
+	// Places is every option that has a limit, with how many hold it. Absent
+	// on a form with no limits.
+	Places []placeDoc `json:"places,omitzero"`
+}
+
+// placeDoc is one limited option and how full it is. Taken counts what holds
+// a place -- an order waiting for its payment included, which is why it can be
+// more than the submissions listed beside it -- and can exceed Limit, when a
+// late payment or a submission put back from hidden lands on a slot that had
+// filled in the meantime. Reported as it is rather than capped, because that
+// is a person somebody has to call.
+type placeDoc struct {
+	Field string `json:"field"`
+	Value string `json:"value"`
+	Label string `json:"label"`
+	Taken int    `json:"taken"`
+	Limit int    `json:"limit"`
 }
 
 type questionDoc struct {
@@ -444,6 +470,10 @@ type submissionDoc struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	Status    string    `json:"status"`
 	Email     string    `json:"email,omitempty"`
+
+	// Review is "awaiting", "approved" or "declined" on a form that holds
+	// submissions for approval, and absent on every other.
+	Review string `json:"review,omitempty"`
 
 	// Answers has a key for every question the form asks now: a string, a
 	// list of strings for a question that takes several, or null for one not
@@ -501,6 +531,7 @@ func submissionOf(f formbus.Form, s submissionbus.Submission) submissionDoc {
 		CreatedAt: s.CreatedAt.UTC(),
 		UpdatedAt: s.UpdatedAt.UTC(),
 		Status:    s.Status.String(),
+		Review:    s.Review.String(),
 		Email:     s.Email.String(),
 		Answers:   answers,
 		Total:     int64(s.Answers.Total),

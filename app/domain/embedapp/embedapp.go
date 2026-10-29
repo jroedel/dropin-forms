@@ -117,6 +117,7 @@ type Forms interface {
 type Submissions interface {
 	Accept(ctx context.Context, now time.Time, g formbus.Grant, ns submissionbus.New) (submissionbus.Submission, error)
 	Recent(ctx context.Context, form types.Slug, limit int) ([]submissionbus.Submission, error)
+	Taken(ctx context.Context, form types.Slug) (formbus.Taken, error)
 	Mine(ctx context.Context, form types.Slug, id types.ID) (submissionbus.Submission, error)
 	Change(ctx context.Context, now time.Time, g formbus.Grant, e submissionbus.Edit) (submissionbus.Submission, submissionbus.Submission, error)
 }
@@ -464,7 +465,19 @@ func (a app) blank(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.render(w, r, http.StatusOK, f, formbus.Values{}, formbus.Invalid{}, "")
+	// A form whose required time slot has nothing left is closed, and says so
+	// with the author's own closing note -- the same page as a form past its
+	// date, because to the person reading it that is what it is. Counted once
+	// and drawn from the same count, so the page cannot both close and offer a
+	// slot.
+	taken := a.taken(r, f)
+	if f.Exhausted(taken) {
+		a.closed(w, r, f, a.now())
+
+		return
+	}
+
+	a.renderWith(w, r, http.StatusOK, f, formbus.Values{}, formbus.Invalid{}, "", taken)
 }
 
 // submit validates a submission, stores it, and says what happened.
@@ -555,7 +568,25 @@ func (a app) submit(w http.ResponseWriter, r *http.Request) {
 		// does not set one, including this one's, and the reasoning for
 		// leaving it unset is in the form file.
 		DailyCap: f.DailyCap,
+
+		// The time slots and the like that these answers take, counted against
+		// the places already held in the same transaction that saves them.
+		Claims: f.Claims(answers),
+
+		// Stored awaiting a decision, on a form that asks for one.
+		NeedsApproval: f.NeedsApproval,
 	})
+
+	if full, ok := errors.AsType[submissionbus.OptionFull](err); ok {
+		// Somebody took the last place between this page being drawn and
+		// these answers arriving. Everything else they typed goes back in the
+		// boxes, the page is drawn from a fresh count so the option shows as
+		// taken, and the sentence sits beside the one question they have to
+		// answer again. A 409: the request was fine, and lost a race.
+		a.render(w, r, http.StatusConflict, f, values, justTaken(full), "")
+
+		return
+	}
 
 	switch {
 	case errors.Is(err, submissionbus.ErrReplayed):
@@ -872,6 +903,12 @@ func (v doneView) Owed() bool {
 	return v.Submission.Status == submissionbus.StatusPending
 }
 
+// Awaiting reports whether the submission is waiting for somebody to approve
+// it, which is what the page says instead of the form's confirmation.
+func (v doneView) Awaiting() bool {
+	return v.Submission.Review == submissionbus.ReviewAwaiting
+}
+
 // closedView is what a form not taking submissions shows.
 type closedView struct {
 	Form         formbus.Form
@@ -969,7 +1006,16 @@ func (a app) render(
 	w http.ResponseWriter, r *http.Request, status int,
 	f formbus.Form, values formbus.Values, problems formbus.Invalid, note string,
 ) {
-	view, ok := a.formView(w, r, f, values, problems, note)
+	a.renderWith(w, r, status, f, values, problems, note, a.taken(r, f))
+}
+
+// renderWith is render with the places already counted.
+func (a app) renderWith(
+	w http.ResponseWriter, r *http.Request, status int,
+	f formbus.Form, values formbus.Values, problems formbus.Invalid, note string,
+	taken formbus.Taken,
+) {
+	view, ok := a.formView(w, r, f, values, problems, note, taken)
 	if !ok {
 		return
 	}
@@ -977,11 +1023,45 @@ func (a app) render(
 	a.cfg.Render.Render(w, r, status, "form", view)
 }
 
+// taken counts the places held in a form's limited options, for drawing the
+// full ones as taken. Nil on a form with no limits, which is every form but
+// a sign-up, and which runs no query.
+//
+// A failure is logged and the form is drawn with every option open, for the
+// reason listing degrades: the count on the page is a courtesy, and the count
+// that decides is made again when the answers are saved. Somebody who picks a
+// slot that turns out to be full is told so then, with their answers kept.
+func (a app) taken(r *http.Request, f formbus.Form) formbus.Taken {
+	if !f.Limited() {
+		return nil
+	}
+
+	t, err := a.cfg.Submissions.Taken(r.Context(), f.ID)
+	if err != nil {
+		a.cfg.Log.Error("the places taken could not be counted",
+			"request_id", web.RequestIDFrom(r.Context()), "form", f.ID.String(), "error", err)
+
+		return nil
+	}
+
+	return t
+}
+
+// justTaken is the refusal of an option somebody else took first, as a
+// problem with the question it belongs to.
+func justTaken(full submissionbus.OptionFull) formbus.Invalid {
+	return formbus.Invalid{Violations: []formbus.Violation{{
+		Field:   full.Field,
+		Message: "That one was just taken. Please pick another.",
+	}}}
+}
+
 // formView builds the form page and mints its grant, answering the request
 // itself when the grant cannot be minted.
 func (a app) formView(
 	w http.ResponseWriter, r *http.Request,
 	f formbus.Form, values formbus.Values, problems formbus.Invalid, note string,
+	taken formbus.Taken,
 ) (formView, bool) {
 	grant, err := formbus.Mint(a.cfg.GrantKey, f, a.now())
 	if err != nil {
@@ -1000,7 +1080,7 @@ func (a app) formView(
 		Action:        withParent("/f/"+f.ID.String(), origin),
 		ParentOrigin:  origin,
 		Symbol:        formbus.Symbol(f.Currency),
-		Groups:        viewGroups(f, values, problems),
+		Groups:        viewGroups(f, values, problems, taken),
 		Items:         viewItems(f, values, problems),
 		OrderNote:     orderNote(f),
 		OrderProblems: problems.For(""),

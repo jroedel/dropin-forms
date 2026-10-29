@@ -46,7 +46,7 @@ func newMemStore() *memStore {
 	}
 }
 
-func (m *memStore) Accept(_ context.Context, s submissionbus.Submission, nonce string) (bool, error) {
+func (m *memStore) Accept(_ context.Context, s submissionbus.Submission, nonce string, claims []formbus.Claim) (bool, error) {
 	if m.fail != nil {
 		return false, m.fail
 	}
@@ -55,10 +55,78 @@ func (m *memStore) Accept(_ context.Context, s submissionbus.Submission, nonce s
 		return false, nil
 	}
 
+	if err := m.claim(s.Form, types.ID{}, claims); err != nil {
+		return false, err
+	}
+
 	m.nonces[nonce] = s.CreatedAt
 	m.subs[s.ID] = s
 
 	return true, nil
+}
+
+// taken is the store's count, in memory: the rule the SQLite store writes
+// into a query, written here as a loop. except is a submission that holds no
+// place against itself.
+func (m *memStore) taken(form types.Slug, except types.ID) formbus.Taken {
+	out := formbus.Taken{}
+
+	for id, s := range m.subs {
+		if _, hidden := m.hidden[id]; hidden || id == except || s.Form != form || !s.HoldsPlace() {
+			continue
+		}
+
+		for _, a := range s.Answers.Fields {
+			if out[a.Name] == nil {
+				out[a.Name] = map[string]int{}
+			}
+
+			for _, v := range a.Values {
+				out[a.Name][v]++
+			}
+		}
+	}
+
+	return out
+}
+
+func (m *memStore) claim(form types.Slug, except types.ID, claims []formbus.Claim) error {
+	t := m.taken(form, except)
+
+	for _, c := range claims {
+		if t.Full(c.Field, c.Value, c.Limit) {
+			return submissionbus.OptionFull{Field: c.Field, Value: c.Value}
+		}
+	}
+
+	return nil
+}
+
+func (m *memStore) Decide(_ context.Context, before, after submissionbus.Submission, claims []formbus.Claim) error {
+	if m.fail != nil {
+		return m.fail
+	}
+
+	cur, ok := m.subs[before.ID]
+	if _, hidden := m.hidden[before.ID]; !ok || hidden || cur.Review != before.Review {
+		return submissionbus.ErrChangedMeanwhile
+	}
+
+	if err := m.claim(before.Form, before.ID, claims); err != nil {
+		return err
+	}
+
+	m.subs[after.ID] = after
+
+	return nil
+}
+
+func (m *memStore) Taken(_ context.Context, form types.Slug) (formbus.Taken, error) {
+	if m.fail != nil {
+		return nil, m.fail
+	}
+
+	return m.taken(form, types.ID{}), nil
 }
 
 func (m *memStore) ByPaymentRef(_ context.Context, ref string) (submissionbus.Submission, error) {

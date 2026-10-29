@@ -220,6 +220,7 @@ Every key:
 | `opens_at`, `closes_at` | when it takes submissions; omit for now and never |
 | `closed_note` | shown instead of the form while it is closed |
 | `changeable_until` | until when people may change their answers through the link they are emailed. Not on a form that sells anything |
+| `needs_approval` | hold each submission until somebody who can read the results approves or declines it on its page. A waiting submission keeps any limited place it chose; declining frees it. The person is emailed either way, and the list under the form shows only approved ones. Not on a form that sells anything |
 | `currency` | omit; the service takes `usd` |
 | `origins` | the sites allowed to embed it, scheme and host only. Empty uses the service's default list |
 | `return_url` | the page it is embedded on, required when it sells |
@@ -246,7 +247,7 @@ A question (`fields[]`):
 | `min`, `max` | `number`: the number. `amount`: cents. `choices`: how many boxes |
 | `pattern`, `pattern_note` | text kinds: an RE2 expression the whole answer must match, and what to tell somebody whose answer does not. The note is required |
 | `earliest`, `latest` | `date`, `time`, `datetime`: bounds in the field's own format, like `2026-10-17` or `15:30` |
-| `options` | `select`, `radio`, `choices`: `[{value, label}]`. `label` defaults to `value`. Keep `value` stable once people have answered |
+| `options` | `select`, `radio`, `choices`: `[{value, label, limit}]`. `label` defaults to `value`. Keep `value` stable once people have answered. `limit` is how many submissions may hold the option at once, like `1` for a time slot one person may take; leave it out for no limit. A full option is shown as taken, and an order still in checkout holds its place until it is paid or abandoned. When every option of a required radio or select question is full, the form shows its `closed_note` |
 | `show_if` | `{field, is: [values]}`: shown only when an earlier question's answer is one of these |
 
 ### Submissions
@@ -258,6 +259,7 @@ A question (`fields[]`):
   "generated_at": "…",
   "fields": [{"name": "text_1", "label": "Your name", "kind": "text", "multiple": false}],
   "items": [{"id": "item_1", "label": "Lunch", "price": 1200}],
+  "places": [{"field": "radio_2", "value": "a", "label": "Monday 9 am", "taken": 1, "limit": 1}],
   "submissions": [
     {
       "id": "3e9392fe489e6dd874247e5fa01aa64a",
@@ -281,9 +283,19 @@ for are left out, as they are from the download and the spreadsheet: somebody
 sent to Stripe who did not finish is not a submission. So are submissions
 somebody has hidden from the lists.
 
+`review` appears on a form with `needs_approval`: `awaiting` or `approved`.
+Declined submissions are left out, as hidden ones are. A submission read on
+its own also carries `review`, and can be `declined`.
+
+`places` appears on a form with limited options: every one, with how many hold
+it. `taken` counts orders still in checkout, so it can be more than the
+submissions listed, and it can exceed `limit` when a late payment or a
+submission brought back from hidden lands on a slot that filled meanwhile.
+
 ### What is not here
 
 The API does not manage who else may see a form, hide submissions, run the
 will-call table, or manage spreadsheet feed keys. Those are decisions about
 other people's access, or about the record of what was paid, and they stay on
-the pages built for them.
+the pages built for them. Approving and declining a submission is also done on
+its page in the results, for now.
