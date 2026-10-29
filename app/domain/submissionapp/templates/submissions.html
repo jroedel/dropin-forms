@@ -44,6 +44,21 @@ charges nothing.</caption>
 </table>
 {{end}}
 
+{{if .Places}}
+<table class="listing tallies">
+<caption>Places held. An order still in checkout holds its place until it is
+paid or abandoned.</caption>
+<thead>
+<tr><th scope="col">Choice</th><th scope="col">Held</th><th scope="col">Of</th></tr>
+</thead>
+<tbody>
+{{range .Places}}
+<tr><th scope="row">{{.Question}}: {{.Label}}</th><td class="figure">{{.Taken}}{{if .Over}} (over){{end}}</td><td class="figure">{{.Limit}}</td></tr>
+{{end}}
+</tbody>
+</table>
+{{end}}
+
 <p class="money">Collected <strong>{{.Summary.PaidTotal}}</strong>.
 {{- if .Deposits}} <a href="/forms/{{.FormID}}/deposits">See the deposits to the bank</a>.{{end}}</p>
 

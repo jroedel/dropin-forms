@@ -91,6 +91,7 @@ type Submissions interface {
 	Hidden(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error)
 	HidingOf(ctx context.Context, id types.ID) (submissionbus.Hiding, bool, error)
 	Revisions(ctx context.Context, s submissionbus.Submission) ([]submissionbus.Revision, error)
+	Taken(ctx context.Context, form types.Slug) (formbus.Taken, error)
 }
 
 // Grants answers which forms an account may reach, for the index page. The
@@ -444,6 +445,9 @@ type listView struct {
 	// many, how much, and how much of it is still owed.
 	Summary summaryView
 
+	// Places is how full each time slot, or other limited option, is.
+	Places []placeTally
+
 	// Hidden is how many submissions are out of the list, and ShowingHidden
 	// says this page is the list of them instead. A count rather than nothing,
 	// so somebody who cannot find an order is told where it might be.
@@ -522,6 +526,55 @@ type itemTally struct {
 	Confirmed int
 }
 
+// placeTally is one option that only so many may take, and how many hold it.
+//
+// Held, not confirmed: an order waiting for its payment holds its place, so
+// this can be more than the rows listed beneath it. Over is a slot holding more
+// than its limit, which a payment arriving after its checkout was abandoned,
+// or a submission put back from hidden, can cause -- shown rather than
+// clipped, because it is a person somebody has to ring.
+type placeTally struct {
+	Question string
+	Label    string
+	Taken    int
+	Limit    int
+	Over     bool
+}
+
+// places is the tally of a form's limited options, in the definition's order.
+// A count that fails costs the table and not the page, for the reason the
+// grant check above costs a link.
+func (a app) places(r *http.Request, f formbus.Form) []placeTally {
+	if !f.Limited() {
+		return nil
+	}
+
+	taken, err := a.cfg.Submissions.Taken(r.Context(), f.ID)
+	if err != nil {
+		a.cfg.Log.Error("the places taken could not be counted",
+			"request_id", web.RequestIDFrom(r.Context()), "form", f.ID.String(), "error", err)
+
+		return nil
+	}
+
+	var out []placeTally
+
+	for _, fld := range f.Questions() {
+		for _, o := range fld.Options {
+			if o.Limit == 0 {
+				continue
+			}
+
+			n := taken.Count(fld.Name, o.Value)
+			out = append(out, placeTally{
+				Question: fld.Label, Label: o.Label, Taken: n, Limit: o.Limit, Over: n > o.Limit,
+			})
+		}
+	}
+
+	return out
+}
+
 func (a app) list(w http.ResponseWriter, r *http.Request) {
 	f, subs, ok := a.formAndSubmissions(w, r)
 	if !ok {
@@ -566,6 +619,7 @@ func (a app) list(w http.ResponseWriter, r *http.Request) {
 		FormID:  f.ID.String(),
 		Columns: columnsOf(f),
 		Summary: summarise(f, subs),
+		Places:  a.places(r, f),
 		Hidden:  len(hidden),
 		Window:  int(paybus.CheckoutWindow / time.Hour),
 	}

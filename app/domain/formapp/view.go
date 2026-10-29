@@ -408,6 +408,10 @@ func detailOf(fld formbus.Field, currency string) string {
 		default:
 			parts = append(parts, strconv.Itoa(n)+" options")
 		}
+
+		if slices.ContainsFunc(fld.Options, func(o formbus.Option) bool { return o.Limit > 0 }) {
+			parts = append(parts, "limited places")
+		}
 	}
 
 	if fld.Kind.Bounded() {

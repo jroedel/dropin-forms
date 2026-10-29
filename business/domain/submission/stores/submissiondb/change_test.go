@@ -41,17 +41,17 @@ func TestAChangeReplacesTheRowAndKeepsTheOldAnswers(t *testing.T) {
 	ctx := t.Context()
 
 	first := changeable(t)
-	if _, err := store.Accept(ctx, first, "nonce-1"); err != nil {
+	if _, err := store.Accept(ctx, first, "nonce-1", nil); err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
 
 	second := renamed(first, "Fr. Hector", now.Add(time.Hour))
-	if ok, err := store.Change(ctx, first, second, "nonce-2"); err != nil || !ok {
+	if ok, err := store.Change(ctx, first, second, "nonce-2", nil); err != nil || !ok {
 		t.Fatalf("Change: %v, %v", ok, err)
 	}
 
 	third := renamed(second, "Fr. Héctor", now.Add(2*time.Hour))
-	if ok, err := store.Change(ctx, second, third, "nonce-3"); err != nil || !ok {
+	if ok, err := store.Change(ctx, second, third, "nonce-3", nil); err != nil || !ok {
 		t.Fatalf("second Change: %v, %v", ok, err)
 	}
 
@@ -108,19 +108,19 @@ func TestAChangeAgainstAStaleReadWritesNothing(t *testing.T) {
 	ctx := t.Context()
 
 	first := changeable(t)
-	if _, err := store.Accept(ctx, first, "nonce-1"); err != nil {
+	if _, err := store.Accept(ctx, first, "nonce-1", nil); err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
 
 	won := renamed(first, "From the first tab", now.Add(time.Hour))
-	if _, err := store.Change(ctx, first, won, "nonce-2"); err != nil {
+	if _, err := store.Change(ctx, first, won, "nonce-2", nil); err != nil {
 		t.Fatalf("Change: %v", err)
 	}
 
 	// The second tab read the row before the first tab saved.
 	lost := renamed(first, "From the second tab", now.Add(time.Hour+time.Second))
 
-	_, err := store.Change(ctx, first, lost, "nonce-3")
+	_, err := store.Change(ctx, first, lost, "nonce-3", nil)
 	if !errors.Is(err, submissionbus.ErrChangedMeanwhile) {
 		t.Fatalf("Change: %v, want ErrChangedMeanwhile", err)
 	}
@@ -137,7 +137,7 @@ func TestAChangeAgainstAStaleReadWritesNothing(t *testing.T) {
 
 	// And its grant was not spent, since nothing was written: the
 	// transaction rolled back as a whole.
-	if ok, err := store.Change(ctx, got, renamed(got, "Again", now.Add(2*time.Hour)), "nonce-3"); err != nil || !ok {
+	if ok, err := store.Change(ctx, got, renamed(got, "Again", now.Add(2*time.Hour)), "nonce-3", nil); err != nil || !ok {
 		t.Errorf("the nonce of a rolled-back change: %v, %v; want it still spendable", ok, err)
 	}
 }
@@ -147,7 +147,7 @@ func TestAHiddenSubmissionCannotBeChanged(t *testing.T) {
 	ctx := t.Context()
 
 	first := changeable(t)
-	if _, err := store.Accept(ctx, first, "nonce-1"); err != nil {
+	if _, err := store.Accept(ctx, first, "nonce-1", nil); err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
 
@@ -157,7 +157,7 @@ func TestAHiddenSubmissionCannotBeChanged(t *testing.T) {
 		t.Fatalf("Hide: %v", err)
 	}
 
-	_, err := store.Change(ctx, first, renamed(first, "x", now.Add(time.Hour)), "nonce-2")
+	_, err := store.Change(ctx, first, renamed(first, "x", now.Add(time.Hour)), "nonce-2", nil)
 	if !errors.Is(err, submissionbus.ErrChangedMeanwhile) {
 		t.Fatalf("Change: %v, want ErrChangedMeanwhile", err)
 	}
@@ -168,11 +168,11 @@ func TestAReplayedChangeIsRefused(t *testing.T) {
 	ctx := t.Context()
 
 	first := changeable(t)
-	if _, err := store.Accept(ctx, first, "nonce-1"); err != nil {
+	if _, err := store.Accept(ctx, first, "nonce-1", nil); err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
 
-	ok, err := store.Change(ctx, first, renamed(first, "x", now.Add(time.Hour)), "nonce-1")
+	ok, err := store.Change(ctx, first, renamed(first, "x", now.Add(time.Hour)), "nonce-1", nil)
 	if err != nil || ok {
 		t.Fatalf("Change with a spent nonce: %v, %v; want false and no error", ok, err)
 	}
@@ -183,7 +183,7 @@ func TestConcurrentChangesProduceOneWinner(t *testing.T) {
 	ctx := t.Context()
 
 	first := changeable(t)
-	if _, err := store.Accept(ctx, first, "nonce-1"); err != nil {
+	if _, err := store.Accept(ctx, first, "nonce-1", nil); err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
 
@@ -198,7 +198,7 @@ func TestConcurrentChangesProduceOneWinner(t *testing.T) {
 	for i := range n {
 		wg.Go(func() {
 			next := renamed(first, "tab", now.Add(time.Duration(i+1)*time.Second))
-			ok, err := store.Change(ctx, first, next, "nonce-c"+string(rune('a'+i)))
+			ok, err := store.Change(ctx, first, next, "nonce-c"+string(rune('a'+i)), nil)
 
 			mu.Lock()
 			defer mu.Unlock()
@@ -231,13 +231,13 @@ func TestByEmailFindsOneAddressOnOneFormAndSkipsTheHidden(t *testing.T) {
 	ctx := t.Context()
 
 	mine := changeable(t)
-	if _, err := store.Accept(ctx, mine, "n1"); err != nil {
+	if _, err := store.Accept(ctx, mine, "n1", nil); err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
 
 	hidden := changeable(t)
 	hidden.ID = types.NewID()
-	if _, err := store.Accept(ctx, hidden, "n2"); err != nil {
+	if _, err := store.Accept(ctx, hidden, "n2", nil); err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
 	if _, _, err := store.Hide(ctx, submissionbus.Hiding{SubmissionID: hidden.ID, Form: hidden.Form, HiddenAt: now, HiddenBy: types.NewID()}); err != nil {
@@ -247,7 +247,7 @@ func TestByEmailFindsOneAddressOnOneFormAndSkipsTheHidden(t *testing.T) {
 	other := changeable(t)
 	other.ID = types.NewID()
 	other.Email = mustEmail(t, "someone@example.org")
-	if _, err := store.Accept(ctx, other, "n3"); err != nil {
+	if _, err := store.Accept(ctx, other, "n3", nil); err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
 

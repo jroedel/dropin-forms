@@ -53,6 +53,11 @@ type Edit struct {
 
 	Answers  formbus.Answers
 	RemoteIP string
+
+	// Claims is the limited places the new answers take -- [New.Claims]'s
+	// counterpart. The place the submission already holds is not counted
+	// against it, so keeping one's own time slot is never refused.
+	Claims []formbus.Claim
 }
 
 // Mine reads the submission an answer link names, for showing it back to the
@@ -145,7 +150,7 @@ func (b *Business) Change(ctx context.Context, now time.Time, g formbus.Grant, e
 	after.RemoteIP = e.RemoteIP
 	after.UpdatedAt = now.UTC()
 
-	spent, err := b.store.Change(ctx, before, after, g.Nonce)
+	spent, err := b.store.Change(ctx, before, after, g.Nonce, e.Claims)
 	switch {
 	case err != nil:
 		return Submission{}, Submission{}, err

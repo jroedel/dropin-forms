@@ -197,7 +197,7 @@ CREATE TABLE IF NOT EXISTS submission_revisions (
 // out to have been spent. The rollback on the way out is unconditional: after
 // a successful Commit it is a no-op, which is the idiom that makes every
 // failure path below leave nothing behind.
-func (s *Store) Accept(ctx context.Context, sub submissionbus.Submission, nonce string) (bool, error) {
+func (s *Store) Accept(ctx context.Context, sub submissionbus.Submission, nonce string, claims []formbus.Claim) (bool, error) {
 	doc, err := marshalAnswers(sub.Answers)
 	if err != nil {
 		return false, err
@@ -222,6 +222,14 @@ func (s *Store) Accept(ctx context.Context, sub submissionbus.Submission, nonce 
 
 	case err != nil:
 		return false, fmt.Errorf("spending the grant: %w", err)
+	}
+
+	// After the nonce, so that a replayed grant is told it was replayed rather
+	// than that its slot is gone; before the insert, so that a refused claim
+	// writes nothing. The rollback takes the spent nonce back with it, and
+	// the person can choose another slot on the page they are shown.
+	if err := claim(ctx, tx, sub.Form, "", claims); err != nil {
+		return false, err
 	}
 
 	const insert = `
@@ -256,7 +264,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 // second is told [submissionbus.ErrChangedMeanwhile] and nothing is written.
 // A hiding that lands between the caller's read and this write is the same
 // answer, for the same reason.
-func (s *Store) Change(ctx context.Context, before, after submissionbus.Submission, nonce string) (bool, error) {
+func (s *Store) Change(ctx context.Context, before, after submissionbus.Submission, nonce string, claims []formbus.Claim) (bool, error) {
 	was, err := marshalAnswers(before.Answers)
 	if err != nil {
 		return false, err
@@ -284,6 +292,12 @@ func (s *Store) Change(ctx context.Context, before, after submissionbus.Submissi
 
 	case err != nil:
 		return false, fmt.Errorf("spending the grant: %w", err)
+	}
+
+	// The row being changed is left out of the count, so that a person who
+	// keeps their own time slot is not refused it for being full of them.
+	if err := claim(ctx, tx, after.Form, before.ID.String(), claims); err != nil {
+		return false, err
 	}
 
 	const update = `
@@ -502,6 +516,117 @@ func (s *Store) ByID(ctx context.Context, id types.ID) (submissionbus.Submission
 // to -- a new page listing submissions is correct by default. ByID and
 // CountSince do not carry it, on purpose: see submissionbus.Hiding.
 const notHidden = `id NOT IN (SELECT submission_id FROM hidden_submissions)`
+
+// heldBy is the condition a submission meets to hold a place in a limited
+// option, written for a query that has joined the answers document and so has
+// to name the submission's own columns: json_each has an id column of its own,
+// which would make notHidden's bare one ambiguous.
+//
+// The statuses come from submissionbus.PlaceHoldingStatuses, for the reason
+// Settled takes its own from submissionbus.
+func heldBy() (string, []any) {
+	held := submissionbus.PlaceHoldingStatuses()
+
+	args := make([]any, 0, len(held))
+	for _, st := range held {
+		args = append(args, st.String())
+	}
+
+	cond := `s.id NOT IN (SELECT submission_id FROM hidden_submissions) AND s.status IN (?` +
+		strings.Repeat(", ?", len(held)-1) + `)`
+
+	return cond, args
+}
+
+// places is the shared part of every count of places: each value of each
+// answer of each place-holding submission on one form, one row apiece. The
+// answers are a document rather than rows -- see the package comment -- so
+// the count unpacks them with SQLite's JSON functions. No index reaches inside
+// the document; the form's own index narrows the scan to that form's rows,
+// which is as far as a count of one form's sign-ups needs to go.
+const places = `
+FROM submissions s, json_each(s.answers, '$.fields') f, json_each(f.value, '$.values') v
+WHERE s.form_slug = ? AND `
+
+// Taken counts the places held in each option of a form, in one query.
+//
+// Every answer is counted, not only the limited ones: this package does not
+// know which options have a limit, and a count nobody asks for costs nothing
+// on a form whose definition has none, because the caller only asks when it
+// does.
+func (s *Store) Taken(ctx context.Context, form types.Slug) (formbus.Taken, error) {
+	cond, args := heldBy()
+
+	q := `SELECT json_extract(f.value, '$.name'), v.value, COUNT(*)` + places + cond +
+		` GROUP BY 1, 2`
+
+	rows, err := s.db.QueryContext(ctx, q, append([]any{form.String()}, args...)...)
+	if err != nil {
+		return nil, fmt.Errorf("counting the places: %w", err)
+	}
+	defer rows.Close()
+
+	out := formbus.Taken{}
+	for rows.Next() {
+		var (
+			field, value string
+			n            int
+		)
+
+		if err := rows.Scan(&field, &value, &n); err != nil {
+			return nil, fmt.Errorf("reading a count: %w", err)
+		}
+
+		if out[field] == nil {
+			out[field] = map[string]int{}
+		}
+
+		out[field][value] = n
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading the counts: %w", err)
+	}
+
+	return out, nil
+}
+
+// claim counts each claim's option inside a write transaction and refuses the
+// first one already full with submissionbus.OptionFull. except is a
+// submission that holds no place against itself, or empty.
+//
+// Inside the transaction because this is an inventory, and the reason Accept
+// does not do the same for the daily cap -- a second statement on every
+// submission, on a database with one writer -- does not reach here: a form
+// with no limits has no claims, and runs no query. The database is opened
+// with one connection, so nothing can be inserted between this count and the
+// insert it guards.
+func claim(ctx context.Context, tx *sql.Tx, form types.Slug, except string, claims []formbus.Claim) error {
+	if len(claims) == 0 {
+		return nil
+	}
+
+	cond, held := heldBy()
+
+	q := `SELECT COUNT(*)` + places + cond +
+		` AND s.id != ? AND json_extract(f.value, '$.name') = ? AND v.value = ?`
+
+	for _, c := range claims {
+		args := append([]any{form.String()}, held...)
+		args = append(args, except, c.Field, c.Value)
+
+		var n int
+		if err := tx.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
+			return fmt.Errorf("counting the places in %q: %w", c.Field, err)
+		}
+
+		if n >= c.Limit {
+			return submissionbus.OptionFull{Field: c.Field, Value: c.Value}
+		}
+	}
+
+	return nil
+}
 
 // ByForm lists a form's submissions, newest first, which is the order the
 // index is built for and the order a page wants.

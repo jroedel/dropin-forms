@@ -143,6 +143,36 @@ func SettledStatuses() []Status {
 	return slices.DeleteFunc(slices.Clone(statuses), func(s Status) bool { return !s.Settled() })
 }
 
+// HoldsPlace reports whether a submission with this status keeps a place in an
+// option that only so many may take -- a time slot, say.
+//
+// Wider than [Status.Settled] by one: an order waiting for its payment holds
+// its place. Otherwise two people could both be sent to pay for the last slot
+// and both payments would land, with nothing here able to refund either.
+// Holding it costs at most the checkout window: an order not paid by then is
+// abandoned, and an abandoned or failed order holds nothing.
+func (s Status) HoldsPlace() bool { return s.Settled() || s == StatusPending }
+
+// PlaceHoldingStatuses is every status [Status.HoldsPlace] reports true for,
+// for a store that counts places in a query -- SettledStatuses's shape.
+func PlaceHoldingStatuses() []Status {
+	return slices.DeleteFunc(slices.Clone(statuses), func(s Status) bool { return !s.HoldsPlace() })
+}
+
+// OptionFull is a submission refused because an option it chose has no place
+// left: somebody else took the last one between the page being drawn and the
+// answers arriving. Not a fault in the submission, so the app layer answers it
+// with the form, the person's other answers still in it, and a sentence beside
+// the question that has to be answered again.
+type OptionFull struct {
+	Field string
+	Value string
+}
+
+func (e OptionFull) Error() string {
+	return fmt.Sprintf("the option %q of %q has no places left", e.Value, e.Field)
+}
+
 // Submission is an accepted submission.
 type Submission struct {
 	ID   types.ID
@@ -237,6 +267,12 @@ type New struct {
 	// them. The cap is the one rule the validator cannot enforce, since
 	// counting what has already been stored is a question for storage.
 	DailyCap int
+
+	// Claims is the limited places these answers take, from
+	// [formbus.Form.Claims], passed in for the reason DailyCap is. Unlike the
+	// cap, each one is counted inside the transaction that saves the
+	// submission: see [Storer.Accept].
+	Claims []formbus.Claim
 }
 
 // Storer is what this package needs from storage.
@@ -247,7 +283,17 @@ type Storer interface {
 	// The bool rather than an error for that case is the same shape userbus
 	// uses for its three single-use claims, and for the same reason: "somebody
 	// else got there first" is an outcome rather than a fault.
-	Accept(ctx context.Context, s Submission, nonce string) (bool, error)
+	//
+	// Each claim is counted against the places already held, inside the same
+	// transaction and before anything is written, and a full one is refused
+	// with [OptionFull]. Inside, unlike the daily cap, because this is an
+	// inventory: two people taking the last slot in the same instant is the
+	// case it exists for.
+	Accept(ctx context.Context, s Submission, nonce string, claims []formbus.Claim) (bool, error)
+
+	// Taken counts the places held in each of a form's options, by the
+	// submissions [Status.HoldsPlace] names, leaving out hidden ones.
+	Taken(ctx context.Context, form types.Slug) (formbus.Taken, error)
 
 	ByID(ctx context.Context, id types.ID) (Submission, error)
 	ByForm(ctx context.Context, form types.Slug) ([]Submission, error)
@@ -313,8 +359,9 @@ type Storer interface {
 	// revision and spends the nonce, in one transaction. It reports false
 	// when the nonce had already been spent, Accept's shape, and
 	// ErrChangedMeanwhile when the stored row is no longer before -- changed
-	// or hidden since it was read.
-	Change(ctx context.Context, before, after Submission, nonce string) (bool, error)
+	// or hidden since it was read. Claims are counted as Accept counts them,
+	// except that the row being changed holds no place against itself.
+	Change(ctx context.Context, before, after Submission, nonce string, claims []formbus.Claim) (bool, error)
 
 	// Revisions reads the answers a submission has held and no longer does,
 	// oldest first.
@@ -425,7 +472,14 @@ func (b *Business) Accept(ctx context.Context, now time.Time, g formbus.Grant, n
 
 	s.Email, _ = ns.Answers.SubmitterEmail()
 
-	spent, err := b.store.Accept(ctx, s, g.Nonce)
+	spent, err := b.store.Accept(ctx, s, g.Nonce, ns.Claims)
+	if full, ok := errors.AsType[OptionFull](err); ok {
+		b.log.Info("a submission chose an option with no places left",
+			"form", s.Form.String(), "field", full.Field, "option", full.Value)
+
+		return Submission{}, full
+	}
+
 	if err != nil {
 		return Submission{}, fmt.Errorf("storing the submission: %w", err)
 	}
@@ -541,6 +595,21 @@ func (b *Business) Recent(ctx context.Context, form types.Slug, limit int) ([]Su
 	}
 
 	return out, nil
+}
+
+// Taken counts the places held in each limited option of a form, for drawing
+// the form with its full options marked and for the tally the results page
+// shows. The count that decides whether a submission is accepted is a second
+// one, made inside the transaction that saves it; this one is only ever a
+// picture of a moment, and a page drawn from it can be out of date by the time
+// it is submitted.
+func (b *Business) Taken(ctx context.Context, form types.Slug) (formbus.Taken, error) {
+	t, err := b.store.Taken(ctx, form)
+	if err != nil {
+		return nil, fmt.Errorf("counting the places taken: %w", err)
+	}
+
+	return t, nil
 }
 
 // abandonAlarm is how many orders on one form may be abandoned in

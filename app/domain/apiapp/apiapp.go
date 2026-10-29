@@ -103,6 +103,7 @@ type Grants interface {
 // one.
 type Submissions interface {
 	ByForm(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error)
+	Taken(ctx context.Context, form types.Slug) (formbus.Taken, error)
 	ByID(ctx context.Context, id types.ID) (submissionbus.Submission, error)
 }
 
@@ -599,6 +600,26 @@ func (a app) submissions(w http.ResponseWriter, r *http.Request) {
 
 	for _, s := range subs {
 		doc.Submissions = append(doc.Submissions, submissionOf(f, s))
+	}
+
+	if f.Limited() {
+		taken, err := a.cfg.Submissions.Taken(r.Context(), f.ID)
+		if err != nil {
+			a.oops(w, r, "the places taken could not be counted", err)
+
+			return
+		}
+
+		for _, fld := range f.Questions() {
+			for _, o := range fld.Options {
+				if o.Limit > 0 {
+					doc.Places = append(doc.Places, placeDoc{
+						Field: fld.Name, Value: o.Value, Label: o.Label,
+						Taken: taken.Count(fld.Name, o.Value), Limit: o.Limit,
+					})
+				}
+			}
+		}
 	}
 
 	a.reply(w, http.StatusOK, doc)

@@ -94,7 +94,7 @@ func full(t *testing.T) formbus.Form {
 				Label: "Which sitting",
 				Kind:  formbus.KindSelect,
 				Options: []formbus.Option{
-					{Value: "early", Label: "Six o'clock"},
+					{Value: "early", Label: "Six o'clock", Limit: 40},
 					{Value: "late", Label: "Eight o'clock"},
 				},
 				Required: true,

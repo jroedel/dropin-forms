@@ -107,6 +107,11 @@ type optionDoc struct {
 	// Label is omitted to mean the same as Value, which is what the builder's
 	// "one per line" box does with a line that has no bar in it.
 	Label string `json:"label,omitempty"`
+
+	// Limit is how many submissions may hold this option at once. Omitted,
+	// or zero, for no limit -- item max's convention, so that the one way of
+	// saying "none" is the same everywhere in a definition.
+	Limit int `json:"limit,omitempty"`
 }
 
 type conditionDoc struct {
@@ -267,7 +272,7 @@ func formOf(d definitionDoc) (formbus.Form, []string) {
 				label = o.Value
 			}
 
-			fld.Options = append(fld.Options, formbus.Option{Value: o.Value, Label: label})
+			fld.Options = append(fld.Options, formbus.Option{Value: o.Value, Label: label, Limit: o.Limit})
 		}
 
 		if fd.ShowIf != nil {
@@ -374,7 +379,7 @@ func definitionOf(f formbus.Form) definitionDoc {
 		}
 
 		for _, o := range fld.Options {
-			fd.Options = append(fd.Options, optionDoc{Value: o.Value, Label: o.Label})
+			fd.Options = append(fd.Options, optionDoc{Value: o.Value, Label: o.Label, Limit: o.Limit})
 		}
 
 		if fld.ShowIf != nil {
@@ -423,6 +428,24 @@ type submissionsDoc struct {
 	Fields      []questionDoc    `json:"fields"`
 	Submissions []submissionDoc  `json:"submissions"`
 	Items       []itemSummaryDoc `json:"items,omitzero"`
+
+	// Places is every option that has a limit, with how many hold it. Absent
+	// on a form with no limits.
+	Places []placeDoc `json:"places,omitzero"`
+}
+
+// placeDoc is one limited option and how full it is. Taken counts what holds
+// a place -- an order waiting for its payment included, which is why it can be
+// more than the submissions listed beside it -- and can exceed Limit, when a
+// late payment or a submission put back from hidden lands on a slot that had
+// filled in the meantime. Reported as it is rather than capped, because that
+// is a person somebody has to call.
+type placeDoc struct {
+	Field string `json:"field"`
+	Value string `json:"value"`
+	Label string `json:"label"`
+	Taken int    `json:"taken"`
+	Limit int    `json:"limit"`
 }
 
 type questionDoc struct {

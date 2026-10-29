@@ -283,6 +283,7 @@ type field struct {
 type option struct {
 	Value string `toml:"value"`
 	Label string `toml:"label"`
+	Limit int    `toml:"limit"`
 }
 
 type condition struct {
@@ -396,7 +397,7 @@ func (w field) toField() (formbus.Field, error) {
 	}
 
 	for _, o := range w.Options {
-		fld.Options = append(fld.Options, formbus.Option{Value: o.Value, Label: o.Label})
+		fld.Options = append(fld.Options, formbus.Option{Value: o.Value, Label: o.Label, Limit: o.Limit})
 	}
 
 	if w.ShowIf != nil {

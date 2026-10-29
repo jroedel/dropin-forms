@@ -186,7 +186,8 @@ func tools() []tool {
 			Name:  "list_submissions",
 			Title: "List submissions",
 			Description: "Everything submitted to a form, oldest first, leaving out submissions somebody has hidden. " +
-				"Each has an answer for every question the form asks (null when unanswered), what was ordered, and the total in cents.",
+				"Each has an answer for every question the form asks (null when unanswered), what was ordered, and the total in cents. " +
+				"On a form with limited options, places lists each one with how many hold it and its limit.",
 			InputSchema: object(map[string]any{"slug": slugProp()}, "slug"),
 			Annotations: readOnly(),
 			request:     onSlug(http.MethodGet, "/submissions"),
@@ -245,6 +246,7 @@ func definitionSchema(creating bool) map[string]any {
 	option := object(map[string]any{
 		"value": str("What is stored and exported. Keep it stable once people have answered."),
 		"label": str("What the person reads. Omit to use value."),
+		"limit": integer("How many submissions may hold this option at once, such as 1 for a time slot one person may take. Omit for no limit. Full options are shown as taken; a pending checkout holds its place."),
 	}, "value")
 
 	field := object(map[string]any{

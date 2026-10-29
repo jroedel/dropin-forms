@@ -277,6 +277,12 @@ textarea:user-invalid {
   flex: none;
 }
 
+/* An option somebody else has already taken. Still listed, so the person can
+   see the slot existed and is gone rather than wonder whether they misread. */
+.choice.taken {
+  color: var(--muted);
+}
+
 /* --- items --------------------------------------------------------------- */
 
 .items {

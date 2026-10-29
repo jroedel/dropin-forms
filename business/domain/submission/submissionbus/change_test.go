@@ -15,7 +15,7 @@ import (
 	"github.com/jroedel/dropin-forms/business/types"
 )
 
-func (m *memStore) Change(_ context.Context, before, after submissionbus.Submission, nonce string) (bool, error) {
+func (m *memStore) Change(_ context.Context, before, after submissionbus.Submission, nonce string, claims []formbus.Claim) (bool, error) {
 	if m.fail != nil {
 		return false, m.fail
 	}
@@ -27,6 +27,10 @@ func (m *memStore) Change(_ context.Context, before, after submissionbus.Submiss
 	cur, ok := m.subs[before.ID]
 	if _, hidden := m.hidden[before.ID]; !ok || hidden || !cur.UpdatedAt.Equal(before.UpdatedAt) {
 		return false, submissionbus.ErrChangedMeanwhile
+	}
+
+	if err := m.claim(after.Form, before.ID, claims); err != nil {
+		return false, err
 	}
 
 	m.nonces[nonce] = after.UpdatedAt
@@ -290,10 +294,10 @@ type racingStore struct {
 	moved submissionbus.Submission
 }
 
-func (r *racingStore) Change(ctx context.Context, before, after submissionbus.Submission, nonce string) (bool, error) {
+func (r *racingStore) Change(ctx context.Context, before, after submissionbus.Submission, nonce string, claims []formbus.Claim) (bool, error) {
 	r.memStore.subs[r.moved.ID] = r.moved
 
-	return r.memStore.Change(ctx, before, after, nonce)
+	return r.memStore.Change(ctx, before, after, nonce, claims)
 }
 
 func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }

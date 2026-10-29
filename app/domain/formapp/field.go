@@ -155,7 +155,18 @@ func (a app) addField(w http.ResponseWriter, r *http.Request) {
 	// others but still submitted, and Check refuses options on a text field
 	// -- which would refuse the save over a box nobody could see.
 	if fld.Kind.HasOptions() {
-		fld.Options = parseOptions(r.PostFormValue("options"))
+		var err error
+
+		fld.Options, err = parseOptions(r.PostFormValue("options"))
+		if err != nil {
+			a.show(w, r, http.StatusBadRequest, s, buildView{
+				Problem:  "That question was not added.",
+				Problems: []string{err.Error()},
+				Adding:   true,
+			})
+
+			return
+		}
 	}
 
 	f := s.Form
@@ -311,7 +322,8 @@ func (a app) saveField(w http.ResponseWriter, r *http.Request) {
 	// changing a field's kind drops what the new kind cannot use, which is
 	// what the page already showed would happen.
 	if fld.Kind.HasOptions() {
-		fld.Options = parseOptions(r.PostFormValue("options"))
+		fld.Options, err = parseOptions(r.PostFormValue("options"))
+		fail(err)
 	}
 
 	if fld.Kind.Textual() {
