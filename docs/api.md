@@ -220,6 +220,7 @@ Every key:
 | `opens_at`, `closes_at` | when it takes submissions; omit for now and never |
 | `closed_note` | shown instead of the form while it is closed |
 | `changeable_until` | until when people may change their answers through the link they are emailed. Not on a form that sells anything |
+| `needs_approval` | hold each submission until somebody who can read the results approves or declines it on its page. A waiting submission keeps any limited place it chose; declining frees it. The person is emailed either way, and the list under the form shows only approved ones. Not on a form that sells anything |
 | `currency` | omit; the service takes `usd` |
 | `origins` | the sites allowed to embed it, scheme and host only. Empty uses the service's default list |
 | `return_url` | the page it is embedded on, required when it sells |
@@ -282,6 +283,10 @@ for are left out, as they are from the download and the spreadsheet: somebody
 sent to Stripe who did not finish is not a submission. So are submissions
 somebody has hidden from the lists.
 
+`review` appears on a form with `needs_approval`: `awaiting` or `approved`.
+Declined submissions are left out, as hidden ones are. A submission read on
+its own also carries `review`, and can be `declined`.
+
 `places` appears on a form with limited options: every one, with how many hold
 it. `taken` counts orders still in checkout, so it can be more than the
 submissions listed, and it can exceed `limit` when a late payment or a
@@ -292,4 +297,5 @@ submission brought back from hidden lands on a slot that filled meanwhile.
 The API does not manage who else may see a form, hide submissions, run the
 will-call table, or manage spreadsheet feed keys. Those are decisions about
 other people's access, or about the record of what was paid, and they stay on
-the pages built for them.
+the pages built for them. Approving and declining a submission is also done on
+its page in the results, for now.

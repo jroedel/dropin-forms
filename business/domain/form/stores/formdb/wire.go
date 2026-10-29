@@ -41,6 +41,10 @@ type definition struct {
 	PaymentRequired bool   `json:"payment_required,omitempty"`
 	PaymentNote     string `json:"payment_note,omitempty"`
 
+	// Omitted when false, for option.Limit's reason: a form that does not
+	// ask for approval reads the same to a binary from before it existed.
+	NeedsApproval bool `json:"needs_approval,omitempty"`
+
 	DailyCap int `json:"daily_cap,omitempty"`
 
 	Confirmation string   `json:"confirmation,omitempty"`
@@ -146,6 +150,7 @@ func encode(f formbus.Form) (string, error) {
 		MaxTotal:        int64(f.MaxTotal),
 		PaymentRequired: f.PaymentRequired,
 		PaymentNote:     f.PaymentNote,
+		NeedsApproval:   f.NeedsApproval,
 		DailyCap:        f.DailyCap,
 		Confirmation:    f.Confirmation,
 		Notify:          f.Notify,
@@ -250,6 +255,7 @@ func decode(body string) (formbus.Form, error) {
 		MaxTotal:        types.Money(w.MaxTotal),
 		PaymentRequired: w.PaymentRequired,
 		PaymentNote:     w.PaymentNote,
+		NeedsApproval:   w.NeedsApproval,
 		DailyCap:        w.DailyCap,
 		Confirmation:    w.Confirmation,
 		Notify:          w.Notify,

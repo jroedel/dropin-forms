@@ -572,6 +572,9 @@ func (a app) submit(w http.ResponseWriter, r *http.Request) {
 		// The time slots and the like that these answers take, counted against
 		// the places already held in the same transaction that saves them.
 		Claims: f.Claims(answers),
+
+		// Stored awaiting a decision, on a form that asks for one.
+		NeedsApproval: f.NeedsApproval,
 	})
 
 	if full, ok := errors.AsType[submissionbus.OptionFull](err); ok {
@@ -898,6 +901,12 @@ type lineView struct {
 // payment step turns into a button.
 func (v doneView) Owed() bool {
 	return v.Submission.Status == submissionbus.StatusPending
+}
+
+// Awaiting reports whether the submission is waiting for somebody to approve
+// it, which is what the page says instead of the form's confirmation.
+func (v doneView) Awaiting() bool {
+	return v.Submission.Review == submissionbus.ReviewAwaiting
 }
 
 // closedView is what a form not taking submissions shows.

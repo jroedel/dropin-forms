@@ -209,7 +209,43 @@ func (b *Business) Paid(ctx context.Context, id types.ID) {
 	b.tell(ctx, id, true)
 }
 
-// tell is both of the above, because they differ in four sentences and not in
+// Decided tells the person that somebody has approved or declined what they
+// sent. Only the person: the office is who decided, and the page they decided
+// on already says so.
+func (b *Business) Decided(ctx context.Context, id types.ID) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sendBudget)
+	defer cancel()
+
+	sub, err := b.cfg.Submissions.ByID(ctx, id)
+	if err != nil {
+		b.cfg.Log.Error("nobody could be told about a decision, because the submission could not be read",
+			"submission_id", id.String(), "error", err)
+
+		return
+	}
+
+	f, err := b.cfg.Forms.ByID(sub.Form)
+	if err != nil {
+		b.cfg.Log.Error("nobody could be told about a decision, because its form could not be read",
+			"submission_id", id.String(), "form", sub.Form.String(), "error", err)
+
+		return
+	}
+
+	to := sub.Email.String()
+	if to == "" {
+		// A form that asks for approval and no address has nobody to tell.
+		// Worth a line, because the person is waiting to hear.
+		b.cfg.Log.Warn("a submission was decided and its form collected no address to tell",
+			"submission_id", sub.ID.String(), "form", sub.Form.String())
+
+		return
+	}
+
+	b.send(ctx, to, b.forDecided(f, sub), "submitter", sub)
+}
+
+// tell is Received and Paid, because they differ in four sentences and not in
 // any of the work.
 func (b *Business) tell(ctx context.Context, id types.ID, paid bool) {
 	// Detached from the caller's context and given a budget of its own. A

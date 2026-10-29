@@ -574,11 +574,11 @@ latest = "2026-10-13T18:00"
 	}
 }
 
-// A limit on an option reaches the domain type, for the reason the daily cap
-// test gives: one that parses and goes nowhere is a time slot anybody can
-// take twice.
-func TestAnOptionsLimitIsRead(t *testing.T) {
-	store, err := formtoml.Load(fstest.MapFS{"alpha.toml": {Data: []byte(minimal("alpha") + `
+// A limit on an option, and approval, reach the domain type, for the reason
+// the daily cap test gives: one that parses and goes nowhere is a time slot
+// anybody can take twice, or a sign-up nobody was asked to approve.
+func TestAnOptionsLimitAndApprovalAreRead(t *testing.T) {
+	store, err := formtoml.Load(fstest.MapFS{"alpha.toml": {Data: []byte(minimal("alpha", "needs_approval = true") + `
 [[field]]
 name = "slot"
 label = "Time slot"
@@ -607,5 +607,9 @@ label = "Whenever suits"
 	opts := f.Fields[1].Options
 	if opts[0].Limit != 1 || opts[1].Limit != 0 {
 		t.Errorf("limits = %d and %d, want 1 and none", opts[0].Limit, opts[1].Limit)
+	}
+
+	if !f.NeedsApproval {
+		t.Error("needs_approval was read as false")
 	}
 }

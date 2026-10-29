@@ -28,6 +28,7 @@ type settingsView struct {
 	ClosedNote string
 
 	ChangeableUntil string
+	NeedsApproval   bool
 
 	Zone string
 
@@ -160,6 +161,7 @@ func settingsOf(s formbus.Stored) settingsView {
 		OpensAt:         writeWhen(f.OpensAt),
 		ClosesAt:        writeWhen(f.ClosesAt),
 		ChangeableUntil: writeWhen(f.ChangeableUntil),
+		NeedsApproval:   f.NeedsApproval,
 		ClosedNote:      f.ClosedNote,
 		Zone:            zoneName(time.Now()),
 		Origins:         writeOrigins(f.Origins),
@@ -244,6 +246,7 @@ func (a app) saveSettings(w http.ResponseWriter, r *http.Request) {
 	said.ClosesAt = value(r, "closes_at")
 	said.ClosedNote = value(r, "closed_note")
 	said.ChangeableUntil = value(r, "changeable_until")
+	said.NeedsApproval = checked(r, "needs_approval")
 	said.Origins = r.PostFormValue("origins")
 	said.ReturnURL = value(r, "return_url")
 	said.MinPerOrder = value(r, "min_per_order")
@@ -269,6 +272,7 @@ func (a app) saveSettings(w http.ResponseWriter, r *http.Request) {
 	f.Title = said.Title
 	f.Intro = said.Intro
 	f.ClosedNote = said.ClosedNote
+	f.NeedsApproval = said.NeedsApproval
 	f.ReturnURL = said.ReturnURL
 	f.PaymentRequired = said.PaymentRequired
 	f.PaymentNote = said.PaymentNote

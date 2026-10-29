@@ -58,7 +58,8 @@ func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 // Expected is what CheckSchema verifies at startup: the columns this binary
 // will read.
 var Expected = sqldb.Expected{
-	"submissions":        {"id", "form_slug", "version", "status", "answers", "email", "total", "currency", "remote_ip", "payment_ref", "created_at", "updated_at"},
+	"submissions": {"id", "form_slug", "version", "status", "answers", "email", "total", "currency", "remote_ip", "payment_ref", "created_at", "updated_at",
+		"review", "reviewed_by", "reviewed_at", "review_note"},
 	"spent_grants":       {"nonce", "form_slug", "spent_at"},
 	"collections":        {"submission_id", "form_slug", "collected_at", "collected_by"},
 	"hidden_submissions": {"submission_id", "form_slug", "hidden_at", "hidden_by"},
@@ -187,6 +188,28 @@ CREATE TABLE IF NOT EXISTS submission_revisions (
 		return fmt.Errorf("creating the submission tables: %w", err)
 	}
 
+	// Where a submission stands with the office, on a form that holds its
+	// submissions for approval -- submissionbus.Review. Added after the first
+	// submissions were kept, and only here, for the reason depositdb adds its
+	// later columns only in one place: a fresh database and an upgraded one
+	// get them from the same lines. Empty and zero for "nobody has decided",
+	// and an empty review for "nobody was asked to", which is every row from
+	// before these existed.
+	//
+	// Columns rather than a table beside it, as hidden_submissions is,
+	// because the count of places held and the public list both filter on it
+	// in the same statement as the status.
+	for _, c := range [][2]string{
+		{"review", "TEXT NOT NULL DEFAULT ''"},
+		{"reviewed_by", "TEXT NOT NULL DEFAULT ''"},
+		{"reviewed_at", "INTEGER NOT NULL DEFAULT 0"},
+		{"review_note", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		if err := sqldb.AddColumn(ctx, db, "submissions", c[0], c[1]); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -234,13 +257,17 @@ func (s *Store) Accept(ctx context.Context, sub submissionbus.Submission, nonce 
 
 	const insert = `
 INSERT INTO submissions
-    (id, form_slug, version, status, answers, email, total, currency, remote_ip, payment_ref, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    (id, form_slug, version, status, answers, email, total, currency, remote_ip, payment_ref, created_at, updated_at,
+     review, reviewed_by, reviewed_at, review_note)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+	by, at := reviewedOf(sub)
 
 	_, err = tx.ExecContext(ctx, insert,
 		sub.ID.String(), sub.Form.String(), sub.Version, sub.Status.String(), doc,
 		sub.Email.String(), int64(sub.Answers.Total), sub.Answers.Currency,
-		sub.RemoteIP, sub.PaymentRef, msOf(sub.CreatedAt), msOf(sub.UpdatedAt))
+		sub.RemoteIP, sub.PaymentRef, msOf(sub.CreatedAt), msOf(sub.UpdatedAt),
+		sub.Review.String(), by, at, sub.ReviewNote)
 	if err != nil {
 		return false, fmt.Errorf("inserting the submission: %w", err)
 	}
@@ -300,15 +327,24 @@ func (s *Store) Change(ctx context.Context, before, after submissionbus.Submissi
 		return false, err
 	}
 
+	// The review too, because a change to answers already approved can send
+	// them back to waiting -- submissionbus.Edit.NeedsApproval -- and that
+	// has to land in the same statement as the answers it is about. It is
+	// also conditional on the review the caller read, so a decision made
+	// while the page was open is not quietly written over.
 	const update = `
 UPDATE submissions
-SET version = ?, answers = ?, email = ?, total = ?, currency = ?, remote_ip = ?, updated_at = ?
-WHERE id = ? AND form_slug = ? AND updated_at = ? AND ` + notHidden
+SET version = ?, answers = ?, email = ?, total = ?, currency = ?, remote_ip = ?, updated_at = ?,
+    review = ?, reviewed_by = ?, reviewed_at = ?, review_note = ?
+WHERE id = ? AND form_slug = ? AND updated_at = ? AND review = ? AND ` + notHidden
+
+	by, at := reviewedOf(after)
 
 	res, err := tx.ExecContext(ctx, update,
 		after.Version, now, after.Email.String(), int64(after.Answers.Total), after.Answers.Currency,
 		after.RemoteIP, msOf(after.UpdatedAt),
-		before.ID.String(), before.Form.String(), msOf(before.UpdatedAt))
+		after.Review.String(), by, at, after.ReviewNote,
+		before.ID.String(), before.Form.String(), msOf(before.UpdatedAt), before.Review.String())
 	if err != nil {
 		return false, fmt.Errorf("changing the submission: %w", err)
 	}
@@ -518,7 +554,7 @@ func (s *Store) ByID(ctx context.Context, id types.ID) (submissionbus.Submission
 const notHidden = `id NOT IN (SELECT submission_id FROM hidden_submissions)`
 
 // heldBy is the condition a submission meets to hold a place in a limited
-// option, written for a query that has joined the answers document and so has
+// option -- submissionbus.Submission.HoldsPlace, in SQL -- written for a query that has joined the answers document and so has
 // to name the submission's own columns: json_each has an id column of its own,
 // which would make notHidden's bare one ambiguous.
 //
@@ -532,8 +568,10 @@ func heldBy() (string, []any) {
 		args = append(args, st.String())
 	}
 
+	args = append(args, submissionbus.ReviewDeclined.String())
+
 	cond := `s.id NOT IN (SELECT submission_id FROM hidden_submissions) AND s.status IN (?` +
-		strings.Repeat(", ?", len(held)-1) + `)`
+		strings.Repeat(", ?", len(held)-1) + `) AND s.review != ?`
 
 	return cond, args
 }
@@ -672,17 +710,24 @@ func (s *Store) ByForm(ctx context.Context, form types.Slug) ([]submissionbus.Su
 // The statuses come from submissionbus.SettledStatuses rather than being
 // written into the SQL, so that what "settled" means is stated in one place,
 // beside Status.Settled, and a status added there cannot be forgotten here.
+// The reviews come from submissionbus.ListedReviews for the same reason: on
+// a form that asks for approval, only what was approved is shown.
 func (s *Store) Settled(ctx context.Context, form types.Slug, limit int) ([]submissionbus.Submission, error) {
 	settled := submissionbus.SettledStatuses()
+	listed := submissionbus.ListedReviews()
 
 	args := []any{form.String()}
 	for _, st := range settled {
 		args = append(args, st.String())
 	}
+	for _, r := range listed {
+		args = append(args, r.String())
+	}
 	args = append(args, limit)
 
 	q := selectColumns + ` WHERE form_slug = ? AND ` + notHidden + ` AND status IN (?` +
-		strings.Repeat(", ?", len(settled)-1) + `) ORDER BY created_at DESC, rowid DESC LIMIT ?`
+		strings.Repeat(", ?", len(settled)-1) + `) AND review IN (?` +
+		strings.Repeat(", ?", len(listed)-1) + `) ORDER BY created_at DESC, rowid DESC LIMIT ?`
 
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -858,7 +903,8 @@ func (s *Store) PruneNonces(ctx context.Context, before time.Time) error {
 }
 
 const selectColumns = `
-SELECT id, form_slug, version, status, answers, email, total, currency, remote_ip, payment_ref, created_at, updated_at
+SELECT id, form_slug, version, status, answers, email, total, currency, remote_ip, payment_ref, created_at, updated_at,
+       review, reviewed_by, reviewed_at, review_note
 FROM submissions`
 
 // scanner is what QueryRow and Rows have in common.
@@ -876,10 +922,13 @@ func scan(row scanner) (submissionbus.Submission, error) {
 		remoteIP, paymentRef          string
 		total                         int64
 		createdAt, updatedAt          int64
+		review, reviewedBy, note      string
+		reviewedAt                    int64
 	)
 
 	err := row.Scan(&id, &formSlug, &version, &status, &doc, &email,
-		&total, &currency, &remoteIP, &paymentRef, &createdAt, &updatedAt)
+		&total, &currency, &remoteIP, &paymentRef, &createdAt, &updatedAt,
+		&review, &reviewedBy, &reviewedAt, &note)
 	if err != nil {
 		return submissionbus.Submission{}, err
 	}
@@ -904,6 +953,11 @@ func scan(row scanner) (submissionbus.Submission, error) {
 		return submissionbus.Submission{}, err
 	}
 
+	rv, err := submissionbus.ParseReview(review)
+	if err != nil {
+		return submissionbus.Submission{}, fmt.Errorf("the review on a submission is unreadable: %w", err)
+	}
+
 	sub := submissionbus.Submission{
 		ID:         subID,
 		Form:       form,
@@ -914,6 +968,21 @@ func scan(row scanner) (submissionbus.Submission, error) {
 		PaymentRef: paymentRef,
 		CreatedAt:  timeOf(createdAt),
 		UpdatedAt:  timeOf(updatedAt),
+		Review:     rv,
+		ReviewNote: note,
+	}
+
+	// Zero until somebody has decided, and stored as nothing rather than as
+	// the start of 1970.
+	if reviewedAt != 0 {
+		sub.ReviewedAt = timeOf(reviewedAt)
+	}
+
+	if reviewedBy != "" {
+		sub.ReviewedBy, err = types.ParseID(reviewedBy)
+		if err != nil {
+			return submissionbus.Submission{}, fmt.Errorf("who decided a submission is unreadable: %w", err)
+		}
 	}
 
 	// A form need not ask for an address, so an empty one is not a failure.
@@ -1176,7 +1245,65 @@ func scanCollection(scan func(...any) error) (submissionbus.Collection, error) {
 	}, nil
 }
 
-func msOf(t time.Time) int64    { return t.UTC().UnixMilli() }
+func msOf(t time.Time) int64 { return t.UTC().UnixMilli() }
+
+// reviewedOf is who decided a submission and when, as stored: empty and zero
+// until somebody has.
+func reviewedOf(s submissionbus.Submission) (string, int64) {
+	if s.ReviewedAt.IsZero() {
+		return "", 0
+	}
+
+	return s.ReviewedBy.String(), msOf(s.ReviewedAt)
+}
+
+// Decide writes a decision about a submission, in one transaction with the
+// count of any place it takes back.
+//
+// Conditional on the review the caller read and on the row not being hidden,
+// so two people deciding the same submission from two tabs cannot both win:
+// the second is told submissionbus.ErrChangedMeanwhile and nothing is
+// written. The claim count, when there is one, comes first, so a place gone
+// in the meantime refuses the decision rather than overfilling the slot.
+func (s *Store) Decide(ctx context.Context, before, after submissionbus.Submission, claims []formbus.Claim) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning the transaction: %w", err)
+	}
+
+	defer tx.Rollback()
+
+	if err := claim(ctx, tx, before.Form, before.ID.String(), claims); err != nil {
+		return err
+	}
+
+	const update = `
+UPDATE submissions SET review = ?, reviewed_by = ?, reviewed_at = ?, review_note = ?
+WHERE id = ? AND form_slug = ? AND review = ? AND ` + notHidden
+
+	by, at := reviewedOf(after)
+
+	res, err := tx.ExecContext(ctx, update,
+		after.Review.String(), by, at, after.ReviewNote,
+		before.ID.String(), before.Form.String(), before.Review.String())
+	if err != nil {
+		return fmt.Errorf("deciding the submission: %w", err)
+	}
+
+	n, err := res.RowsAffected()
+	switch {
+	case err != nil:
+		return fmt.Errorf("deciding the submission: %w", err)
+	case n == 0:
+		return submissionbus.ErrChangedMeanwhile
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing the decision: %w", err)
+	}
+
+	return nil
+}
 func timeOf(ms int64) time.Time { return time.UnixMilli(ms).UTC() }
 
 // Hide records a hiding, or reports the one already there.

@@ -57,6 +57,7 @@ type definitionDoc struct {
 
 	PaymentRequired bool   `json:"payment_required,omitempty"`
 	PaymentNote     string `json:"payment_note,omitempty"`
+	NeedsApproval   bool   `json:"needs_approval,omitempty"`
 
 	DailyCap int `json:"daily_cap,omitempty"`
 
@@ -207,6 +208,7 @@ func formOf(d definitionDoc) (formbus.Form, []string) {
 		MaxTotal:        types.Money(d.MaxTotal),
 		PaymentRequired: d.PaymentRequired,
 		PaymentNote:     d.PaymentNote,
+		NeedsApproval:   d.NeedsApproval,
 		DailyCap:        d.DailyCap,
 		Confirmation:    d.Confirmation,
 		Notify:          slices.Clone(d.Notify),
@@ -332,6 +334,7 @@ func definitionOf(f formbus.Form) definitionDoc {
 		MaxTotal:        int64(f.MaxTotal),
 		PaymentRequired: f.PaymentRequired,
 		PaymentNote:     f.PaymentNote,
+		NeedsApproval:   f.NeedsApproval,
 		DailyCap:        f.DailyCap,
 		Confirmation:    f.Confirmation,
 		Notify:          slices.Clone(f.Notify),
@@ -468,6 +471,10 @@ type submissionDoc struct {
 	Status    string    `json:"status"`
 	Email     string    `json:"email,omitempty"`
 
+	// Review is "awaiting", "approved" or "declined" on a form that holds
+	// submissions for approval, and absent on every other.
+	Review string `json:"review,omitempty"`
+
 	// Answers has a key for every question the form asks now: a string, a
 	// list of strings for a question that takes several, or null for one not
 	// answered. The feed's rule, for the feed's reason.
@@ -524,6 +531,7 @@ func submissionOf(f formbus.Form, s submissionbus.Submission) submissionDoc {
 		CreatedAt: s.CreatedAt.UTC(),
 		UpdatedAt: s.UpdatedAt.UTC(),
 		Status:    s.Status.String(),
+		Review:    s.Review.String(),
 		Email:     s.Email.String(),
 		Answers:   answers,
 		Total:     int64(s.Answers.Total),

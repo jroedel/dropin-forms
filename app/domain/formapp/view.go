@@ -309,6 +309,7 @@ func settingsSummary(f formbus.Form) []settingRow {
 		when("Opens", f.OpensAt),
 		when("Closes", f.ClosesAt),
 		when("Answers can be changed until", f.ChangeableUntil),
+		approval(f.NeedsApproval),
 		set("When closed, it says", f.ClosedNote),
 		set("Confirmation", f.Confirmation),
 	}
@@ -393,6 +394,15 @@ func sortPhrase(f formbus.Form) string {
 	}
 
 	return strings.Join(steps, ", then ")
+}
+
+// approval is the summary row for whether answers wait to be approved.
+func approval(needs bool) settingRow {
+	if needs {
+		return settingRow{Label: "Answers", Value: "wait for approval"}
+	}
+
+	return settingRow{Label: "Answers", Value: "accepted as they arrive", Unset: true}
 }
 
 // detailOf is a field's own rules in one phrase, for the list.

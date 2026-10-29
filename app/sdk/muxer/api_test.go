@@ -669,3 +669,50 @@ func TestAListsOrderIsSetThroughTheAPI(t *testing.T) {
 		t.Errorf("problems = %v, want one about the direction", f.Problems)
 	}
 }
+
+// A time slot's limit and a form's approval are written and read back
+// through the API, and approval on a form that sells is a problem.
+func TestLimitsAndApprovalAreSetThroughTheAPI(t *testing.T) {
+	a := newAdmin(t, "")
+	boss := siteBoss(t, a, "site@schoenstatt.test")
+	key := keyFor(t, a, boss)
+
+	def := retreat()
+	delete(def, "items")
+	delete(def, "min_per_order")
+	def["needs_approval"] = true
+	def["fields"] = append(def["fields"].([]map[string]any), map[string]any{
+		"label": "Time slot", "kind": "radio", "required": true, "options": []map[string]any{
+			{"value": "a", "label": "Monday 9 am", "limit": 1}, {"value": "any", "label": "Whenever suits"},
+		},
+	})
+
+	w := call(t, a, http.MethodPost, "/api/v1/forms", key, def)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create = %d:\n%s", w.Code, short(w.Body.String()))
+	}
+	if f := formOf(t, w); len(f.Problems) != 0 {
+		t.Errorf("problems = %v, want none", f.Problems)
+	}
+
+	read := answer(t, call(t, a, http.MethodGet, "/api/v1/forms/advent-retreat-2026", key, nil))
+	got := read["definition"].(map[string]any)
+
+	if got["needs_approval"] != true {
+		t.Errorf("needs_approval read back as %v", got["needs_approval"])
+	}
+
+	opts, _ := json.Marshal(got["fields"].([]any)[3].(map[string]any)["options"])
+	if want := `[{"label":"Monday 9 am","limit":1,"value":"a"},{"label":"Whenever suits","value":"any"}]`; string(opts) != want {
+		t.Errorf("options = %s, want %s", opts, want)
+	}
+
+	sells := retreat()
+	sells["slug"] = "advent-retreat-2027"
+	sells["needs_approval"] = true
+
+	f := formOf(t, call(t, a, http.MethodPost, "/api/v1/forms", key, sells))
+	if !strings.Contains(strings.Join(f.Problems, "\n"), "waits for approval and it takes money") {
+		t.Errorf("problems = %v, want one about approval on a form that sells", f.Problems)
+	}
+}

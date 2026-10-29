@@ -302,6 +302,7 @@ func definitionSchema(creating bool) map[string]any {
 		"max_total":        integer("Largest total, in cents."),
 		"payment_required": boolean("Refuse a submission that comes to nothing. Needs payment_note."),
 		"payment_note":     str("What to tell somebody whose submission comes to nothing, when payment_required."),
+		"needs_approval":   boolean("Hold each submission until somebody who can read the results approves or declines it. A waiting one keeps its limited place; declining frees it. Not allowed on a form that sells anything."),
 		"daily_cap":        integer("An abuse control: most submissions in 24 hours. Leave it out unless asked."),
 		"confirmation":     str("Shown after somebody submits."),
 		"notify":           list(map[string]any{"type": "string"}, "Extra email addresses told about each submission."),

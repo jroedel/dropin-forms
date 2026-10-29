@@ -16,7 +16,8 @@
 //	POST /forms/{slug}/submissions/{id}/hide     Require, then RequireFormRole(admin)
 //	POST /forms/{slug}/submissions/{id}/unhide   the same
 //
-// admin, not results -- results cannot write -- and not door, which may mark
+// admin, not results -- results writes nothing but an approval, which
+// reviewapp explains -- and not door, which may mark
 // an order collected and nothing else. Taking a row out of the totals changes
 // the number somebody orders food against, which is the form's administrator's
 // decision.

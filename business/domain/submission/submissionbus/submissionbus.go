@@ -14,6 +14,11 @@
 // [Revision], so the record of what somebody said, and when, is all still
 // there. change.go has the rules.
 //
+// The other thing that moves is the [Review], on a form that holds its
+// submissions for approval: awaiting, then approved or declined by somebody
+// in the office. It is not a status and does not touch the money; review.go
+// says why it is a second axis rather than more statuses.
+//
 // # Accepting a submission is one transaction with the grant it arrived on
 //
 // [Business.Accept] writes the submission and spends the grant's nonce
@@ -150,7 +155,9 @@ func SettledStatuses() []Status {
 // its place. Otherwise two people could both be sent to pay for the last slot
 // and both payments would land, with nothing here able to refund either.
 // Holding it costs at most the checkout window: an order not paid by then is
-// abandoned, and an abandoned or failed order holds nothing.
+// abandoned, and an abandoned or failed order holds nothing. A declined one
+// holds nothing either -- see [Submission.HoldsPlace], which is the rule;
+// this is its half that is about money.
 func (s Status) HoldsPlace() bool { return s.Settled() || s == StatusPending }
 
 // PlaceHoldingStatuses is every status [Status.HoldsPlace] reports true for,
@@ -184,6 +191,15 @@ type Submission struct {
 	Version string
 
 	Status Status
+
+	// Review is where it stands with the office, on a form that asks for
+	// approval, and ReviewNone on every other. ReviewedBy and ReviewedAt are
+	// who last decided it and when, zero until somebody has; ReviewNote is
+	// what a decline said.
+	Review     Review
+	ReviewedBy types.ID
+	ReviewedAt time.Time
+	ReviewNote string
 
 	// Answers is what was filled in and what it came to, exactly as the
 	// validator derived it.
@@ -273,6 +289,10 @@ type New struct {
 	// cap, each one is counted inside the transaction that saves the
 	// submission: see [Storer.Accept].
 	Claims []formbus.Claim
+
+	// NeedsApproval is the form's own setting, copied in for the same reason:
+	// the submission is stored awaiting a decision.
+	NeedsApproval bool
 }
 
 // Storer is what this package needs from storage.
@@ -292,8 +312,14 @@ type Storer interface {
 	Accept(ctx context.Context, s Submission, nonce string, claims []formbus.Claim) (bool, error)
 
 	// Taken counts the places held in each of a form's options, by the
-	// submissions [Status.HoldsPlace] names, leaving out hidden ones.
+	// submissions [Submission.HoldsPlace] names, leaving out hidden ones.
 	Taken(ctx context.Context, form types.Slug) (formbus.Taken, error)
+
+	// Decide writes after's review over before's, in one transaction, on
+	// condition that the stored review is still before's and the row is not
+	// hidden -- ErrChangedMeanwhile otherwise. Claims are counted as Accept
+	// counts them, with the row itself left out.
+	Decide(ctx context.Context, before, after Submission, claims []formbus.Claim) error
 
 	ByID(ctx context.Context, id types.ID) (Submission, error)
 	ByForm(ctx context.Context, form types.Slug) ([]Submission, error)
@@ -470,6 +496,10 @@ func (b *Business) Accept(ctx context.Context, now time.Time, g formbus.Grant, n
 		UpdatedAt: now.UTC(),
 	}
 
+	if ns.NeedsApproval {
+		s.Review = ReviewAwaiting
+	}
+
 	s.Email, _ = ns.Answers.SubmitterEmail()
 
 	spent, err := b.store.Accept(ctx, s, g.Nonce, ns.Claims)
@@ -517,13 +547,19 @@ func (b *Business) ByID(ctx context.Context, id types.ID) (Submission, error) {
 // somebody who closed the payment page meant. Leaving them out in one place
 // means a page added next year cannot forget to. [Business.Unsettled] is the
 // way back to them, for the one reader who asks.
+//
+// A declined submission is left out for the same reason, and [Business.Declined]
+// is its way back. One awaiting approval is kept: it is a real request that
+// somebody has to act on, and the list is where they act on it.
 func (b *Business) ByForm(ctx context.Context, form types.Slug) ([]Submission, error) {
 	out, err := b.store.ByForm(ctx, form)
 	if err != nil {
 		return nil, fmt.Errorf("listing the submissions: %w", err)
 	}
 
-	return slices.DeleteFunc(out, func(s Submission) bool { return !s.Status.Settled() }), nil
+	return slices.DeleteFunc(out, func(s Submission) bool {
+		return !s.Status.Settled() || s.Review == ReviewDeclined
+	}), nil
 }
 
 // Unsettled lists a form's submissions that were started and not paid for,
@@ -584,6 +620,10 @@ func (b *Business) Paid(ctx context.Context, form types.Slug) ([]Submission, err
 // under a sign-up form would be telling the next person a place is taken that
 // is not. A free submission is settled on arrival, so on a form that sells
 // nothing this is simply every submission.
+//
+// On a form that asks for approval, only what was approved: one still
+// awaiting a decision is not yet somebody who is down for this, and one
+// declined is somebody who is not. See [Review.Listed].
 func (b *Business) Recent(ctx context.Context, form types.Slug, limit int) ([]Submission, error) {
 	if limit <= 0 {
 		return nil, nil

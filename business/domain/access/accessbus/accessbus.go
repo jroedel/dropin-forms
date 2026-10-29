@@ -59,8 +59,12 @@ import (
 type Role string
 
 const (
-	// RoleResults reads submissions and exports them, and changes nothing.
-	// This is the role for whoever is counting lunches.
+	// RoleResults reads submissions and exports them, and changes nothing --
+	// with one exception: on a form that holds submissions for approval, it
+	// approves and declines them. Whoever reads the sign-ups is whoever knows
+	// whether a time slot suits; app/domain/reviewapp says why that is not
+	// left to an administrator. This is the role for whoever is counting
+	// lunches.
 	RoleResults Role = "results"
 
 	// RoleDoor marks an order collected at the will-call table, and includes

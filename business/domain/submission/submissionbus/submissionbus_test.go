@@ -72,7 +72,7 @@ func (m *memStore) taken(form types.Slug, except types.ID) formbus.Taken {
 	out := formbus.Taken{}
 
 	for id, s := range m.subs {
-		if _, hidden := m.hidden[id]; hidden || id == except || s.Form != form || !s.Status.HoldsPlace() {
+		if _, hidden := m.hidden[id]; hidden || id == except || s.Form != form || !s.HoldsPlace() {
 			continue
 		}
 
@@ -98,6 +98,25 @@ func (m *memStore) claim(form types.Slug, except types.ID, claims []formbus.Clai
 			return submissionbus.OptionFull{Field: c.Field, Value: c.Value}
 		}
 	}
+
+	return nil
+}
+
+func (m *memStore) Decide(_ context.Context, before, after submissionbus.Submission, claims []formbus.Claim) error {
+	if m.fail != nil {
+		return m.fail
+	}
+
+	cur, ok := m.subs[before.ID]
+	if _, hidden := m.hidden[before.ID]; !ok || hidden || cur.Review != before.Review {
+		return submissionbus.ErrChangedMeanwhile
+	}
+
+	if err := m.claim(before.Form, before.ID, claims); err != nil {
+		return err
+	}
+
+	m.subs[after.ID] = after
 
 	return nil
 }

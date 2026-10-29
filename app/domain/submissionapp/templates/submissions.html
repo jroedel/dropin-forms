@@ -17,10 +17,25 @@
 <p class="notice">These {{len .Rows}} submission{{if ne (len .Rows) 1}}s are{{else}} is{{end}} hidden, and
 not counted in anything below. Open one to put it back.
 <a href="/forms/{{.FormID}}/submissions">Back to the list</a></p>
-{{else if .Hidden}}
+{{else if .ShowingDeclined}}
+<p class="notice">These {{len .Rows}} submission{{if ne (len .Rows) 1}}s were{{else}} was{{end}} declined, and
+not counted in anything below. Open one to approve it after all.
+<a href="/forms/{{.FormID}}/submissions">Back to the list</a></p>
+{{else}}
+{{if .Awaiting}}
+<p class="notice"><strong>{{.Awaiting}}</strong> submission{{if ne .Awaiting 1}}s are{{else}} is{{end}} waiting
+for somebody to approve or decline {{if ne .Awaiting 1}}them{{else}}it{{end}}. Open one to decide.</p>
+{{end}}
+{{if .Hidden}}
 <p class="help">{{.Hidden}} hidden submission{{if ne .Hidden 1}}s are{{else}} is{{end}} not
 shown or counted here. <a href="/forms/{{.FormID}}/submissions?hidden=1">Show
 {{if ne .Hidden 1}}them{{else}}it{{end}}</a></p>
+{{end}}
+{{if .Declined}}
+<p class="help">{{.Declined}} declined submission{{if ne .Declined 1}}s are{{else}} is{{end}} not
+shown or counted here. <a href="/forms/{{.FormID}}/submissions?declined=1">Show
+{{if ne .Declined 1}}them{{else}}it{{end}}</a></p>
+{{end}}
 {{end}}
 
 <div class="summary-cards">

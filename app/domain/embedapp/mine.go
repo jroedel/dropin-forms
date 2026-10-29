@@ -204,6 +204,10 @@ func (a app) change(w http.ResponseWriter, r *http.Request) {
 		Answers:  answers,
 		RemoteIP: a.remoteIP(r),
 		Claims:   f.Claims(answers),
+
+		// A change to approved answers goes back to waiting, on a form that
+		// still asks.
+		NeedsApproval: f.NeedsApproval,
 	})
 
 	if full, ok := errors.AsType[submissionbus.OptionFull](err); ok {

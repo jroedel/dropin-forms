@@ -12,9 +12,16 @@
 {{else if .Changed}}
 <h1>Your changes are saved</h1>
 <p>We have your answers as they now stand.{{if .Submission.Email.String}} A copy is on its way to you by email.{{end}}</p>
+{{if .Awaiting}}<p>They are not confirmed yet: somebody will look at them, and we will be in touch.</p>{{end}}
 {{else if .Owed}}
 <h1>Almost done</h1>
 <p>Your answers are saved. The last step is the payment.</p>
+{{else if .Awaiting}}
+{{/* The form's own confirmation waits for the approval email: it is
+     usually written as "see you there", and nobody has said that yet. */}}
+<h1>Thank you</h1>
+<p>We have your request. It is not confirmed yet: somebody will look at it,
+and we will {{if .Submission.Email.String}}email you{{else}}be in touch{{end}} as soon as they have.</p>
 {{else}}
 <h1>Thank you</h1>
 <p>{{if .Form.Confirmation}}{{.Form.Confirmation}}{{else}}This has been received.{{end}}</p>

@@ -58,6 +58,12 @@ type Edit struct {
 	// counterpart. The place the submission already holds is not counted
 	// against it, so keeping one's own time slot is never refused.
 	Claims []formbus.Claim
+
+	// NeedsApproval is the form's setting as it stands. A change to answers
+	// already approved, on a form that still asks, goes back to waiting:
+	// approving a sign-up for Monday at nine is not approving whatever it is
+	// changed to later.
+	NeedsApproval bool
 }
 
 // Mine reads the submission an answer link names, for showing it back to the
@@ -65,7 +71,8 @@ type Edit struct {
 //
 // It answers [ErrNotFound] for every reason the link should not work: no such
 // submission, one on a different form from the one in the address, one that
-// has been hidden, and one waiting on or holding a payment. The public surface
+// has been hidden, one waiting on or holding a payment, and one declined. The
+// public surface
 // says the same sentence for all of them, and a stranger probing with a link
 // they edited learns nothing from which it was.
 //
@@ -78,7 +85,9 @@ func (b *Business) Mine(ctx context.Context, form types.Slug, id types.ID) (Subm
 		return Submission{}, err
 	}
 
-	if s.Form != form || s.Status != StatusReceived {
+	// Declined is in the same sentence as everything else: the link stops
+	// working, and the email that said so is where the person was told why.
+	if s.Form != form || s.Status != StatusReceived || s.Review == ReviewDeclined {
 		return Submission{}, ErrNotFound
 	}
 
@@ -150,6 +159,12 @@ func (b *Business) Change(ctx context.Context, now time.Time, g formbus.Grant, e
 	after.RemoteIP = e.RemoteIP
 	after.UpdatedAt = now.UTC()
 
+	if e.NeedsApproval && before.Review == ReviewApproved {
+		after.Review = ReviewAwaiting
+		after.ReviewedBy = types.ID{}
+		after.ReviewedAt = time.Time{}
+	}
+
 	spent, err := b.store.Change(ctx, before, after, g.Nonce, e.Claims)
 	switch {
 	case err != nil:
@@ -176,17 +191,19 @@ func (b *Business) Revisions(ctx context.Context, s Submission) ([]Revision, err
 }
 
 // Yours lists the submissions on a form whose answers a person at this
-// address could change: not hidden, and not an order. For answering "send me
-// my link again", which is answered by mail to the address and never on the
-// page -- so that typing somebody else's address into it tells you nothing and
-// gets you nothing.
+// address could change: not hidden, not declined, and not an order. For
+// answering "send me my link again", which is answered by mail to the address
+// and never on the page -- so that typing somebody else's address into it
+// tells you nothing and gets you nothing.
 func (b *Business) Yours(ctx context.Context, form types.Slug, email types.Email) ([]Submission, error) {
 	subs, err := b.store.ByEmail(ctx, form, email)
 	if err != nil {
 		return nil, fmt.Errorf("reading the submissions from an address: %w", err)
 	}
 
-	return slices.DeleteFunc(subs, func(s Submission) bool { return s.Status != StatusReceived }), nil
+	return slices.DeleteFunc(subs, func(s Submission) bool {
+		return s.Status != StatusReceived || s.Review == ReviewDeclined
+	}), nil
 }
 
 // ChangeCounts is how many times each of a form's submissions has been

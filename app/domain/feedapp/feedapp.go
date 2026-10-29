@@ -301,6 +301,11 @@ type responseDoc struct {
 	Status string `json:"status"`
 	Email  string `json:"email"`
 
+	// Review is "awaiting" or "approved" on a form that holds submissions for
+	// approval, and absent on every other, so a sheet built before approval
+	// existed sees the rows it always saw. Declined ones are not in the feed.
+	Review string `json:"review,omitempty"`
+
 	// Answers has a key for every question the form asks now: a string, a
 	// list of strings for a question that takes several, or null for one
 	// not answered. Every key every time, so a script can write a column per
@@ -422,6 +427,7 @@ func feedOf(f formbus.Form, subs []submissionbus.Submission, counts map[types.ID
 			UpdatedAt: s.UpdatedAt.UTC(),
 			Changes:   counts[s.ID],
 			Status:    s.Status.String(),
+			Review:    s.Review.String(),
 			Email:     s.Email.String(),
 			Answers:   answers,
 		})

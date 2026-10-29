@@ -171,6 +171,13 @@ func (b *Business) forOfficeChange(f formbus.Form, sub submissionbus.Submission,
 
 	fmt.Fprintf(&body, "%s changed their answers to %q on %s.\n\n", who, f.Title, b.when(sub.UpdatedAt))
 
+	// A change to answers that had been approved sent them back to waiting
+	// -- submissionbus.Edit.NeedsApproval -- and the office is who has to
+	// look again, so it is said before anything else.
+	if sub.Review == submissionbus.ReviewAwaiting {
+		body.WriteString("They are waiting for approval.\n\n")
+	}
+
 	body.WriteString("What changed:\n\n")
 	for _, line := range diff {
 		body.WriteString(line)

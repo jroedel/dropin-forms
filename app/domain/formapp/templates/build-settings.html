@@ -62,6 +62,15 @@
     <input type="datetime-local" id="changeable_until" name="changeable_until" value="{{.ChangeableUntil}}">
   </div>
 
+  <p class="choice">
+    <input type="checkbox" id="needs_approval" name="needs_approval" value="yes"
+           {{if .NeedsApproval}}checked{{end}}>
+    <label for="needs_approval">Each answer waits for us to approve it</label>
+  </p>
+  <p class="help">Somebody who can see the answers approves or declines each
+  one, and the person is emailed either way. Until then it keeps any time slot
+  it chose; declining frees the slot. Not for a form that takes money.</p>
+
   <h2>Where it can be used</h2>
 
   <div class="field">

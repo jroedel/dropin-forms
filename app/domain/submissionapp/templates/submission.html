@@ -83,6 +83,42 @@ They were changed through the link in the emails sent to whoever answered.</p>
 </table>
 {{end}}
 
+{{if .Review}}
+<h2>Approval</h2>
+{{if .Taken}}
+<p class="notice">It was not approved: its time slot, or another place it
+chose, has been taken since it was declined. Nothing was changed.</p>
+{{end}}
+{{if eq .Review "awaiting"}}
+<p>Waiting for somebody to approve or decline it. Until then it keeps any time
+slot it chose, and it is not on the list beneath the form.{{with .ReviewedAt}}
+It was approved before, and the person has changed their answers since.{{end}}</p>
+{{else if eq .Review "approved"}}
+<p>Approved by {{.ReviewedBy}} on {{.ReviewedAt}}.</p>
+{{else}}
+<p>Declined by {{.ReviewedBy}} on {{.ReviewedAt}}.{{with .ReviewNote}} They were told:</p>
+<blockquote>{{.}}</blockquote>{{else}}</p>{{end}}
+{{end}}
+{{if .CanReview}}
+{{if ne .Review "approved"}}
+<form method="post" action="/forms/{{.FormID}}/submissions/{{.ID}}/approve">
+  <button type="submit">{{if eq .Review "declined"}}Approve it after all{{else}}Approve{{end}}</button>
+</form>
+{{end}}
+{{if ne .Review "declined"}}
+<form method="post" action="/forms/{{.FormID}}/submissions/{{.ID}}/decline">
+  <div class="field">
+    <label for="note">Anything to tell them? (optional)</label>
+    <p class="help">Sent with the email saying it was declined. Its time slot
+    is given back for somebody else to take.</p>
+    <textarea id="note" name="note" rows="3"></textarea>
+  </div>
+  <button type="submit" class="quiet">{{if eq .Review "approved"}}Cancel it{{else}}Decline{{end}}</button>
+</form>
+{{end}}
+{{end}}
+{{end}}
+
 {{if and .CanHide (not .Hidden)}}
 <h2>Hide it</h2>
 <p class="help">For a test, a duplicate, or anything else that should not be

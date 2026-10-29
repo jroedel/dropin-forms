@@ -95,6 +95,7 @@ import (
 	"github.com/jroedel/dropin-forms/app/domain/oauthapp"
 	"github.com/jroedel/dropin-forms/app/domain/paymentapp"
 	"github.com/jroedel/dropin-forms/app/domain/peopleapp"
+	"github.com/jroedel/dropin-forms/app/domain/reviewapp"
 	"github.com/jroedel/dropin-forms/app/domain/siteapp"
 	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
 	"github.com/jroedel/dropin-forms/app/domain/willcallapp"
@@ -167,6 +168,12 @@ type Config struct {
 	// being handed the wider value. Optional: without it the routes are not
 	// mounted and the page for one submission draws no button to them.
 	Hiding hideapp.Submissions
+
+	// Reviewing is what approves and declines a submission on a form that
+	// asks for approval: the same submissions again, with one write. Its own
+	// field for Hiding's reason. Optional: without it the routes are not
+	// mounted and the page for one submission draws no buttons to them.
+	Reviewing reviewapp.Submissions
 
 	// Feeds and FeedRows are the spreadsheet feed: the keys, and the
 	// submissions it reads -- the latter its own field for the reason Hiding
@@ -439,6 +446,10 @@ func Admin(cfg Config) (http.Handler, error) {
 	// The role is results and not admin. Reading the numbers is not editing
 	// the price, and whoever is counting lunches should not have to be able to
 	// change what a ticket costs.
+	//
+	// Results reads and changes nothing, with one exception: approving or
+	// declining a submission on a form that asks for approval, mounted below.
+	// reviewapp says why that decision belongs to whoever reads the sign-ups.
 	results := mid.RequireFormRole(cfg.Log, cfg.Access, accessbus.RoleResults)
 
 	sc := submissionapp.Config{
@@ -449,6 +460,7 @@ func Admin(cfg Config) (http.Handler, error) {
 		Accounts:    cfg.Users,
 		Render:      cfg.Render,
 		CanHide:     cfg.Hiding != nil,
+		CanReview:   cfg.Reviewing != nil,
 		CanFeed:     cfg.Feeds != nil && cfg.FeedRows != nil,
 		CanEdit:     cfg.Builder != nil,
 		CanWillCall: cfg.Table != nil,
@@ -517,6 +529,22 @@ func Admin(cfg Config) (http.Handler, error) {
 			Forms:       cfg.Forms,
 			Submissions: cfg.Hiding,
 		}, guard, admins)
+	}
+
+	// Approving and declining, behind results on that form -- the one write
+	// results makes. reviewapp says why it is results and not admin.
+	if cfg.Reviewing != nil {
+		rc := reviewapp.Config{
+			Log:         cfg.Log,
+			Forms:       cfg.Forms,
+			Submissions: cfg.Reviewing,
+		}
+
+		if cfg.Notify != nil {
+			rc.Notify = cfg.Notify
+		}
+
+		reviewapp.Routes(mux, rc, guard, results)
 	}
 
 	// The spreadsheet feed. Making and revoking a key is behind admin on the
