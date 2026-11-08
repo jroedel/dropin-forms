@@ -17,6 +17,10 @@
 <p class="notice">These {{len .Rows}} submission{{if ne (len .Rows) 1}}s are{{else}} is{{end}} hidden, and
 not counted in anything below. Open one to put it back.
 <a href="/forms/{{.FormID}}/submissions">Back to the list</a></p>
+{{else if .ShowingCancelled}}
+<p class="notice">These {{len .Rows}} registration{{if ne (len .Rows) 1}}s were{{else}} was{{end}} cancelled, and
+are not counted in anything below except what they kept.
+<a href="/forms/{{.FormID}}/submissions">Back to the list</a></p>
 {{else if .ShowingDeclined}}
 <p class="notice">These {{len .Rows}} submission{{if ne (len .Rows) 1}}s were{{else}} was{{end}} declined, and
 not counted in anything below. Open one to approve it after all.
@@ -30,6 +34,11 @@ for somebody to approve or decline {{if ne .Awaiting 1}}them{{else}}it{{end}}. O
 <p class="help">{{.Hidden}} hidden submission{{if ne .Hidden 1}}s are{{else}} is{{end}} not
 shown or counted here. <a href="/forms/{{.FormID}}/submissions?hidden=1">Show
 {{if ne .Hidden 1}}them{{else}}it{{end}}</a></p>
+{{end}}
+{{if .Cancelled}}
+<p class="help">{{.Cancelled}} cancelled registration{{if ne .Cancelled 1}}s are{{else}} is{{end}} not
+shown or counted here. <a href="/forms/{{.FormID}}/submissions?cancelled=1">Show
+{{if ne .Cancelled 1}}them{{else}}it{{end}}</a></p>
 {{end}}
 {{if .Declined}}
 <p class="help">{{.Declined}} declined submission{{if ne .Declined 1}}s are{{else}} is{{end}} not

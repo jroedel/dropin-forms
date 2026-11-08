@@ -413,3 +413,42 @@ func TestTheDeclineReasonIsRead(t *testing.T) {
 		t.Errorf("result = %q, want failed whatever the reason", none.Result)
 	}
 }
+
+// A refund arrives as the charge, carrying its payment intent and the running
+// total refunded -- not our metadata, which is on the intent.
+func TestARefundIsReadAsTheRunningTotalOnItsPayment(t *testing.T) {
+	g := gateway(t)
+
+	body := `{
+  "id": "evt_1RefundExample",
+  "object": "event",
+  "api_version": "2019-05-16",
+  "type": "charge.refunded",
+  "created": 1760000000,
+  "data": {
+    "object": {
+      "id": "ch_3RefundExample",
+      "object": "charge",
+      "amount": 17500,
+      "amount_refunded": 2500,
+      "refunded": false,
+      "currency": "usd",
+      "payment_intent": "pi_3PaidExample",
+      "metadata": {}
+    }
+  }
+}`
+
+	e, err := g.Verify([]byte(body), sign(t, body, time.Now()))
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+
+	if e.Result != paybus.ResultRefunded || e.Ref != "pi_3PaidExample" || e.Refunded != 2500 {
+		t.Errorf("read as %s on %q with %s refunded; want refunded on the intent with 25.00", e.Result, e.Ref, e.Refunded)
+	}
+
+	if !e.SubmissionID.Zero() {
+		t.Errorf("a charge's empty metadata named submission %s", e.SubmissionID)
+	}
+}

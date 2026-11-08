@@ -37,8 +37,19 @@ type gateway struct {
 	err     error
 
 	// orders records what it was asked to charge, which is what the balance
-	// assertions read.
-	orders []paybus.Order
+	// assertions read; refunds what it was asked to give back.
+	orders  []paybus.Order
+	refunds []paybus.RefundOrder
+}
+
+func (g *gateway) Refund(_ context.Context, o paybus.RefundOrder) (paybus.RefundDone, error) {
+	g.refunds = append(g.refunds, o)
+
+	if g.err != nil {
+		return paybus.RefundDone{}, g.err
+	}
+
+	return paybus.RefundDone{ID: "re_test_1", Amount: o.Amount}, nil
 }
 
 func (g *gateway) Checkout(_ context.Context, o paybus.Order) (paybus.Handoff, error) {
@@ -93,14 +104,27 @@ func (s *seen) Prune(context.Context, time.Time) error { return nil }
 // settler records what happened to a submission, and in what order relative to
 // the ledger above -- which is the thing one of these tests is about.
 type settler struct {
-	status map[types.ID]submissionbus.Status
-	refs   map[types.ID]string
-	calls  int
-	err    error
+	status   map[types.ID]submissionbus.Status
+	refs     map[types.ID]string
+	refunded map[string]types.Money
+	calls    int
+	err      error
 }
 
 func newSettler() *settler {
-	return &settler{status: map[types.ID]submissionbus.Status{}, refs: map[types.ID]string{}}
+	return &settler{status: map[types.ID]submissionbus.Status{}, refs: map[types.ID]string{}, refunded: map[string]types.Money{}}
+}
+
+func (s *settler) SyncRefunded(_ context.Context, _ time.Time, ref string, cumulative types.Money) error {
+	s.calls++
+
+	if s.err != nil {
+		return s.err
+	}
+
+	s.refunded[ref] = max(s.refunded[ref], cumulative)
+
+	return nil
 }
 
 func (s *settler) Settle(_ context.Context, _ time.Time, id types.ID, to submissionbus.Status, ref string) error {
@@ -778,5 +802,64 @@ func TestOrdinaryDeclinesAreQuiet(t *testing.T) {
 
 	if strings.Contains(lines.String(), "far more often than expected") {
 		t.Errorf("five declines set off the alarm:\n%s", lines.String())
+	}
+}
+
+// A refund is found by its payment rather than by metadata -- the charge does
+// not carry ours -- applied as a running total, and recorded once.
+func TestARefundNotificationIsAppliedByPaymentOnce(t *testing.T) {
+	g := &gateway{event: paybus.Event{
+		ID: "evt_r1", Kind: "charge.refunded", Result: paybus.ResultRefunded,
+		Ref: "pi_1", Refunded: 2500,
+	}}
+
+	ledger, subs := newSeen(), newSettler()
+	b := paybus.NewBusiness(quiet(), g, ledger, subs)
+
+	if _, err := b.Fulfil(t.Context(), time.Now(), []byte(`{}`), "sig"); err != nil {
+		t.Fatalf("Fulfil: %v", err)
+	}
+
+	if subs.refunded["pi_1"] != 2500 || !ledger.ids["evt_r1"] {
+		t.Errorf("after the refund: %s refunded, recorded %v", subs.refunded["pi_1"], ledger.ids["evt_r1"])
+	}
+
+	if _, err := b.Fulfil(t.Context(), time.Now(), []byte(`{}`), "sig"); !errors.Is(err, paybus.ErrSeen) {
+		t.Errorf("the same refund notification again: %v, want ErrSeen", err)
+	}
+
+	// One with no payment is acknowledged and changes nothing.
+	g.event = paybus.Event{ID: "evt_r2", Kind: "charge.refunded", Result: paybus.ResultRefunded, Refunded: 100}
+
+	e, err := b.Fulfil(t.Context(), time.Now(), []byte(`{}`), "sig")
+	if err != nil || e.Result != paybus.ResultIgnored {
+		t.Errorf("a refund naming no payment: %s, %v", e.Result, err)
+	}
+}
+
+func TestARefundIsRefusedBeforeStripeWhenItCannotBeMade(t *testing.T) {
+	g := &gateway{}
+	b := paybus.NewBusiness(quiet(), g, newSeen(), newSettler())
+
+	ok := paybus.RefundOrder{SubmissionID: types.NewID(), PaymentRef: "pi_1", Amount: 2500, Key: "refund:x:0:2500"}
+
+	for _, bad := range []paybus.RefundOrder{
+		{PaymentRef: ok.PaymentRef, Amount: ok.Amount, Key: ok.Key},
+		{SubmissionID: ok.SubmissionID, Amount: ok.Amount, Key: ok.Key},
+		{SubmissionID: ok.SubmissionID, PaymentRef: ok.PaymentRef, Key: ok.Key},
+		{SubmissionID: ok.SubmissionID, PaymentRef: ok.PaymentRef, Amount: ok.Amount},
+	} {
+		if _, err := b.Refund(t.Context(), bad); err == nil {
+			t.Errorf("Refund accepted %+v", bad)
+		}
+	}
+
+	if len(g.refunds) != 0 {
+		t.Fatalf("%d refunds reached Stripe that should not have", len(g.refunds))
+	}
+
+	done, err := b.Refund(t.Context(), ok)
+	if err != nil || done.ID != "re_test_1" || done.Amount != 2500 {
+		t.Errorf("Refund = %+v, %v", done, err)
 	}
 }

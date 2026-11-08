@@ -310,9 +310,10 @@ type Form struct {
 	// and the public list beneath the form shows only what was approved.
 	//
 	// Not on a form that takes money, which Check refuses: approval after
-	// payment would need a refund on every decline, and this service cannot
-	// make one. Paying only once approved is a different flow, and a later
-	// one.
+	// payment would need a refund on every decline. A refund can now be made
+	// from the submission's page, but declining does not make one, and a
+	// decline that quietly kept somebody's money is the worse failure. Making
+	// a decline refund, or paying only once approved, is a later change.
 	//
 	// Left out of the fingerprint, for ChangeableUntil's reason: it decides
 	// what happens to a submission after it is saved, not which answers are
@@ -594,9 +595,9 @@ func (f *Form) Check() error {
 		}
 	}
 	if f.NeedsApproval && f.Sells() {
-		// See NeedsApproval: a decline after a payment is a refund, and there
-		// is no refund here to make.
-		add("it waits for approval and it takes money; a declined order would need a refund, which this service cannot make")
+		// See NeedsApproval: a decline after a payment is a refund, and
+		// declining does not make one.
+		add("it waits for approval and it takes money; a declined order would need refunding by hand, so choose one or the other")
 	}
 	switch {
 	case len(f.Fields) == 0:

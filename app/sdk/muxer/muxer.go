@@ -95,6 +95,7 @@ import (
 	"github.com/jroedel/dropin-forms/app/domain/oauthapp"
 	"github.com/jroedel/dropin-forms/app/domain/paymentapp"
 	"github.com/jroedel/dropin-forms/app/domain/peopleapp"
+	"github.com/jroedel/dropin-forms/app/domain/refundapp"
 	"github.com/jroedel/dropin-forms/app/domain/reviewapp"
 	"github.com/jroedel/dropin-forms/app/domain/siteapp"
 	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
@@ -174,6 +175,13 @@ type Config struct {
 	// field for Hiding's reason. Optional: without it the routes are not
 	// mounted and the page for one submission draws no buttons to them.
 	Reviewing reviewapp.Submissions
+
+	// Refunding and Refunds give money back on a paid submission: the
+	// submissions, with the refund's one write, and the payment domain's one
+	// call that sends money out. Both, or the routes are not mounted and the
+	// page for one submission draws no refund form.
+	Refunding refundapp.Submissions
+	Refunds   refundapp.Payments
 
 	// Feeds and FeedRows are the spreadsheet feed: the keys, and the
 	// submissions it reads -- the latter its own field for the reason Hiding
@@ -461,6 +469,7 @@ func Admin(cfg Config) (http.Handler, error) {
 		Render:      cfg.Render,
 		CanHide:     cfg.Hiding != nil,
 		CanReview:   cfg.Reviewing != nil,
+		CanRefund:   cfg.Refunding != nil && cfg.Refunds != nil,
 		CanFeed:     cfg.Feeds != nil && cfg.FeedRows != nil,
 		CanEdit:     cfg.Builder != nil,
 		CanWillCall: cfg.Table != nil,
@@ -553,6 +562,23 @@ func Admin(cfg Config) (http.Handler, error) {
 		}
 
 		reviewapp.Routes(mux, rc, guard, results)
+	}
+
+	// Refunding, behind admin on that form: it sends the parish's money out.
+	// refundapp says why that is admin rather than results.
+	if cfg.Refunding != nil && cfg.Refunds != nil {
+		rf := refundapp.Config{
+			Log:         cfg.Log,
+			Forms:       cfg.Forms,
+			Submissions: cfg.Refunding,
+			Payments:    cfg.Refunds,
+		}
+
+		if cfg.Notify != nil {
+			rf.Notify = cfg.Notify
+		}
+
+		refundapp.Routes(mux, rf, guard, admins)
 	}
 
 	// The spreadsheet feed. Making and revoking a key is behind admin on the

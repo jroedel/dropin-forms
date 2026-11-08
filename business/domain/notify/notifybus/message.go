@@ -7,6 +7,7 @@ import (
 
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
+	"github.com/jroedel/dropin-forms/business/types"
 	"github.com/jroedel/dropin-forms/foundation/mail"
 )
 
@@ -247,6 +248,53 @@ func (b *Business) answerLink(f formbus.Form, sub submissionbus.Submission) stri
 	}
 
 	return b.cfg.EmbedBaseURL + "/f/" + f.ID.String() + "/mine?t=" + token
+}
+
+// forRefunded is the message to somebody whose money has gone back to them.
+//
+// It names the amount, says it goes to the card they paid with -- which is
+// the only place a refund can go, and the first question anybody asks -- and
+// how long that takes, which is the second. A cancellation says so plainly,
+// because "we refunded you" alone leaves open whether they are still
+// expected.
+func (b *Business) forRefunded(f formbus.Form, sub submissionbus.Submission, amount types.Money, note string) mail.Message {
+	var body strings.Builder
+
+	cancelled := sub.Status == submissionbus.StatusCancelled
+
+	if amount > 0 {
+		fmt.Fprintf(&body, "We have refunded %s to the card you paid with. It usually appears\n"+
+			"on your statement within five to ten working days.\n\n", formbus.Show(amount, f.Currency))
+	}
+
+	if cancelled {
+		body.WriteString("Your registration is cancelled.\n\n")
+	} else if amount > 0 {
+		body.WriteString("Your registration is unchanged.\n\n")
+	}
+
+	if n := strings.TrimSpace(note); n != "" {
+		body.WriteString(n)
+		body.WriteString("\n\n")
+	}
+
+	if answers := answered(sub); answers != "" {
+		body.WriteString("What you sent us:\n\n")
+		body.WriteString(answers)
+		body.WriteString("\n")
+	}
+
+	body.WriteString("If you have a question, reply to this message.\n")
+
+	subject := f.Title + ": your refund"
+	switch {
+	case cancelled && amount > 0:
+		subject = f.Title + ": refunded and cancelled"
+	case cancelled:
+		subject = f.Title + ": your registration is cancelled"
+	}
+
+	return mail.Message{Subject: subject, Text: body.String()}
 }
 
 // payLink is the address of the page for paying for an offered place, or

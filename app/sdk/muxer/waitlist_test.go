@@ -52,6 +52,7 @@ type quietHarness struct {
 	subs   *submissionbus.Business
 	sent   *mail.Recorder
 	pay    *counter
+	refund *refunder
 	cookie string
 }
 
@@ -93,6 +94,10 @@ func quietSurfaceFor(t *testing.T, f formbus.Form) quietHarness {
 
 	cfg.Reviewing = subs
 
+	refund := &refunder{}
+	cfg.Refunding = subs
+	cfg.Refunds = refund
+
 	sent := &mail.Recorder{}
 
 	notifier, err := notifybus.NewBusiness(notifybus.Config{
@@ -118,7 +123,7 @@ func quietSurfaceFor(t *testing.T, f formbus.Form) quietHarness {
 	who, cookie := o.reader(t, "secretary@schoenstatt.test")
 	o.grant(t, who, "quiet-day", accessbus.RoleResults)
 
-	return quietHarness{office: o, subs: subs, sent: sent, pay: pay, cookie: cookie}
+	return quietHarness{office: o, subs: subs, sent: sent, pay: pay, refund: refund, cookie: cookie}
 }
 
 // sign fills the form in from a freshly drawn page.
