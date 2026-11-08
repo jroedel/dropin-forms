@@ -348,6 +348,15 @@ func viewFields(f formbus.Form, values formbus.Values, problems formbus.Invalid,
 	return out
 }
 
+// feeShown is the registration fee as the page shows it, or empty for none.
+func feeShown(f formbus.Form) string {
+	if f.Fee <= 0 {
+		return ""
+	}
+
+	return formbus.Show(f.Fee, f.Currency)
+}
+
 // viewItems turns the things for sale into what the template renders.
 func viewItems(f formbus.Form, values formbus.Values, problems formbus.Invalid) []itemView {
 	out := make([]itemView, 0, len(f.Items))

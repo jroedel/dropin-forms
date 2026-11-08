@@ -42,6 +42,9 @@ type settingsView struct {
 	MinTotal    string
 	MaxTotal    string
 
+	Fee      string
+	FeeLabel string
+
 	PaymentRequired bool
 	PaymentNote     string
 
@@ -169,6 +172,7 @@ func settingsOf(s formbus.Stored) settingsView {
 		Currency:        strings.ToUpper(f.Currency),
 		PaymentRequired: f.PaymentRequired,
 		PaymentNote:     f.PaymentNote,
+		FeeLabel:        f.FeeLabel,
 		Confirmation:    f.Confirmation,
 		Notify:          strings.Join(f.Notify, "\n"),
 		Sells:           f.Sells(),
@@ -202,6 +206,9 @@ func settingsOf(s formbus.Stored) settingsView {
 	}
 	if f.MaxTotal > 0 {
 		v.MaxTotal = f.MaxTotal.String()
+	}
+	if f.Fee > 0 {
+		v.Fee = f.Fee.String()
 	}
 
 	return v
@@ -255,6 +262,8 @@ func (a app) saveSettings(w http.ResponseWriter, r *http.Request) {
 	said.MaxTotal = value(r, "max_total")
 	said.PaymentRequired = checked(r, "payment_required")
 	said.PaymentNote = value(r, "payment_note")
+	said.Fee = value(r, "fee")
+	said.FeeLabel = value(r, "fee_label")
 	said.Confirmation = value(r, "confirmation")
 	said.Notify = r.PostFormValue("notify")
 	said.DailyCap = value(r, "daily_cap")
@@ -276,6 +285,7 @@ func (a app) saveSettings(w http.ResponseWriter, r *http.Request) {
 	f.ReturnURL = said.ReturnURL
 	f.PaymentRequired = said.PaymentRequired
 	f.PaymentNote = said.PaymentNote
+	f.FeeLabel = said.FeeLabel
 	f.Confirmation = said.Confirmation
 	f.Notify = lines(said.Notify)
 	f.Listing.Heading = said.ListHeading
@@ -315,6 +325,9 @@ func (a app) saveSettings(w http.ResponseWriter, r *http.Request) {
 	fail(err)
 
 	f.MaxTotal, err = parseMoney("The largest total", said.MaxTotal)
+	fail(err)
+
+	f.Fee, err = parseMoney("The registration fee", said.Fee)
 	fail(err)
 
 	f.DailyCap, err = parseCount("The daily limit", said.DailyCap)

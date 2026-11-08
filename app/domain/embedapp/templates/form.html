@@ -116,8 +116,16 @@ until {{.Until}}.</p>
 {{if $g.Section}}</fieldset>{{end}}
 {{end}}
 
-{{if .Items}}
+{{if or .Fee .Items}}
 <div class="items">
+{{/* The fee leads, as it leads the order's lines: it is what this
+     submission costs by being made, and whatever is below it adds to it. */}}
+{{with .Fee}}
+<div class="item fee">
+<span class="item-label">{{$.FeeLabel}}</span>
+<span class="item-price">{{.}}</span>
+</div>
+{{end}}
 {{with .OrderNote}}<p class="help">{{.}}</p>{{end}}
 {{range $it := .Items}}
 <div class="item">
