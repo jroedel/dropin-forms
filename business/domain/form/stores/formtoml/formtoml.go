@@ -215,6 +215,11 @@ type form struct {
 	// any real day rather than near it.
 	DailyCap int `toml:"daily_cap"`
 
+	// Capacity is a stock level, and Waitlist what a full form does instead
+	// of closing -- see formbus.Form.Capacity.
+	Capacity int  `toml:"capacity"`
+	Waitlist bool `toml:"waitlist"`
+
 	Confirmation string   `toml:"confirmation"`
 	Notify       []string `toml:"notify"`
 
@@ -313,6 +318,8 @@ func (w form) toForm() (formbus.Form, error) {
 		PaymentNote:     w.PaymentNote,
 		NeedsApproval:   w.NeedsApproval,
 		DailyCap:        w.DailyCap,
+		Capacity:        w.Capacity,
+		Waitlist:        w.Waitlist,
 		Confirmation:    w.Confirmation,
 		Notify:          w.Notify,
 		ReturnURL:       w.ReturnURL,

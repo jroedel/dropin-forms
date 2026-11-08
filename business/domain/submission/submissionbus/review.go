@@ -137,7 +137,10 @@ func (b *Business) Decide(ctx context.Context, now time.Time, d Decision) (Submi
 		return Submission{}, Submission{}, ErrNotFound
 	}
 
-	if before.Review == ReviewNone || before.Review == d.To {
+	// Nor one on the waiting list. Approving it would say yes to somebody who
+	// has no place, and declining it would take them off a list with a
+	// message about a request nobody looked at. A place is offered first.
+	if before.Review == ReviewNone || before.Review == d.To || before.Status == StatusWaiting {
 		return before, before, ErrNotDecidable
 	}
 

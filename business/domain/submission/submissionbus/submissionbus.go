@@ -83,10 +83,23 @@ const (
 	// a timer, never by a webhook -- Stripe sends nothing when somebody closes
 	// a tab, and the deadline is one we chose, so the clock is the authority.
 	StatusAbandoned Status = "abandoned"
+
+	// StatusWaiting is on the waiting list of a form that was full when it
+	// arrived -- formbus.Form.Waitlist. It holds no place, is settled for
+	// nothing, and appears on no list but the office's own list of who is
+	// waiting. It leaves only forwards, when somebody offers it a place: see
+	// [Business.Offer].
+	//
+	// A status rather than a review, because it is the question every rule
+	// that reads a status asks -- does this hold a place, is it counted, is it
+	// on the public list -- and the answer to each is no. A form that waits
+	// for approval and has a waiting list keeps both: waiting here, and
+	// awaiting a decision once it has a place.
+	StatusWaiting Status = "waiting"
 )
 
 // statuses is every Status, in the order a submission moves through them.
-var statuses = []Status{StatusReceived, StatusPending, StatusPaid, StatusFailed, StatusAbandoned}
+var statuses = []Status{StatusWaiting, StatusReceived, StatusPending, StatusPaid, StatusFailed, StatusAbandoned}
 
 // The errors this package returns.
 var (
@@ -120,6 +133,15 @@ var (
 	// open on the same link. Nothing was written. The app layer shows the
 	// answers as they now stand and lets the person decide again.
 	ErrChangedMeanwhile = errors.New("those answers were changed somewhere else in the meantime")
+
+	// ErrFull is a submission refused because every one of the form's places
+	// is held -- formbus.Form.Capacity -- on a form with no waiting list. A
+	// race lost, like [OptionFull], and not a fault in the submission.
+	ErrFull = errors.New("that form has no places left")
+
+	// ErrNotOfferable is an offer of a place to a submission that is not on
+	// the waiting list: already in, or on a form without one.
+	ErrNotOfferable = errors.New("that submission is not waiting for a place")
 
 	// ErrUnchanged is a change that changed nothing. An outcome rather than a
 	// fault -- somebody pressed Save to be sure -- and nothing is written,
@@ -293,6 +315,11 @@ type New struct {
 	// NeedsApproval is the form's own setting, copied in for the same reason:
 	// the submission is stored awaiting a decision.
 	NeedsApproval bool
+
+	// Waitlist is the form's own setting too: when its places are all held,
+	// the submission is stored on the waiting list instead of being refused
+	// with [ErrFull].
+	Waitlist bool
 }
 
 // Storer is what this package needs from storage.
@@ -314,6 +341,13 @@ type Storer interface {
 	// Taken counts the places held in each of a form's options, by the
 	// submissions [Submission.HoldsPlace] names, leaving out hidden ones.
 	Taken(ctx context.Context, form types.Slug) (formbus.Taken, error)
+
+	// Promote writes after's status over before's, in one transaction with
+	// the count of the places it takes, on condition that the stored status is
+	// still before's and the row is not hidden -- ErrChangedMeanwhile
+	// otherwise. The claims are counted as Accept counts them, with the row
+	// itself left out.
+	Promote(ctx context.Context, before, after Submission, claims []formbus.Claim) error
 
 	// Decide writes after's review over before's, in one transaction, on
 	// condition that the stored review is still before's and the row is not
@@ -503,6 +537,24 @@ func (b *Business) Accept(ctx context.Context, now time.Time, g formbus.Grant, n
 	s.Email, _ = ns.Answers.SubmitterEmail()
 
 	spent, err := b.store.Accept(ctx, s, g.Nonce, ns.Claims)
+
+	// The form is full. With a waiting list the same submission goes on it
+	// instead, holding nothing and so claiming nothing -- not the form's
+	// place, and not the time slot it chose, which it is offered with a place
+	// or not at all. The first attempt wrote nothing and spent nothing, so the
+	// grant is still good for the second.
+	if errors.Is(err, ErrFull) && ns.Waitlist {
+		s.Status = StatusWaiting
+		spent, err = b.store.Accept(ctx, s, g.Nonce, nil)
+	}
+
+	if errors.Is(err, ErrFull) {
+		b.log.Info("a submission arrived at a form with no places left",
+			"form", s.Form.String())
+
+		return Submission{}, ErrFull
+	}
+
 	if full, ok := errors.AsType[OptionFull](err); ok {
 		b.log.Info("a submission chose an option with no places left",
 			"form", s.Form.String(), "field", full.Field, "option", full.Value)
@@ -550,7 +602,9 @@ func (b *Business) ByID(ctx context.Context, id types.ID) (Submission, error) {
 //
 // A declined submission is left out for the same reason, and [Business.Declined]
 // is its way back. One awaiting approval is kept: it is a real request that
-// somebody has to act on, and the list is where they act on it.
+// somebody has to act on, and the list is where they act on it. One on the
+// waiting list is left out -- it is nobody who is coming -- and
+// [Business.Waiting] is its way back.
 func (b *Business) ByForm(ctx context.Context, form types.Slug) ([]Submission, error) {
 	out, err := b.store.ByForm(ctx, form)
 	if err != nil {
@@ -575,7 +629,11 @@ func (b *Business) Unsettled(ctx context.Context, form types.Slug) ([]Submission
 		return nil, fmt.Errorf("listing the unpaid submissions: %w", err)
 	}
 
-	return slices.DeleteFunc(out, func(s Submission) bool { return s.Status.Settled() }), nil
+	// Not the waiting list, which is nobody who stopped at a payment page:
+	// it has its own list, and counting it here would call it unpaid.
+	return slices.DeleteFunc(out, func(s Submission) bool {
+		return s.Status.Settled() || s.Status == StatusWaiting
+	}), nil
 }
 
 // ByPaymentRef reads the submission a Stripe payment reference belongs to.

@@ -1,4 +1,4 @@
-{{define "title"}}{{if .Duplicate}}Already received{{else if .Unchanged}}Nothing changed{{else if .Changed}}Saved{{else}}Thank you{{end}}{{end}}
+{{define "title"}}{{if .Duplicate}}Already received{{else if .Unchanged}}Nothing changed{{else if .Changed}}Saved{{else if .Waiting}}On the waiting list{{else}}Thank you{{end}}{{end}}
 
 {{define "content"}}
 <div id="dropin-root" data-parent-origin="{{.ParentOrigin}}" class="outcome">
@@ -13,6 +13,14 @@
 <h1>Your changes are saved</h1>
 <p>We have your answers as they now stand.{{if .Submission.Email.String}} A copy is on its way to you by email.{{end}}</p>
 {{if .Awaiting}}<p>They are not confirmed yet: somebody will look at them, and we will be in touch.</p>{{end}}
+{{else if .Waiting}}
+{{/* Ahead of Awaiting: on a form that also asks for approval, somebody on
+     the waiting list is awaiting a decision as well, and the list is the
+     thing to tell them -- nobody decides anything until they have a place. */}}
+<h1>You are on the waiting list</h1>
+<p>Every place is taken just now{{with .Position}}, and you are number {{.}} on
+the waiting list{{end}}. If a place opens and it is offered to you, we will
+{{if .Submission.Email.String}}email you{{else}}be in touch{{end}}.</p>
 {{else if .Owed}}
 <h1>Almost done</h1>
 <p>Your answers are saved. The last step is the payment.</p>

@@ -586,7 +586,9 @@ const places = `
 FROM submissions s, json_each(s.answers, '$.fields') f, json_each(f.value, '$.values') v
 WHERE s.form_slug = ? AND `
 
-// Taken counts the places held in each option of a form, in one query.
+// Taken counts the places held in each option of a form, in one query, and
+// the places held in the form itself, in a second -- under the empty field and
+// value, which is where formbus.Taken keeps the whole form.
 //
 // Every answer is counted, not only the limited ones: this package does not
 // know which options have a limit, and a count nobody asks for costs nothing
@@ -594,6 +596,12 @@ WHERE s.form_slug = ? AND `
 // does.
 func (s *Store) Taken(ctx context.Context, form types.Slug) (formbus.Taken, error) {
 	cond, args := heldBy()
+
+	var whole int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM submissions s WHERE s.form_slug = ? AND `+cond,
+		append([]any{form.String()}, args...)...).Scan(&whole); err != nil {
+		return nil, fmt.Errorf("counting the places held in the form: %w", err)
+	}
 
 	q := `SELECT json_extract(f.value, '$.name'), v.value, COUNT(*)` + places + cond +
 		` GROUP BY 1, 2`
@@ -604,7 +612,7 @@ func (s *Store) Taken(ctx context.Context, form types.Slug) (formbus.Taken, erro
 	}
 	defer rows.Close()
 
-	out := formbus.Taken{}
+	out := formbus.Taken{"": {"": whole}}
 	for rows.Next() {
 		var (
 			field, value string
@@ -649,8 +657,26 @@ func claim(ctx context.Context, tx *sql.Tx, form types.Slug, except string, clai
 	q := `SELECT COUNT(*)` + places + cond +
 		` AND s.id != ? AND json_extract(f.value, '$.name') = ? AND v.value = ?`
 
+	// The form's own places, which are submissions rather than answers: one
+	// row, one place, whatever it chose.
+	whole := `SELECT COUNT(*) FROM submissions s WHERE s.form_slug = ? AND ` + cond + ` AND s.id != ?`
+
 	for _, c := range claims {
 		args := append([]any{form.String()}, held...)
+
+		if c.Field == "" {
+			var n int
+			if err := tx.QueryRowContext(ctx, whole, append(args, except)...).Scan(&n); err != nil {
+				return fmt.Errorf("counting the places held in the form: %w", err)
+			}
+
+			if n >= c.Limit {
+				return submissionbus.ErrFull
+			}
+
+			continue
+		}
+
 		args = append(args, except, c.Field, c.Value)
 
 		var n int
@@ -1255,6 +1281,51 @@ func reviewedOf(s submissionbus.Submission) (string, int64) {
 	}
 
 	return s.ReviewedBy.String(), msOf(s.ReviewedAt)
+}
+
+// Promote moves a submission off the waiting list, in one transaction with the
+// count of the places it takes.
+//
+// Conditional on the status the caller read and on the row not being hidden,
+// for Decide's reason: two people offering the same place from two tabs
+// cannot both win. The claims come first, so a place taken in the meantime
+// refuses the offer rather than overfilling the form.
+func (s *Store) Promote(ctx context.Context, before, after submissionbus.Submission, claims []formbus.Claim) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning the transaction: %w", err)
+	}
+
+	defer tx.Rollback()
+
+	if err := claim(ctx, tx, before.Form, before.ID.String(), claims); err != nil {
+		return err
+	}
+
+	const update = `
+UPDATE submissions SET status = ?, updated_at = ?
+WHERE id = ? AND form_slug = ? AND status = ? AND ` + notHidden
+
+	res, err := tx.ExecContext(ctx, update,
+		after.Status.String(), msOf(after.UpdatedAt),
+		before.ID.String(), before.Form.String(), before.Status.String())
+	if err != nil {
+		return fmt.Errorf("offering the place: %w", err)
+	}
+
+	n, err := res.RowsAffected()
+	switch {
+	case err != nil:
+		return fmt.Errorf("offering the place: %w", err)
+	case n == 0:
+		return submissionbus.ErrChangedMeanwhile
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing the offer: %w", err)
+	}
+
+	return nil
 }
 
 // Decide writes a decision about a submission, in one transaction with the

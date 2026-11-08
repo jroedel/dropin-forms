@@ -415,6 +415,27 @@ type Form struct {
 	// somebody's browser.
 	DailyCap int
 
+	// Capacity is how many submissions this form takes before it is full: the
+	// beds at a retreat, the seats at a supper. Zero, the usual answer, means
+	// no limit.
+	//
+	// Not DailyCap, which is an abuse control over a trailing day and says so.
+	// This is a stock level, counted the way a limited option is -- by the
+	// submissions that hold a place, inside the transaction that saves the
+	// next one, so two people cannot both take the last bed. See [Form.Claims].
+	//
+	// Not in the fingerprint, for the reason an option's limit is not: raising
+	// it so that one more person can come must not throw away every
+	// half-filled copy of the form.
+	Capacity int
+
+	// Waitlist is what a full form does instead of closing: it keeps taking
+	// submissions, each on a waiting list, and the office offers a place to
+	// whoever it chooses when one opens. Meaningless without a Capacity, and
+	// Check says so. Not in the fingerprint either: it changes what happens to
+	// a submission when the form is full, which is decided when it arrives.
+	Waitlist bool
+
 	// Retired are field names and item ids this form has used and removed,
 	// which no new field or item may be given -- see names.go for why. Not in
 	// the fingerprint: it changes nothing about what a submission means, only
@@ -558,6 +579,18 @@ func (f *Form) Check() error {
 	}
 	if f.DailyCap < 0 {
 		add("its daily cap is negative; leave it out for no cap")
+	}
+	if f.Capacity < 0 {
+		add("its number of places is negative; leave it out for no limit")
+	}
+	if f.Waitlist && f.Capacity == 0 {
+		add("it takes a waiting list but has no number of places, so it is never full")
+	}
+	if f.Waitlist && f.Sells() {
+		// Offering a place that has to be paid for needs a way to pay
+		// days later, with the place held meanwhile, and that is not built
+		// yet. Until it is, a paid form that fills simply closes.
+		add("it takes a waiting list and it takes money; a waiting list on a form that takes money is not ready yet")
 	}
 	if f.MinTotal < 0 {
 		add("its minimum total is negative")

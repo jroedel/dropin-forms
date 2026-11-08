@@ -209,16 +209,29 @@ func (b *Business) Paid(ctx context.Context, id types.ID) {
 	b.tell(ctx, id, true)
 }
 
+// Offered tells somebody on the waiting list that they have been given a
+// place. Only the person, for Decided's reason: the office is who offered it.
+func (b *Business) Offered(ctx context.Context, id types.ID) {
+	b.tellOnly(ctx, id, "an offered place", b.forOffered)
+}
+
 // Decided tells the person that somebody has approved or declined what they
 // sent. Only the person: the office is who decided, and the page they decided
 // on already says so.
 func (b *Business) Decided(ctx context.Context, id types.ID) {
+	b.tellOnly(ctx, id, "a decision", b.forDecided)
+}
+
+// tellOnly is a message to the person who sent a submission and to nobody
+// else, about what somebody in the office did to it. what names that, in the
+// log lines.
+func (b *Business) tellOnly(ctx context.Context, id types.ID, what string, build func(formbus.Form, submissionbus.Submission) mail.Message) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sendBudget)
 	defer cancel()
 
 	sub, err := b.cfg.Submissions.ByID(ctx, id)
 	if err != nil {
-		b.cfg.Log.Error("nobody could be told about a decision, because the submission could not be read",
+		b.cfg.Log.Error("nobody could be told about "+what+", because the submission could not be read",
 			"submission_id", id.String(), "error", err)
 
 		return
@@ -226,7 +239,7 @@ func (b *Business) Decided(ctx context.Context, id types.ID) {
 
 	f, err := b.cfg.Forms.ByID(sub.Form)
 	if err != nil {
-		b.cfg.Log.Error("nobody could be told about a decision, because its form could not be read",
+		b.cfg.Log.Error("nobody could be told about "+what+", because its form could not be read",
 			"submission_id", id.String(), "form", sub.Form.String(), "error", err)
 
 		return
@@ -234,15 +247,16 @@ func (b *Business) Decided(ctx context.Context, id types.ID) {
 
 	to := sub.Email.String()
 	if to == "" {
-		// A form that asks for approval and no address has nobody to tell.
-		// Worth a line, because the person is waiting to hear.
-		b.cfg.Log.Warn("a submission was decided and its form collected no address to tell",
+		// A form that asks for approval, or keeps a waiting list, and no
+		// address has nobody to tell. Worth a line, because the person is
+		// waiting to hear.
+		b.cfg.Log.Warn("there was "+what+" to tell somebody about and the form collected no address",
 			"submission_id", sub.ID.String(), "form", sub.Form.String())
 
 		return
 	}
 
-	b.send(ctx, to, b.forDecided(f, sub), "submitter", sub)
+	b.send(ctx, to, build(f, sub), "submitter", sub)
 }
 
 // tell is Received and Paid, because they differ in four sentences and not in

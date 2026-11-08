@@ -93,6 +93,7 @@ type Submissions interface {
 	Revisions(ctx context.Context, s submissionbus.Submission) ([]submissionbus.Revision, error)
 	Taken(ctx context.Context, form types.Slug) (formbus.Taken, error)
 	Declined(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error)
+	Waiting(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error)
 }
 
 // Grants answers which forms an account may reach, for the index page. The
@@ -506,6 +507,29 @@ type listView struct {
 	// collected total rather than in the line above: it is the next question
 	// about that number -- how much of it has reached the bank.
 	Deposits bool
+
+	// Capacity is the form's number of places and Held how many are held,
+	// for the line that says how full it is; zero Capacity draws no line.
+	// Held, not confirmed, for placeTally's reason.
+	Capacity int
+	Held     int
+
+	// Waiting is the waiting list, oldest first, each with the button that
+	// offers it a place when CanOffer -- this reader may, and there is a
+	// place to offer.
+	Waiting  []waitingRow
+	CanOffer bool
+}
+
+// waitingRow is one person on the waiting list.
+type waitingRow struct {
+	ID       string
+	Position int
+	When     string
+
+	// Who is the first answer, as the list's own first column would show it:
+	// enough to tell two rows apart without opening either.
+	Who string
 }
 
 type rowView struct {
@@ -679,6 +703,10 @@ func (a app) list(w http.ResponseWriter, r *http.Request) {
 	// of its own: only the form has to sell something.
 	view.Deposits = a.cfg.CanDeposits && f.Sells()
 
+	if f.Capacity > 0 {
+		a.waitingList(r, f, &view)
+	}
+
 	view.Feed = admin && a.cfg.CanFeed
 	view.Edit = admin && a.cfg.CanEdit
 	view.People = admin
@@ -710,6 +738,54 @@ func (a app) list(w http.ResponseWriter, r *http.Request) {
 	a.cfg.Render.Render(w, r, http.StatusOK, "submissions", view)
 }
 
+// waitingList fills in how full the form is and who is waiting. A failure to
+// read either costs that part of the page and not the page, for the reason
+// places does.
+func (a app) waitingList(r *http.Request, f formbus.Form, view *listView) {
+	view.Capacity = f.Capacity
+
+	taken, err := a.cfg.Submissions.Taken(r.Context(), f.ID)
+	if err != nil {
+		a.cfg.Log.Error("the places taken could not be counted",
+			"request_id", web.RequestIDFrom(r.Context()), "form", f.ID.String(), "error", err)
+	} else {
+		view.Held = taken.Held()
+	}
+
+	list, err := a.cfg.Submissions.Waiting(r.Context(), f.ID)
+	if err != nil {
+		a.cfg.Log.Error("the waiting list could not be read",
+			"request_id", web.RequestIDFrom(r.Context()), "form", f.ID.String(), "error", err)
+
+		return
+	}
+
+	// Results, which every reader of this page holds, and a place to give:
+	// the route says no to a full form anyway, and a button that can only be
+	// refused is a button not to draw.
+	view.CanOffer = a.cfg.CanReview && view.Held < f.Capacity
+
+	for i, s := range list {
+		view.Waiting = append(view.Waiting, waitingRow{
+			ID:       s.ID.String(),
+			Position: i + 1,
+			When:     s.CreatedAt.Local().Format("2 Jan 2006, 15:04"),
+			Who:      firstAnswer(f, s),
+		})
+	}
+}
+
+// firstAnswer is the first question's answer on a submission, or empty.
+func firstAnswer(f formbus.Form, s submissionbus.Submission) string {
+	for _, fld := range f.Questions() {
+		if ans, ok := s.Answers.Field(fld.Name); ok {
+			return strings.Join(ans.Values, ", ")
+		}
+	}
+
+	return ""
+}
+
 // statusWords is how a status reads on these pages.
 //
 // Not the stored word, for two of the three that are not settled. "pending"
@@ -725,6 +801,8 @@ func statusWords(s submissionbus.Status) string {
 		return "in checkout"
 	case submissionbus.StatusFailed:
 		return "card declined"
+	case submissionbus.StatusWaiting:
+		return "on the waiting list"
 	}
 
 	return s.String()
@@ -735,6 +813,12 @@ func statusWords(s submissionbus.Status) string {
 // with its payment. The two never both have something to say, because a form
 // that asks for approval sells nothing.
 func wordsFor(s submissionbus.Submission) string {
+	// The waiting list first: on a form that also asks for approval, nobody
+	// decides anything about somebody who has no place yet.
+	if s.Status == submissionbus.StatusWaiting {
+		return statusWords(s.Status)
+	}
+
 	switch s.Review {
 	case submissionbus.ReviewAwaiting:
 		return "awaiting approval"
@@ -788,6 +872,14 @@ type oneView struct {
 	// asks "what did he tell us in October".
 	Changed string
 	Earlier []revisionView
+
+	// Waiting is a submission on the waiting list, at Position on it, with
+	// the button that offers it a place when CanOffer. Full says an offer was
+	// just refused because there was no place to give.
+	Waiting  bool
+	Position int
+	CanOffer bool
+	Full     bool
 }
 
 // revisionView is one set of answers a submission held and no longer does.
@@ -854,7 +946,10 @@ func (a app) one(w http.ResponseWriter, r *http.Request) {
 	// An order nobody paid for is an administrator's alone, here as in the
 	// list -- and this is reachable without the list, from a link in an
 	// email sent before these were taken out of everybody else's view.
-	if !s.Status.Settled() && !a.administers(r, f.ID) {
+	//
+	// Somebody on the waiting list is not one of those. They owe nothing, and
+	// whoever reads the sign-ups is whoever offers them a place, from here.
+	if !s.Status.Settled() && s.Status != submissionbus.StatusWaiting && !a.administers(r, f.ID) {
 		a.notFound(w, r)
 
 		return
@@ -884,6 +979,7 @@ func (a app) one(w http.ResponseWriter, r *http.Request) {
 
 	a.hiding(r, s, &view)
 	a.review(r, s, &view)
+	a.waiting(r, f, s, &view)
 	a.history(r, f, s, &view)
 
 	a.cfg.Render.Render(w, r, http.StatusOK, "submission", view)
@@ -981,6 +1077,31 @@ func (a app) hiding(r *http.Request, s submissionbus.Submission, view *oneView) 
 
 		view.CanHide = allowed
 	}
+}
+
+// waiting fills in where a submission on the waiting list stands on it.
+func (a app) waiting(r *http.Request, f formbus.Form, s submissionbus.Submission, view *oneView) {
+	if s.Status != submissionbus.StatusWaiting {
+		return
+	}
+
+	view.Waiting = true
+	view.CanOffer = a.cfg.CanReview && !view.Hidden
+	view.Full = r.URL.Query().Get("full") != ""
+
+	// The approval buttons are not drawn for somebody with no place: there is
+	// nothing to approve them into, and the route refuses it anyway.
+	view.CanReview = false
+
+	list, err := a.cfg.Submissions.Waiting(r.Context(), f.ID)
+	if err != nil {
+		a.cfg.Log.Error("the waiting list could not be read",
+			"request_id", web.RequestIDFrom(r.Context()), "form", f.ID.String(), "error", err)
+
+		return
+	}
+
+	view.Position = submissionbus.Position(list, s.ID)
 }
 
 // review fills in where the submission stands with the office.

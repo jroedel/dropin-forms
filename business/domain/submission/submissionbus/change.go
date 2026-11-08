@@ -165,7 +165,17 @@ func (b *Business) Change(ctx context.Context, now time.Time, g formbus.Grant, e
 		after.ReviewedAt = time.Time{}
 	}
 
-	spent, err := b.store.Change(ctx, before, after, g.Nonce, e.Claims)
+	// Somebody on the waiting list may change their answers, and their new
+	// time slot is no more theirs than their old one was: they hold nothing
+	// yet. Counting their claims would refuse the change because the form is
+	// full, which is the reason they are waiting rather than a reason to stop
+	// them correcting a phone number.
+	claims := e.Claims
+	if !before.HoldsPlace() {
+		claims = nil
+	}
+
+	spent, err := b.store.Change(ctx, before, after, g.Nonce, claims)
 	switch {
 	case err != nil:
 		return Submission{}, Submission{}, err

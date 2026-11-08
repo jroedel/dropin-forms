@@ -30,6 +30,9 @@ type settingsView struct {
 	ChangeableUntil string
 	NeedsApproval   bool
 
+	Capacity string
+	Waitlist bool
+
 	Zone string
 
 	Origins   string
@@ -162,6 +165,7 @@ func settingsOf(s formbus.Stored) settingsView {
 		ClosesAt:        writeWhen(f.ClosesAt),
 		ChangeableUntil: writeWhen(f.ChangeableUntil),
 		NeedsApproval:   f.NeedsApproval,
+		Waitlist:        f.Waitlist,
 		ClosedNote:      f.ClosedNote,
 		Zone:            zoneName(time.Now()),
 		Origins:         writeOrigins(f.Origins),
@@ -194,6 +198,7 @@ func settingsOf(s formbus.Stored) settingsView {
 	v.MinPerOrder = blankZero(f.MinPerOrder)
 	v.MaxPerOrder = blankZero(f.MaxPerOrder)
 	v.DailyCap = blankZero(f.DailyCap)
+	v.Capacity = blankZero(f.Capacity)
 	v.ListLimit = blankZero(f.Listing.Limit)
 	v.ListOldest = f.Listing.OldestFirst
 
@@ -247,6 +252,8 @@ func (a app) saveSettings(w http.ResponseWriter, r *http.Request) {
 	said.ClosedNote = value(r, "closed_note")
 	said.ChangeableUntil = value(r, "changeable_until")
 	said.NeedsApproval = checked(r, "needs_approval")
+	said.Capacity = value(r, "capacity")
+	said.Waitlist = checked(r, "waitlist")
 	said.Origins = r.PostFormValue("origins")
 	said.ReturnURL = value(r, "return_url")
 	said.MinPerOrder = value(r, "min_per_order")
@@ -273,6 +280,7 @@ func (a app) saveSettings(w http.ResponseWriter, r *http.Request) {
 	f.Intro = said.Intro
 	f.ClosedNote = said.ClosedNote
 	f.NeedsApproval = said.NeedsApproval
+	f.Waitlist = said.Waitlist
 	f.ReturnURL = said.ReturnURL
 	f.PaymentRequired = said.PaymentRequired
 	f.PaymentNote = said.PaymentNote
@@ -318,6 +326,9 @@ func (a app) saveSettings(w http.ResponseWriter, r *http.Request) {
 	fail(err)
 
 	f.DailyCap, err = parseCount("The daily limit", said.DailyCap)
+	fail(err)
+
+	f.Capacity, err = parseCount("How many places", said.Capacity)
 	fail(err)
 
 	f.Listing.Limit, err = parseCount("How many earlier answers to show", said.ListLimit)

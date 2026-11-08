@@ -33,11 +33,17 @@ func (b *Business) forSubmitter(f formbus.Form, sub submissionbus.Submission, pa
 	var body strings.Builder
 
 	waiting := sub.Review == submissionbus.ReviewAwaiting
+	listed := sub.Status == submissionbus.StatusWaiting
 
 	greeting := "We have your form."
 	switch {
 	case paid:
 		greeting = "Thank you -- your payment has gone through and we have your order."
+	case listed:
+		// Ahead of an approval, which nobody will decide until there is a
+		// place to approve them into.
+		greeting = "Every place is taken just now, so you are on the waiting list. If a place\n" +
+			"opens and it is offered to you, we will write again."
 	case waiting:
 		greeting = "We have your request. It is not confirmed yet: somebody here will look at it,\n" +
 			"and we will write again as soon as they have."
@@ -46,7 +52,7 @@ func (b *Business) forSubmitter(f formbus.Form, sub submissionbus.Submission, pa
 	body.WriteString(greeting)
 	body.WriteString("\n\n")
 
-	if note := strings.TrimSpace(f.Confirmation); note != "" && !waiting {
+	if note := strings.TrimSpace(f.Confirmation); note != "" && !waiting && !listed {
 		body.WriteString(note)
 		body.WriteString("\n\n")
 	}
@@ -74,11 +80,44 @@ func (b *Business) forSubmitter(f formbus.Form, sub submissionbus.Submission, pa
 	switch {
 	case paid:
 		subject = f.Title + ": your payment is confirmed"
+	case listed:
+		subject = f.Title + ": you are on the waiting list"
 	case waiting:
 		subject = f.Title + ": we have your request"
 	}
 
 	return mail.Message{Subject: subject, Text: body.String()}
+}
+
+// forOffered is the message to somebody on the waiting list who has been
+// given a place.
+//
+// The receipt they would have had on a form with room: the form's own
+// confirmation, their answers and the way back -- unless the form also waits
+// for approval, when the confirmation is held back for the message that says
+// so, as forSubmitter holds it back.
+func (b *Business) forOffered(f formbus.Form, sub submissionbus.Submission) mail.Message {
+	var body strings.Builder
+
+	body.WriteString("A place has opened, and it is yours.\n\n")
+
+	if sub.Review == submissionbus.ReviewAwaiting {
+		body.WriteString("Your request is not confirmed yet: somebody here will look at it, and we\n" +
+			"will write again as soon as they have.\n\n")
+	} else if note := strings.TrimSpace(f.Confirmation); note != "" {
+		body.WriteString(note)
+		body.WriteString("\n\n")
+	}
+
+	if answers := answered(sub); answers != "" {
+		body.WriteString("What you sent us:\n\n")
+		body.WriteString(answers)
+		body.WriteString("\n")
+	}
+
+	body.WriteString(b.wayBack(f, sub))
+
+	return mail.Message{Subject: f.Title + ": a place for you", Text: body.String()}
 }
 
 // forDecided is the message to the person once somebody has approved or
@@ -205,10 +244,14 @@ func (b *Business) forOffice(f formbus.Form, sub submissionbus.Submission, paid 
 	}
 
 	waiting := sub.Review == submissionbus.ReviewAwaiting
+	listed := sub.Status == submissionbus.StatusWaiting
 
 	if link := b.link(sub); link != "" {
 		lead := "Read it here, with everything else that has come in:\n"
-		if waiting {
+		switch {
+		case listed:
+			lead = "The form was full, so it is on the waiting list. Offer it a place when one opens, here:\n"
+		case waiting:
 			lead = "It is waiting for somebody to approve or decline it, here:\n"
 		}
 
@@ -224,6 +267,8 @@ func (b *Business) forOffice(f formbus.Form, sub submissionbus.Submission, paid 
 	switch {
 	case paid:
 		subject = fmt.Sprintf("Payment received, %s: %s", formbus.Show(sub.Answers.Total, f.Currency), f.Title)
+	case listed:
+		subject = "Joined the waiting list: " + f.Title
 	case waiting:
 		subject = "Awaiting your approval: " + f.Title
 	}

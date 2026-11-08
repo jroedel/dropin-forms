@@ -14,6 +14,13 @@ until {{.Until}}.</p>
 {{with .Form.Intro}}<p class="intro">{{.}}</p>{{end}}
 {{end}}
 
+{{if and .WaitingList (not .Mine)}}
+{{/* Before the fields, because it changes what filling them in is for. */}}
+<p class="waiting">Every place is taken just now. Fill this in to join
+the waiting list: if a place opens and it is offered to you, we will email
+you.</p>
+{{end}}
+
 {{/* The summary is first in the document, so that somebody reaching this page
      with a screen reader after a refusal hears what is wrong before the
      fields rather than after them. */}}
@@ -142,7 +149,7 @@ until {{.Until}}.</p>
 <button class="go" type="submit" data-busy="Saving…">Save changes</button>
 {{else}}
 <button class="go" type="submit"
-  data-busy="{{if .Form.Sells}}One moment…{{else}}Sending…{{end}}">{{if .Form.Sells}}Continue{{else}}Send{{end}}</button>
+  data-busy="{{if .Form.Sells}}One moment…{{else}}Sending…{{end}}">{{if .WaitingList}}Join the waiting list{{else if .Form.Sells}}Continue{{else}}Send{{end}}</button>
 {{end}}
 {{with .Form.PaymentNote}}<p class="note">{{.}}</p>{{end}}
 </form>

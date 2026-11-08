@@ -1,5 +1,6 @@
 // Package reviewapp approves and declines submissions, on a form that holds
-// every submission until somebody does -- formbus.Form.NeedsApproval.
+// every submission until somebody does -- formbus.Form.NeedsApproval -- and
+// offers a place to somebody on a full form's waiting list.
 //
 // # Why it is not a page of submissionapp
 //
@@ -11,6 +12,12 @@
 //
 //	POST /forms/{slug}/submissions/{id}/approve   Require, then RequireFormRole(results)
 //	POST /forms/{slug}/submissions/{id}/decline   the same
+//	POST /forms/{slug}/submissions/{id}/offer     the same
+//
+// Offering a place is here, and behind results, because it is the same kind
+// of decision as approving: whoever reads the sign-ups is whoever knows that
+// the couple at number three must come together, or that a bed is being kept
+// for a visiting priest.
 //
 // results, and that is a decision rather than an oversight. Everywhere else
 // results reads and changes nothing; approving is the one thing it decides,
@@ -47,11 +54,13 @@ type Forms interface {
 type Submissions interface {
 	ByID(ctx context.Context, id types.ID) (submissionbus.Submission, error)
 	Decide(ctx context.Context, now time.Time, d submissionbus.Decision) (submissionbus.Submission, submissionbus.Submission, error)
+	Offer(ctx context.Context, now time.Time, o submissionbus.Offer) (submissionbus.Submission, submissionbus.Submission, error)
 }
 
-// Notify tells the person what was decided.
+// Notify tells the person what was decided, or that they have a place.
 type Notify interface {
 	Decided(ctx context.Context, id types.ID)
+	Offered(ctx context.Context, id types.ID)
 }
 
 // Config is what this app needs. Notify is optional: an installation that
@@ -78,6 +87,7 @@ func Routes(mux *http.ServeMux, cfg Config, guard, results func(http.Handler) ht
 
 	mux.Handle("POST "+base+"/approve", guard(results(a.decide(submissionbus.ReviewApproved))))
 	mux.Handle("POST "+base+"/decline", guard(results(a.decide(submissionbus.ReviewDeclined))))
+	mux.Handle("POST "+base+"/offer", guard(results(http.HandlerFunc(a.offer))))
 }
 
 func (a app) now() time.Time {
@@ -147,6 +157,7 @@ func (a app) decide(to submissionbus.Review) http.Handler {
 		})
 
 		_, full := errors.AsType[submissionbus.OptionFull](err)
+		full = full || errors.Is(err, submissionbus.ErrFull)
 
 		switch {
 		case err == nil:
@@ -189,6 +200,115 @@ func (a app) decide(to submissionbus.Review) http.Handler {
 
 		http.Redirect(w, r, back, http.StatusSeeOther)
 	})
+}
+
+// offer gives a place to a submission on the waiting list.
+//
+// Back to the submission's page, like a decision, and for the same reason:
+// the page says where it now stands, and that sentence is the confirmation.
+// When the place has gone -- somebody else was offered it a moment ago, or
+// the time slot this person chose is full -- the page says that instead.
+func (a app) offer(w http.ResponseWriter, r *http.Request) {
+	f, sub, ok := a.submission(w, r)
+	if !ok {
+		return
+	}
+
+	me, ok := mid.UserFrom(r.Context())
+	if !ok {
+		a.oops(w, r, "offering a place was reached with no account", nil)
+
+		return
+	}
+
+	back := "/forms/" + f.ID.String() + "/submissions/" + sub.ID.String()
+
+	_, after, err := a.cfg.Submissions.Offer(r.Context(), a.now(), submissionbus.Offer{
+		ID:   sub.ID,
+		Form: f.ID,
+		By:   me.ID,
+
+		// Against the definition as it stands now: the form's own place and
+		// any slot the answers chose, none of which a waiting row held.
+		Claims: f.Claims(sub.Answers),
+	})
+
+	_, slot := errors.AsType[submissionbus.OptionFull](err)
+
+	switch {
+	case err == nil:
+
+	case slot, errors.Is(err, submissionbus.ErrFull):
+		http.Redirect(w, r, back+"?full=1", http.StatusSeeOther)
+
+		return
+
+	case errors.Is(err, submissionbus.ErrNotOfferable), errors.Is(err, submissionbus.ErrChangedMeanwhile):
+		// Already in, or offered a place by somebody else a moment ago. The
+		// page shows where it stands, and nobody is told twice.
+		http.Redirect(w, r, back, http.StatusSeeOther)
+
+		return
+
+	case errors.Is(err, submissionbus.ErrNotFound):
+		a.notFound(w)
+
+		return
+
+	default:
+		a.oops(w, r, "a place could not be offered", err)
+
+		return
+	}
+
+	a.cfg.Log.Info("a place was offered",
+		"request_id", web.RequestIDFrom(r.Context()),
+		"form", f.ID.String(), "submission_id", after.ID.String())
+
+	if a.cfg.Notify != nil {
+		a.cfg.Notify.Offered(r.Context(), after.ID)
+	}
+
+	http.Redirect(w, r, back, http.StatusSeeOther)
+}
+
+// submission resolves the form and the submission in the path, answering the
+// request itself when either is not there or they do not belong together.
+func (a app) submission(w http.ResponseWriter, r *http.Request) (formbus.Form, submissionbus.Submission, bool) {
+	f, ok := a.form(w, r)
+	if !ok {
+		return formbus.Form{}, submissionbus.Submission{}, false
+	}
+
+	id, err := types.ParseID(r.PathValue("id"))
+	if err != nil {
+		a.notFound(w)
+
+		return formbus.Form{}, submissionbus.Submission{}, false
+	}
+
+	sub, err := a.cfg.Submissions.ByID(r.Context(), id)
+
+	switch {
+	case errors.Is(err, submissionbus.ErrNotFound):
+		a.notFound(w)
+
+		return formbus.Form{}, submissionbus.Submission{}, false
+	case err != nil:
+		a.oops(w, r, "the submission could not be read", err)
+
+		return formbus.Form{}, submissionbus.Submission{}, false
+	}
+
+	// The gate authorised the account against the slug in the path; the id
+	// is a separate wildcard nothing has looked at.
+	if sub.Form != f.ID {
+		a.notFound(w)
+
+		return formbus.Form{}, submissionbus.Submission{}, false
+	}
+
+	return f, sub, true
 }
 
 func (a app) form(w http.ResponseWriter, r *http.Request) (formbus.Form, bool) {

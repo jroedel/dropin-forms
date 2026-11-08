@@ -59,6 +59,35 @@ charges nothing.</caption>
 </table>
 {{end}}
 
+{{if .Capacity}}
+<p class="money"><strong>{{.Held}}</strong> of {{.Capacity}} places held{{if .Waiting}},
+<strong>{{len .Waiting}}</strong> on the waiting list{{end}}. An order still in
+checkout holds its place until it is paid or abandoned.</p>
+{{end}}
+
+{{if .Waiting}}
+{{/* Oldest first, because that is the usual order to offer places in -- but
+     a button on every row, because who gets one is the office's choice. */}}
+<table class="listing">
+<caption>Waiting list</caption>
+<thead>
+<tr><th scope="col">No.</th><th scope="col">Who</th><th scope="col">Joined</th><th scope="col"><span class="visually-hidden">Offer</span></th></tr>
+</thead>
+<tbody>
+{{range .Waiting}}
+<tr>
+<td class="figure">{{.Position}}</td>
+<th scope="row"><a href="/forms/{{$.FormID}}/submissions/{{.ID}}">{{if .Who}}{{.Who}}{{else}}Submission {{.Position}}{{end}}</a></th>
+<td class="when">{{.When}}</td>
+<td>{{if $.CanOffer}}<form method="post" action="/forms/{{$.FormID}}/submissions/{{.ID}}/offer" class="inline">
+  <button type="submit" class="quiet">Offer a place</button>
+</form>{{else}}<span class="absent">&mdash;</span>{{end}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{end}}
+
 {{if .Places}}
 <table class="listing tallies">
 <caption>Places held. An order still in checkout holds its place until it is
