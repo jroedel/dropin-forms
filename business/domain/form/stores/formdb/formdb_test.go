@@ -80,6 +80,8 @@ func full(t *testing.T) formbus.Form {
 		MaxPerOrder: 10,
 		MinTotal:    types.Money(1000),
 		MaxTotal:    types.Money(50000),
+		Fee:         types.Money(2500),
+		FeeLabel:    "Supper",
 
 		PaymentRequired: true,
 		PaymentNote:     "Choose a ticket, or enter a donation.",

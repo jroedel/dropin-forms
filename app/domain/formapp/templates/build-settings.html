@@ -173,12 +173,34 @@
   <h2>Money</h2>
 
   {{if .Sells}}
-  <p class="help">This form sells something, so these apply. Prices themselves
-  are set on each thing for sale, never here.</p>
+  <p class="help">This form takes money, so these apply. The price of each
+  thing for sale is set on that thing; the registration fee is here.</p>
   {{else}}
-  <p class="help">This form sells nothing, so most of this does nothing until
+  <p class="help">This form takes no money, so most of this does nothing until
   it does. The currency is {{.Currency}}.</p>
   {{end}}
+
+  {{/* First, because for a registration it is the price: one submission is
+       one person, and this is what each costs. Things for sale with a
+       quantity box are for what somebody buys some number of -- lunch
+       tickets, shirts -- and a donation question adds to either. */}}
+  <div class="field">
+    <label for="fee">Registration fee</label>
+    <p class="help">Like <code>150.00</code>. What every submission costs:
+    one submission is one registration, and there is no &ldquo;how many&rdquo;
+    box. A donation question, or things for sale, add to it. Empty means no
+    fee.</p>
+    <input type="text" id="fee" name="fee" value="{{.Fee}}"
+           autocomplete="off" inputmode="decimal" maxlength="12">
+  </div>
+
+  <div class="field">
+    <label for="fee_label">What it is called</label>
+    <p class="help">On the form, the confirmation, the emails and the card
+    receipt. Empty means &ldquo;Registration&rdquo;.</p>
+    <input type="text" id="fee_label" name="fee_label" value="{{.FeeLabel}}"
+           autocomplete="off" maxlength="100">
+  </div>
 
   <div class="field">
     <label for="return_url">Where a buyer lands after paying</label>

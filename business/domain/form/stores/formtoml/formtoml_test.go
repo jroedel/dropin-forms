@@ -613,3 +613,23 @@ label = "Whenever suits"
 		t.Error("needs_approval was read as false")
 	}
 }
+
+// A registration fee is written like a price and reaches the domain type with
+// its label, and a fee that is not a price is refused at load.
+func TestARegistrationFeeIsRead(t *testing.T) {
+	store, err := formtoml.Load(fstest.MapFS{"alpha.toml": {Data: []byte(minimal("alpha",
+		`fee = "150.00"`, `fee_label = "Retreat registration"`))}})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	f := store.All()[0]
+
+	if f.Fee != types.Money(15000) || f.FeeLabel != "Retreat registration" {
+		t.Errorf("fee = %s %q, want 150.00 \"Retreat registration\"", f.Fee, f.FeeLabel)
+	}
+
+	if _, err := formtoml.Load(fstest.MapFS{"alpha.toml": {Data: []byte(minimal("alpha", `fee = "a lot"`))}}); err == nil {
+		t.Error("a fee that is not a price was loaded")
+	}
+}

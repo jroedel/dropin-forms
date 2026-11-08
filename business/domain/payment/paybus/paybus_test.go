@@ -245,6 +245,46 @@ func TestTheLinesSentToStripeAddUpToTheDerivedTotal(t *testing.T) {
 	}
 }
 
+// A registration fee is charged on its own line, ahead of a donation, and the
+// two still add up to the total -- the fee reaches Stripe through the order's
+// lines rather than through a path of its own.
+func TestARegistrationFeeReachesStripeAsALineOfItsOwn(t *testing.T) {
+	f := theForm(t)
+	f.Items = nil
+	f.MaxPerOrder = 0
+	f.Fee = 15000
+	f.FeeLabel = "Retreat registration"
+	f.Stamp()
+
+	if err := f.Check(); err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+
+	sub := submissionOf(t, f, formbus.Values{
+		"name":     {"Maria O'Neill"},
+		"email":    {"maria@example.org"},
+		"donation": {"10.00"},
+	})
+
+	o := paybus.OrderFor(f, sub)
+
+	if len(o.Lines) != 2 {
+		t.Fatalf("got %d lines, want the fee and the donation: %+v", len(o.Lines), o.Lines)
+	}
+
+	if l := o.Lines[0]; l.Label != "Retreat registration" || l.Qty != 1 || l.Unit != 15000 {
+		t.Errorf("the fee line is %+v", l)
+	}
+
+	if l := o.Lines[1]; l.Unit != 1000 || l.Qty != 1 {
+		t.Errorf("the donation line is %+v", l)
+	}
+
+	if sum := o.Lines[0].Amount() + o.Lines[1].Amount(); sum != sub.Answers.Total || sum != 16000 {
+		t.Errorf("the lines come to %s and the total is %s, want both $160.00", sum, sub.Answers.Total)
+	}
+}
+
 // And Start actually refuses when they disagree, which is what makes the
 // property above load-bearing rather than incidental.
 // The payment page closes on our deadline rather than Stripe's day-long
