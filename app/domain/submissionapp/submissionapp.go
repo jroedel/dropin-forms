@@ -95,6 +95,8 @@ type Submissions interface {
 	Declined(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error)
 	Waiting(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error)
 	Offered(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error)
+	Cancelled(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error)
+	RefundsOf(ctx context.Context, id types.ID) ([]submissionbus.RefundMade, error)
 }
 
 // Grants answers which forms an account may reach, for the index page. The
@@ -156,6 +158,10 @@ type Config struct {
 	// the same reason. Anybody who can read this page may use them, so it
 	// needs no grant of its own -- reviewapp says why.
 	CanReview bool
+
+	// CanRefund says the refund route is mounted. Only an administrator of
+	// the form is shown the form for it, because only one may use it.
+	CanRefund bool
 
 	// CanFeed says the spreadsheet feed is mounted, for the same reason: the
 	// list links to it only for a reader who may use it and only when it is
@@ -464,6 +470,12 @@ type listView struct {
 	Declined        int
 	ShowingDeclined bool
 
+	// Cancelled is how many paid registrations were cancelled from the
+	// refund form, which leave the list as declined ones do, and
+	// ShowingCancelled says this page is the list of them instead.
+	Cancelled        int
+	ShowingCancelled bool
+
 	// Hidden is how many submissions are out of the list, and ShowingHidden
 	// says this page is the list of them instead. A count rather than nothing,
 	// so somebody who cannot find an order is told where it might be.
@@ -665,7 +677,7 @@ func (a app) list(w http.ResponseWriter, r *http.Request) {
 		Form:    f,
 		FormID:  f.ID.String(),
 		Columns: columnsOf(f),
-		Summary: summarise(f, subs),
+		Summary: summarise(f, subs, nil),
 		Places:  a.places(r, f),
 		Hidden:  len(hidden),
 		Window:  int(paybus.CheckoutWindow / time.Hour),
@@ -683,6 +695,23 @@ func (a app) list(w http.ResponseWriter, r *http.Request) {
 
 	view.Declined = len(declined)
 
+	// Read on every form that takes money, for the same reason, and for the
+	// total: what a cancelled registration kept -- a deposit not given back
+	// -- is still money the parish collected.
+	var cancelled []submissionbus.Submission
+
+	if f.Sells() {
+		cancelled, err = a.cfg.Submissions.Cancelled(r.Context(), f.ID)
+		if err != nil {
+			a.oops(w, r, "the cancelled submissions could not be listed", err)
+
+			return
+		}
+
+		view.Cancelled = len(cancelled)
+		view.Summary = summarise(f, subs, cancelled)
+	}
+
 	// The hidden ones, instead of the rest, with the totals still those of
 	// the rest: the summary is what to cater for, and a hidden row is by
 	// definition not in it. The declined ones the same way, for the same
@@ -693,6 +722,9 @@ func (a app) list(w http.ResponseWriter, r *http.Request) {
 	} else if r.URL.Query().Get("declined") != "" {
 		view.ShowingDeclined = true
 		subs = declined
+	} else if r.URL.Query().Get("cancelled") != "" {
+		view.ShowingCancelled = true
+		subs = cancelled
 	} else if admin && f.Sells() {
 		unpaid, err := a.cfg.Submissions.Unsettled(r.Context(), f.ID)
 		if err != nil {
@@ -735,10 +767,10 @@ func (a app) list(w http.ResponseWriter, r *http.Request) {
 		}
 
 		view.Rows = append(view.Rows, rowView{
-			Unpaid: unpaid && !view.ShowingHidden,
+			Unpaid: unpaid && !view.ShowingHidden && !view.ShowingCancelled,
 			ID:     s.ID.String(),
 			When:   s.CreatedAt.Local().Format("2 Jan 2006, 15:04"),
-			Status: wordsFor(s),
+			Status: wordsWithRefund(s, f.Currency),
 			Total:  formbus.Show(s.Answers.Total, f.Currency),
 			Cells:  cellsOf(f, s),
 		})
@@ -807,6 +839,18 @@ func firstAnswer(f formbus.Form, s submissionbus.Submission) string {
 	}
 
 	return ""
+}
+
+// wordsWithRefund is wordsFor, and how much has gone back when anything has:
+// "paid, $25.00 refunded".
+func wordsWithRefund(s submissionbus.Submission, currency string) string {
+	words := wordsFor(s)
+
+	if s.Refunded > 0 {
+		words += ", " + formbus.Show(s.Refunded, currency) + " refunded"
+	}
+
+	return words
 }
 
 // statusWords is how a status reads on these pages.
@@ -909,6 +953,56 @@ type oneView struct {
 	// HeldUntil is when a place offered to this submission stops being held
 	// for it to pay for, or empty.
 	HeldUntil string
+
+	// Refund is the refund section, drawn for an administrator of a form that
+	// takes money; nil otherwise.
+	Refund *refundView
+}
+
+// refundView is what has been given back on one submission, and the form for
+// giving more.
+type refundView struct {
+	// Said is what the last refund did, as a sentence, from the word the
+	// refund route sent the browser back with. Problem marks it as one.
+	Said    string
+	Problem bool
+
+	// Refunded and Kept are the running total given back and what is left,
+	// shown; empty Refunded is nothing refunded yet.
+	Refunded string
+	Kept     string
+
+	// History is the refunds made from this form, oldest first. InStripe is
+	// what was refunded some other way -- in Stripe's dashboard -- which has
+	// no row here because nothing here made it.
+	History  []refundRow
+	InStripe string
+
+	// Cancelled says the registration is cancelled, by whom and when it says
+	// in History.
+	Cancelled bool
+
+	// CanRefund draws the form. Left is the amount box's starting value,
+	// everything that is left, written the way the box reads it; HasLeft is
+	// whether there is any, and without it the form is a cancellation alone.
+	// Before is the running total the page was drawn with, which the route
+	// compares against what it reads. Limited words the checkbox for a form
+	// whose places are counted.
+	CanRefund bool
+	Left      string
+	HasLeft   bool
+	Before    int64
+	Limited   bool
+}
+
+type refundRow struct {
+	When string
+	Who  string
+
+	// Amount is empty for a cancellation that gave nothing back.
+	Amount    string
+	Cancelled bool
+	Note      string
 }
 
 // revisionView is one set of answers a submission held and no longer does.
@@ -991,7 +1085,7 @@ func (a app) one(w http.ResponseWriter, r *http.Request) {
 		FormID: f.ID.String(),
 		ID:     s.ID.String(),
 		When:   s.CreatedAt.Local().Format(longWhen),
-		Status: wordsFor(s),
+		Status: wordsWithRefund(s, f.Currency),
 		Email:  s.Email.String(),
 		Total:  formbus.Show(s.Answers.Total, f.Currency),
 		Ref:    s.PaymentRef,
@@ -1011,6 +1105,7 @@ func (a app) one(w http.ResponseWriter, r *http.Request) {
 	a.hiding(r, s, &view)
 	a.review(r, s, &view)
 	a.waiting(r, f, s, &view)
+	a.refundSection(r, f, s, &view)
 	a.history(r, f, s, &view)
 
 	a.cfg.Render.Render(w, r, http.StatusOK, "submission", view)
@@ -1110,6 +1205,97 @@ func (a app) hiding(r *http.Request, s submissionbus.Submission, view *oneView) 
 	}
 }
 
+// refundSaid is the sentence for each word refundapp sends the browser back
+// with, and whether it reports a problem. Written here rather than carried in
+// the address, so that nothing a link says is shown as if this service had
+// said it.
+var refundSaid = map[string]struct {
+	text    string
+	problem bool
+}{
+	"done":       {"Done. They have been emailed.", false},
+	"changed":    {"Nothing was refunded: this page was out of date -- somebody else has refunded since it was drawn. Check the figures below and try again.", true},
+	"too-much":   {"Nothing was refunded: that is more than is left to give back.", true},
+	"nothing":    {"Nothing was refunded: enter an amount, or tick the box to cancel the registration.", true},
+	"not-paid":   {"Nothing was refunded: this has not been paid for.", true},
+	"amount":     {"Nothing was refunded: the amount should look like 25 or 25.00.", true},
+	"refused":    {"Stripe did not make the refund, so nothing was given back. Try again in a minute; if it keeps happening, the Stripe key may need permission to make refunds (Refunds: Write).", true},
+	"unrecorded": {"Stripe made the refund, but it could not be written down here. The figures will catch up from Stripe's own notification; please do not refund it again.", true},
+}
+
+// refundSection fills in what has been refunded and, for an administrator,
+// the form for refunding more. Only on a form that takes money, and only for
+// somebody who administers it: the figures are about the parish's money and
+// the button sends it out.
+func (a app) refundSection(r *http.Request, f formbus.Form, s submissionbus.Submission, view *oneView) {
+	if !f.Sells() || !a.administers(r, f.ID) {
+		return
+	}
+
+	if s.Status != submissionbus.StatusPaid && s.Status != submissionbus.StatusCancelled && s.Refunded == 0 {
+		return
+	}
+
+	rv := &refundView{
+		Kept:      formbus.Show(s.Kept(), f.Currency),
+		Cancelled: s.Status == submissionbus.StatusCancelled,
+		Before:    int64(s.Refunded),
+		Limited:   f.Limited(),
+		HasLeft:   s.Kept() > 0,
+		Left:      s.Kept().String(),
+	}
+
+	if s.Refunded > 0 {
+		rv.Refunded = formbus.Show(s.Refunded, f.Currency)
+	}
+
+	if said, ok := refundSaid[r.URL.Query().Get("refund")]; ok {
+		rv.Said, rv.Problem = said.text, said.problem
+	}
+
+	made, err := a.cfg.Submissions.RefundsOf(r.Context(), s.ID)
+	if err != nil {
+		a.cfg.Log.Error("the refunds could not be listed",
+			"request_id", web.RequestIDFrom(r.Context()), "submission_id", s.ID.String(), "error", err)
+	}
+
+	var here types.Money
+
+	for _, m := range made {
+		here += m.Amount
+
+		row := refundRow{
+			When:      m.At.Local().Format(longWhen),
+			Who:       "somebody",
+			Cancelled: m.Cancelled,
+			Note:      m.Note,
+		}
+
+		if m.Amount > 0 {
+			row.Amount = formbus.Show(m.Amount, f.Currency)
+		}
+
+		if a.cfg.Accounts != nil && !m.By.Zero() {
+			if u, err := a.cfg.Accounts.ByID(r.Context(), m.By); err == nil {
+				row.Who = u.Email.String()
+			}
+		}
+
+		rv.History = append(rv.History, row)
+	}
+
+	if err == nil && s.Refunded > here {
+		rv.InStripe = formbus.Show(s.Refunded-here, f.Currency)
+	}
+
+	// Something left to give back, or a registration still counted that a
+	// refund in Stripe has already paid back in full: either is a form. A
+	// cancelled one with nothing left has nothing to do.
+	rv.CanRefund = a.cfg.CanRefund && !view.Hidden && (rv.HasLeft || !rv.Cancelled)
+
+	view.Refund = rv
+}
+
 // waiting fills in where a submission on the waiting list stands on it.
 func (a app) waiting(r *http.Request, f formbus.Form, s submissionbus.Submission, view *oneView) {
 	if s.Status == submissionbus.StatusOffered {
@@ -1195,6 +1381,13 @@ func (a app) export(w http.ResponseWriter, r *http.Request) {
 		header = append(header, "review")
 	}
 
+	// Last, and only on a form that takes money, for the review column's
+	// reason: a spreadsheet already built on this download keeps its columns.
+	// In minor-unit decimal like total, and 0.00 for nothing refunded.
+	if f.Sells() {
+		header = append(header, "refunded")
+	}
+
 	if err := out.Write(header); err != nil {
 		a.oops(w, r, "the export header could not be written", err)
 
@@ -1217,6 +1410,10 @@ func (a app) export(w http.ResponseWriter, r *http.Request) {
 
 		if f.NeedsApproval {
 			row = append(row, s.Review.String())
+		}
+
+		if f.Sells() {
+			row = append(row, s.Refunded.String())
 		}
 
 		if err := out.Write(row); err != nil {
@@ -1311,7 +1508,10 @@ func cellsOf(f formbus.Form, s submissionbus.Submission) []string {
 }
 
 // summarise counts what somebody came to the page to find out.
-func summarise(f formbus.Form, subs []submissionbus.Submission) summaryView {
+//
+// cancelled is the form's cancelled registrations, which are counted nowhere
+// but in the total: what one of them kept is money the parish has.
+func summarise(f formbus.Form, subs, cancelled []submissionbus.Submission) summaryView {
 	var s summaryView
 
 	tally := map[string]*itemTally{}
@@ -1341,7 +1541,7 @@ func summarise(f formbus.Form, subs []submissionbus.Submission) summaryView {
 			s.Received++
 		}
 
-		paid += sub.Answers.Total
+		paid += sub.Kept()
 
 		for _, l := range sub.Answers.Lines {
 			t, known := tally[l.ItemID]
@@ -1359,6 +1559,10 @@ func summarise(f formbus.Form, subs []submissionbus.Submission) summaryView {
 
 	for _, id := range order {
 		s.Items = append(s.Items, *tally[id])
+	}
+
+	for _, c := range cancelled {
+		paid += c.Kept()
 	}
 
 	s.PaidTotal = formbus.Show(paid, f.Currency)

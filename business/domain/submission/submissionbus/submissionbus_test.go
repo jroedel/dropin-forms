@@ -28,6 +28,7 @@ type memStore struct {
 	handed map[types.ID]submissionbus.Collection
 	hidden map[types.ID]submissionbus.Hiding
 	revs   map[types.ID][]submissionbus.Revision
+	made   []submissionbus.RefundMade
 
 	// counted is how many times the day's submissions have been counted, so
 	// that a test can assert an uncapped form does not pay for the query.
@@ -108,6 +109,46 @@ func (m *memStore) claim(form types.Slug, except types.ID, claims []formbus.Clai
 	}
 
 	return nil
+}
+
+func (m *memStore) Refund(_ context.Context, before, after submissionbus.Submission, made submissionbus.RefundMade) error {
+	if m.fail != nil {
+		return m.fail
+	}
+
+	cur, ok := m.subs[before.ID]
+	if _, hidden := m.hidden[before.ID]; !ok || hidden || cur.Status != before.Status {
+		return submissionbus.ErrChangedMeanwhile
+	}
+
+	after.Refunded = max(cur.Refunded, after.Refunded)
+	m.subs[after.ID] = after
+	m.made = append(m.made, made)
+
+	return nil
+}
+
+func (m *memStore) SetRefunded(_ context.Context, id types.ID, cumulative types.Money, at time.Time) error {
+	s, ok := m.subs[id]
+	if ok && cumulative > s.Refunded {
+		s.Refunded = cumulative
+		s.UpdatedAt = at
+		m.subs[id] = s
+	}
+
+	return nil
+}
+
+func (m *memStore) RefundsOf(_ context.Context, id types.ID) ([]submissionbus.RefundMade, error) {
+	var out []submissionbus.RefundMade
+
+	for _, r := range m.made {
+		if r.SubmissionID == id {
+			out = append(out, r)
+		}
+	}
+
+	return out, nil
 }
 
 func (m *memStore) Lapse(_ context.Context, now time.Time) (int, error) {

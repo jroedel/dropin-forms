@@ -287,6 +287,11 @@ sent to Stripe who did not finish is not a submission. So are submissions
 somebody has hidden from the lists, and anybody still on a waiting list: they
 have no place, and appear here once they are offered one.
 
+`refunded` appears once some of `total` has been given back, in cents, from
+the submission's page or in Stripe's dashboard. A registration cancelled with
+its refund is left out, as a declined one is; read on its own it has `status`
+`cancelled`. Refunds are made from the page only, as approval is.
+
 `review` appears on a form with `needs_approval`: `awaiting` or `approved`.
 Declined submissions are left out, as hidden ones are. A submission read on
 its own also carries `review`, and can be `declined`.

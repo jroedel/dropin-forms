@@ -380,6 +380,10 @@ func run() error {
 	if payments != nil {
 		mc.Payments = payments
 		mc.Embed.Payments = payments
+
+		// And the refund form, which needs somewhere to send money from.
+		mc.Refunding = submissions
+		mc.Refunds = payments
 	}
 
 	// The same trap, the same way.

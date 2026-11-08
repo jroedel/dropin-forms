@@ -106,10 +106,23 @@ const (
 	// still unpaid at the end of its hold to abandoned, which gives the place
 	// back for the office to offer again.
 	StatusOffered Status = "offered"
+
+	// StatusCancelled is a paid registration the office has cancelled, from
+	// the refund form: the person is not coming. It holds no place, so a bed
+	// or a time slot goes back -- and the waiting list's "Offer a place"
+	// lights up -- and it is settled for nothing, so it leaves every list,
+	// total, download and the will-call table as a declined one does.
+	//
+	// Separate from how much was refunded, which is [Submission.Refunded]. A
+	// full refund may keep somebody registered (a place given free after
+	// all), and a partial one may cancel (the office keeps a deposit), so the
+	// one is not inferred from the other. Only ever reached from paid, and
+	// nothing moves it on: a late webhook saying paid again changes nothing.
+	StatusCancelled Status = "cancelled"
 )
 
 // statuses is every Status, in the order a submission moves through them.
-var statuses = []Status{StatusWaiting, StatusOffered, StatusReceived, StatusPending, StatusPaid, StatusFailed, StatusAbandoned}
+var statuses = []Status{StatusWaiting, StatusOffered, StatusReceived, StatusPending, StatusPaid, StatusFailed, StatusAbandoned, StatusCancelled}
 
 // OfferHold is how long a place offered from a waiting list is held for
 // somebody to pay for it.
@@ -259,6 +272,17 @@ type Submission struct {
 	// all.
 	RemoteIP string
 
+	// Refunded is how much of Total has been given back, all refunds added
+	// together, as Stripe counts it. Zero on almost every submission.
+	//
+	// Cumulative rather than a list of refunds summed here, because it
+	// arrives two ways -- from the refund form, once Stripe has said yes, and
+	// from Stripe's own notification, which also reports refunds made in its
+	// dashboard -- and both carry the running total. Each is written as the
+	// larger of what is stored and what arrived, so whichever lands second
+	// changes nothing and no refund is counted twice.
+	Refunded types.Money
+
 	// OfferExpiresAt is when a place offered from the waiting list stops
 	// being held, on a form that takes money: zero on every other submission.
 	OfferExpiresAt time.Time
@@ -274,6 +298,10 @@ type Submission struct {
 
 // Paid reports whether there is money to collect.
 func (s Submission) Paid() bool { return s.Answers.Total > 0 }
+
+// Kept is what the submission came to less what has been refunded: the money
+// that is actually the parish's.
+func (s Submission) Kept() types.Money { return s.Answers.Total - s.Refunded }
 
 // Collection is an order whose tokens were handed over at the will-call table.
 //
@@ -366,6 +394,20 @@ type Storer interface {
 	// Taken counts the places held in each of a form's options, by the
 	// submissions [Submission.HoldsPlace] names, leaving out hidden ones.
 	Taken(ctx context.Context, form types.Slug) (formbus.Taken, error)
+
+	// Refund writes a refund made from the refund form, in one transaction:
+	// its row, then after's running total -- as the larger of the stored one
+	// and after's -- and after's status, on condition that the stored status
+	// is still before's and the row is not hidden; ErrChangedMeanwhile
+	// otherwise.
+	Refund(ctx context.Context, before, after Submission, made RefundMade) error
+
+	// SetRefunded raises a submission's running total of refunds to
+	// cumulative, if that is more than it already says.
+	SetRefunded(ctx context.Context, id types.ID, cumulative types.Money, at time.Time) error
+
+	// RefundsOf is the refunds made from the refund form for one submission.
+	RefundsOf(ctx context.Context, id types.ID) ([]RefundMade, error)
 
 	// Lapse moves every offered submission whose hold ended before now to
 	// abandoned, hidden ones included, and reports how many.
@@ -842,7 +884,7 @@ func (b *Business) Settle(ctx context.Context, now time.Time, id types.ID, to St
 		return nil
 	}
 
-	if s.Status.Settled() {
+	if s.Status.Settled() || s.Status == StatusCancelled {
 		b.log.Warn("ignoring a status change to a settled submission",
 			"submission_id", id.String(), "from", s.Status, "to", to)
 

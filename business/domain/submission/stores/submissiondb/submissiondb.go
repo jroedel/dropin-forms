@@ -59,7 +59,8 @@ func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 // will read.
 var Expected = sqldb.Expected{
 	"submissions": {"id", "form_slug", "version", "status", "answers", "email", "total", "currency", "remote_ip", "payment_ref", "created_at", "updated_at",
-		"review", "reviewed_by", "reviewed_at", "review_note", "offer_expires_at"},
+		"review", "reviewed_by", "reviewed_at", "review_note", "offer_expires_at", "refunded"},
+	"refunds":            {"refund_id", "submission_id", "form_slug", "amount", "refunded_by", "refunded_at", "note", "cancelled"},
 	"spent_grants":       {"nonce", "form_slug", "spent_at"},
 	"collections":        {"submission_id", "form_slug", "collected_at", "collected_by"},
 	"hidden_submissions": {"submission_id", "form_slug", "hidden_at", "hidden_by"},
@@ -216,6 +217,39 @@ CREATE TABLE IF NOT EXISTS submission_revisions (
 	// lapsed offer go filters on it in the same statement as the status.
 	if err := sqldb.AddColumn(ctx, db, "submissions", "offer_expires_at", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
+	}
+
+	// How much of a submission has been refunded, all refunds together, in
+	// minor units -- submissionbus.Submission.Refunded, which says why it is a
+	// running total rather than a sum over the table below.
+	if err := sqldb.AddColumn(ctx, db, "submissions", "refunded", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+
+	// One row per refund made from the refund form: who gave how much back,
+	// when, what they told the person, and whether they cancelled with it.
+	// Refunds made in Stripe's dashboard have no row -- nothing here made
+	// them -- and reach the running total above through Stripe's
+	// notification. refund_id is Stripe's re_ identifier, or a cancellation
+	// that refunded nothing's own submission-scoped key, so it is unique
+	// either way.
+	const refunds = `
+CREATE TABLE IF NOT EXISTS refunds (
+    refund_id     TEXT    PRIMARY KEY,
+    submission_id TEXT    NOT NULL,
+    form_slug     TEXT    NOT NULL,
+    amount        INTEGER NOT NULL,
+    refunded_by   TEXT    NOT NULL,
+    refunded_at   INTEGER NOT NULL,
+    note          TEXT    NOT NULL,
+    cancelled     INTEGER NOT NULL
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS refunds_submission ON refunds (submission_id);
+`
+
+	if _, err := db.ExecContext(ctx, refunds); err != nil {
+		return fmt.Errorf("creating the refunds table: %w", err)
 	}
 
 	return nil
@@ -877,6 +911,132 @@ WHERE id = ? AND status = ? AND offer_expires_at > ?`
 	return nil
 }
 
+// Refund writes a refund made from the refund form, and what it did to the
+// submission, in one transaction.
+//
+// The submission's update is conditional on the status the caller read and on
+// the row not being hidden, for Decide's reason. Its running total is the
+// larger of the stored one and the caller's: Stripe's notification of the
+// same refund may have arrived between the refund being made and this, and
+// it carries the same total.
+func (s *Store) Refund(ctx context.Context, before, after submissionbus.Submission, made submissionbus.RefundMade) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning the transaction: %w", err)
+	}
+
+	defer tx.Rollback()
+
+	const update = `
+UPDATE submissions SET status = ?, refunded = MAX(refunded, ?), updated_at = ?
+WHERE id = ? AND form_slug = ? AND status = ? AND ` + notHidden
+
+	res, err := tx.ExecContext(ctx, update,
+		after.Status.String(), int64(after.Refunded), msOf(after.UpdatedAt),
+		before.ID.String(), before.Form.String(), before.Status.String())
+	if err != nil {
+		return fmt.Errorf("recording the refund: %w", err)
+	}
+
+	n, err := res.RowsAffected()
+	switch {
+	case err != nil:
+		return fmt.Errorf("recording the refund: %w", err)
+	case n == 0:
+		return submissionbus.ErrChangedMeanwhile
+	}
+
+	cancelled := 0
+	if made.Cancelled {
+		cancelled = 1
+	}
+
+	const insert = `
+INSERT INTO refunds (refund_id, submission_id, form_slug, amount, refunded_by, refunded_at, note, cancelled)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+
+	if _, err := tx.ExecContext(ctx, insert,
+		made.RefundID, made.SubmissionID.String(), made.Form.String(), int64(made.Amount),
+		made.By.String(), msOf(made.At), made.Note, cancelled); err != nil {
+		return fmt.Errorf("recording the refund: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing the refund: %w", err)
+	}
+
+	return nil
+}
+
+// SetRefunded raises a submission's running total of refunds, and never
+// lowers it. Hidden rows are included: hiding an order says nothing about
+// whether money went back.
+func (s *Store) SetRefunded(ctx context.Context, id types.ID, cumulative types.Money, at time.Time) error {
+	const q = `UPDATE submissions SET refunded = ?, updated_at = ? WHERE id = ? AND refunded < ?`
+
+	if _, err := s.db.ExecContext(ctx, q, int64(cumulative), msOf(at), id.String(), int64(cumulative)); err != nil {
+		return fmt.Errorf("recording the refunded total: %w", err)
+	}
+
+	return nil
+}
+
+// RefundsOf is the refunds made from the refund form for one submission.
+func (s *Store) RefundsOf(ctx context.Context, id types.ID) ([]submissionbus.RefundMade, error) {
+	const q = `
+SELECT refund_id, submission_id, form_slug, amount, refunded_by, refunded_at, note, cancelled
+FROM refunds WHERE submission_id = ? ORDER BY refunded_at, rowid`
+
+	rows, err := s.db.QueryContext(ctx, q, id.String())
+	if err != nil {
+		return nil, fmt.Errorf("querying the refunds: %w", err)
+	}
+	defer rows.Close()
+
+	var out []submissionbus.RefundMade
+
+	for rows.Next() {
+		var (
+			refundID, subID, form, by, note string
+			amount, at, cancelled           int64
+		)
+
+		if err := rows.Scan(&refundID, &subID, &form, &amount, &by, &at, &note, &cancelled); err != nil {
+			return nil, fmt.Errorf("reading a refund: %w", err)
+		}
+
+		m := submissionbus.RefundMade{
+			RefundID:  refundID,
+			Amount:    types.Money(amount),
+			At:        timeOf(at),
+			Note:      note,
+			Cancelled: cancelled != 0,
+		}
+
+		if m.SubmissionID, err = types.ParseID(subID); err != nil {
+			return nil, fmt.Errorf("the submission on a refund is unreadable: %w", err)
+		}
+
+		if m.Form, err = types.ParseSlug(form); err != nil {
+			return nil, fmt.Errorf("the form on a refund is unreadable: %w", err)
+		}
+
+		if by != "" {
+			if m.By, err = types.ParseID(by); err != nil {
+				return nil, fmt.Errorf("who made a refund is unreadable: %w", err)
+			}
+		}
+
+		out = append(out, m)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading the refunds: %w", err)
+	}
+
+	return out, nil
+}
+
 // zeroMS is msOf, with the zero time stored as nothing rather than as the
 // start of 1970 -- the convention reviewed_at keeps.
 func zeroMS(t time.Time) int64 {
@@ -995,7 +1155,7 @@ func (s *Store) PruneNonces(ctx context.Context, before time.Time) error {
 
 const selectColumns = `
 SELECT id, form_slug, version, status, answers, email, total, currency, remote_ip, payment_ref, created_at, updated_at,
-       review, reviewed_by, reviewed_at, review_note, offer_expires_at
+       review, reviewed_by, reviewed_at, review_note, offer_expires_at, refunded
 FROM submissions`
 
 // scanner is what QueryRow and Rows have in common.
@@ -1015,11 +1175,12 @@ func scan(row scanner) (submissionbus.Submission, error) {
 		createdAt, updatedAt          int64
 		review, reviewedBy, note      string
 		reviewedAt, offerExpires      int64
+		refunded                      int64
 	)
 
 	err := row.Scan(&id, &formSlug, &version, &status, &doc, &email,
 		&total, &currency, &remoteIP, &paymentRef, &createdAt, &updatedAt,
-		&review, &reviewedBy, &reviewedAt, &note, &offerExpires)
+		&review, &reviewedBy, &reviewedAt, &note, &offerExpires, &refunded)
 	if err != nil {
 		return submissionbus.Submission{}, err
 	}
@@ -1068,6 +1229,8 @@ func scan(row scanner) (submissionbus.Submission, error) {
 	if reviewedAt != 0 {
 		sub.ReviewedAt = timeOf(reviewedAt)
 	}
+
+	sub.Refunded = types.Money(refunded)
 
 	if offerExpires != 0 {
 		sub.OfferExpiresAt = timeOf(offerExpires)

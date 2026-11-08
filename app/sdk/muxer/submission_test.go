@@ -324,6 +324,7 @@ func TestTheExportHasAColumnPerFieldAndNoAddresses(t *testing.T) {
 		"submitted_at", "submission_id", "status", "total", "currency",
 		"Your name", "Email for your receipt", "Donation for the Shrine",
 		"Anything we should know", "Lunch ticket", "payment_reference",
+		"refunded",
 	}
 
 	if len(rows[0]) != len(want) {
@@ -345,6 +346,9 @@ func TestTheExportHasAColumnPerFieldAndNoAddresses(t *testing.T) {
 	}
 	if row[9] != "2" {
 		t.Errorf("the ticket column is %q, want 2", row[9])
+	}
+	if row[11] != "0.00" {
+		t.Errorf("the refunded column is %q, want 0.00 on a payment nobody has refunded", row[11])
 	}
 
 	// The visitor's IP address is on the submission for Stripe's fraud

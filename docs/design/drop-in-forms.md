@@ -652,7 +652,8 @@ deposits were reconciled, which made the service's Stripe needs grow from
 what the key in `config.toml` could do if it leaked from a shared host, and
 the answer for a full key is everything: refund, pay out, read every customer.
 A restricted key (`rk_`) is a drop-in replacement limited to Checkout Sessions
-write plus three reads (Payouts, Balance, Balance transaction sources), listed
+write, Refunds write (since the Refund button; see "Refunds, as built") and
+three reads (Payouts, Balance, Balance transaction sources), listed
 beside `STRIPE_SECRET_KEY` in `secrets.env.example` because that is where
 somebody making the key is looking. `config.go` accepts both prefixes, and the
 live/test word in the log is decided by `stripeLive`, which names both — before
@@ -2341,6 +2342,78 @@ that marks unpaid orders abandoned also moves every offer past its hold to
 with when each ends, so the office knows when to offer again. Neither setting is
 in the fingerprint: raising the number so one more can come must not throw away
 anybody's half-filled form.
+
+### Refunds, as built
+
+An administrator of a form that takes money has a **Refunds** section on each
+paid submission's page: an amount, which starts at everything that is left; a
+**Cancel the registration** checkbox — "and give their place back" on a form
+whose places are counted; and a note for the email. It posts to
+`refundapp`, behind the form's `admin` gate and not `results`, because this one
+sends money out. Whoever reads the sign-ups can offer a place; only somebody
+who administers the form can give money back.
+
+**Cancelling is its own choice, not a consequence of the amount.** The two come
+apart in both directions the office meets: a full refund for somebody still
+coming (a place given free after all), and a partial refund that cancels (the
+deposit kept). So the checkbox is on every refund, ticked when the box holds the
+whole remainder, which is the common case, and the help text says when to
+untick it. A template cannot follow somebody's typing, so the default follows
+the amount the page drew. A cancelled row has a new status, `cancelled`, which
+moves forwards only, from paid. It holds no place and is not settled, so it
+drops out of every list, total, download, feed and will-call table by the rules
+those already follow for declined rows, and the bed it held is free for
+**Offer a place**. The submissions page has a "Show the cancelled" toggle
+beside "Show the declined". A cancellation with nothing to give back is allowed,
+for a payment already refunded in Stripe's dashboard that should stop counting.
+
+**The bus does not call Stripe.** `submissionbus.CanRefund` answers whether the
+refund may be made, from what is stored; the app then asks `paybus.Refund` to
+make it; and `RecordRefund` writes down the one that was made. That order is
+the one where every failure leaves the truth on the page: refused before Stripe
+is nothing done; refused by Stripe is nothing done, said in a sentence that
+names `Refunds: Write` when the key lacks it; made by Stripe and not recorded
+is the one gap, and the page says so and asks that it not be refunded again,
+because the notification below will close it. The other order — record, then
+call Stripe — would have a refund on the page that no card ever received.
+
+**One running total, written as a maximum.** A submission carries `Refunded`,
+the total given back so far, which is the figure Stripe reports on a charge as
+`amount_refunded`. Both ways a refund arrives write it as
+`refunded = MAX(refunded, ?)`: the page with what it read plus what it just
+refunded, and the `charge.refunded` notification with Stripe's own total. A
+refund made from the page is reported by Stripe moments later; whichever lands
+second changes nothing, so it is never counted twice, and a refund made in the
+dashboard reaches the page without anybody doing anything. Each refund from the
+page is also a row in `refunds` — who, when, how much, the note, whether it
+cancelled — so the page can say who did it. One made in the dashboard has no
+row, because nothing here made it; the page shows the difference between the
+total and its rows as "refunded in the Stripe dashboard".
+
+**A stale page refunds nothing.** The form carries the total it was drawn with;
+the route compares it against what it reads and refuses on a difference, so two
+people refunding the same booking from two tabs cannot each give back the
+remainder. Stripe's idempotency key is the submission, that total and the
+amount, so a double-click is the same refund and a second, identical partial
+refund a minute later is a new one. The store's update is conditional on the
+status it read, for `Promote`'s reason.
+
+**"Collected" means what was kept.** The summary on the submissions page, the
+API's `refunded` and the download's `refunded` column all read
+`Total − Refunded`, and a cancelled booking's kept deposit stays in Collected.
+The person is emailed with the amount, that it goes back to the card they paid
+with in five to ten working days, whether the registration is cancelled, and the
+note.
+
+**The key can now refund.** That was given up deliberately: refunds were the
+one thing the restricted key could not do, and the price was the office logging
+in to Stripe to make one while the service went on counting the money. A refund
+only ever goes back to the card that paid, which is a much smaller loss than
+the payouts and customer data the restricted key still withholds.
+
+Not in this change, and now possible: approval on a form that takes money
+(a decline would refund), and "answers can be changed" on one. Both are refused
+by `formbus.Form.Check` today.
 
 ### The API and the MCP endpoint, as built
 

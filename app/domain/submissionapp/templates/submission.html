@@ -83,6 +83,55 @@ They were changed through the link in the emails sent to whoever answered.</p>
 </table>
 {{end}}
 
+{{with .Refund}}
+<h2>Refunds</h2>
+{{with .Said}}<p class="{{if $.Refund.Problem}}problem{{else}}notice{{end}}">{{.}}</p>{{end}}
+{{if .Cancelled}}<p>This registration is cancelled: it holds no place and is not counted.</p>{{end}}
+{{if .Refunded}}
+<p>{{.Refunded}} refunded; {{.Kept}} kept.</p>
+{{end}}
+{{if or .History .InStripe}}
+<table class="detail">
+<tbody>
+{{range .History}}
+<tr><th scope="row">{{.When}}</th><td>{{with .Amount}}{{.}} refunded{{end}}{{if .Cancelled}}{{if .Amount}}, and{{end}} cancelled{{end}} by {{.Who}}{{with .Note}}. They were told: &ldquo;{{.}}&rdquo;{{end}}</td></tr>
+{{end}}
+{{with .InStripe}}<tr><th scope="row">In Stripe</th><td>{{.}} refunded in the Stripe dashboard</td></tr>{{end}}
+</tbody>
+</table>
+{{end}}
+{{if .CanRefund}}
+<form method="post" action="/forms/{{$.FormID}}/submissions/{{$.ID}}/refund">
+  <input type="hidden" name="before" value="{{.Before}}">
+  {{if .HasLeft}}
+  <div class="field">
+    <label for="amount">Amount to refund</label>
+    <p class="help">Like <code>25.00</code>. It goes back to the card they paid
+    with, and cannot be undone. Up to {{.Kept}} is left.</p>
+    <input type="text" id="amount" name="amount" value="{{.Left}}"
+           autocomplete="off" inputmode="decimal" maxlength="12">
+  </div>
+  {{end}}
+  {{if not .Cancelled}}
+  <p class="choice">
+    <input type="checkbox" id="cancel" name="cancel" value="yes" {{if .HasLeft}}checked{{end}}>
+    <label for="cancel">Cancel the registration{{if .Limited}} and give their place back{{end}}</label>
+  </p>
+  <p class="help">{{if .HasLeft}}Ticked because the whole amount is filled in.
+  Untick it if they are still coming -- a place given free after all -- and tick
+  it with part of the amount to cancel and keep a deposit.{{else}}It has already
+  been refunded in full. Tick this if they are not coming, so they stop being
+  counted{{if .Limited}} and their place can be offered to somebody else{{end}}.{{end}}</p>
+  {{end}}
+  <div class="field">
+    <label for="refund-note">Anything to tell them? (optional)</label>
+    <textarea id="refund-note" name="note" rows="2"></textarea>
+  </div>
+  <button type="submit" class="quiet">{{if .HasLeft}}Refund{{else}}Cancel the registration{{end}}</button>
+</form>
+{{end}}
+{{end}}
+
 {{with .HeldUntil}}
 <h2>Waiting list</h2>
 <p>Offered a place from the waiting list, and held for them to pay for until
@@ -150,7 +199,8 @@ It was approved before, and the person has changed their answers since.{{end}}</
 <p class="help">For a test, a duplicate, or anything else that should not be
 counted. It leaves every list, the totals and the download, and can be put back
 from here at any time. Nothing is deleted{{if .Ref}}, and nothing is refunded
-&mdash; a refund is made in Stripe{{end}}.{{if not .Form.ChangeableUntil.IsZero}}
+&mdash; to give money back, or to cancel a registration that is not coming,
+use Refunds above, before hiding it{{end}}.{{if not .Form.ChangeableUntil.IsZero}}
 While it is hidden, the link in the emails sent to whoever answered stops
 working, which is also how to withdraw a link that has been forwarded
 somewhere it should not have gone.{{end}}</p>

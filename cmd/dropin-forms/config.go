@@ -267,8 +267,9 @@ func loadConfig(path string) (config, error) {
 		//
 		// A restricted key (rk_...) is accepted alongside the full secret
 		// key, and is the one to use: it can be limited to creating checkout
-		// pages and reading deposits, so a leaked config.toml cannot refund,
-		// pay out or read customers. secrets.env.example lists the
+		// pages, refunding and reading deposits, so a leaked config.toml
+		// cannot pay out or read customers, and its refunds go back only to
+		// the cards that paid. secrets.env.example lists the
 		// permissions it needs. Stripe answers a request the key is not
 		// permitted to make with an error naming the permission, so a key
 		// with too little shows up in the log on the first order rather than

@@ -498,6 +498,11 @@ type submissionDoc struct {
 	Lines    []lineDoc `json:"lines,omitzero"`
 	Total    int64     `json:"total"`
 	Currency string    `json:"currency,omitempty"`
+
+	// Refunded is how much of Total has been given back, from the page or in
+	// Stripe's dashboard. Absent is none: omitempty on an int, where absent
+	// and zero mean the same thing to the reader.
+	Refunded int64 `json:"refunded,omitempty"`
 }
 
 type lineDoc struct {
@@ -551,6 +556,7 @@ func submissionOf(f formbus.Form, s submissionbus.Submission) submissionDoc {
 		Answers:   answers,
 		Total:     int64(s.Answers.Total),
 		Currency:  s.Answers.Currency,
+		Refunded:  int64(s.Refunded),
 	}
 
 	for _, l := range s.Answers.Lines {

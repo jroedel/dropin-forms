@@ -215,6 +215,16 @@ func (b *Business) Offered(ctx context.Context, id types.ID) {
 	b.tellOnly(ctx, id, "an offered place", b.forOffered)
 }
 
+// Refunded tells the person that money has gone back to them, how much, and
+// whether their registration is cancelled with it. Only the person, for
+// Decided's reason. amount is this refund, not the running total; note is
+// what the office wrote, or empty.
+func (b *Business) Refunded(ctx context.Context, id types.ID, amount types.Money, note string) {
+	b.tellOnly(ctx, id, "a refund", func(f formbus.Form, sub submissionbus.Submission) mail.Message {
+		return b.forRefunded(f, sub, amount, note)
+	})
+}
+
 // Decided tells the person that somebody has approved or declined what they
 // sent. Only the person: the office is who decided, and the page they decided
 // on already says so.

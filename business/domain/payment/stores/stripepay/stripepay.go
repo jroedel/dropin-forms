@@ -35,6 +35,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/stripe/stripe-go/v83"
@@ -68,6 +69,12 @@ const (
 	kindCompleted = "checkout.session.completed"
 	kindFailed    = "payment_intent.payment_failed"
 	kindDisputed  = "charge.dispute.created"
+
+	// kindRefunded is a charge with money given back on it, whether from the
+	// refund form or Stripe's dashboard. Its object is the charge, whose
+	// amount_refunded is the running total -- which is what makes it safe to
+	// apply however many times, in whatever order, Stripe delivers it.
+	kindRefunded = "charge.refunded"
 
 	// kindAsyncFailed is the delayed counterpart of kindCompleted, for a
 	// payment method that settles after the session does. Handled because a
@@ -195,6 +202,46 @@ func (g *Gateway) Checkout(ctx context.Context, o paybus.Order) (paybus.Handoff,
 	return paybus.Handoff{Ref: s.ID, URL: s.URL}, nil
 }
 
+// Refund gives money back on a payment intent.
+//
+// The idempotency key is the caller's, for the reason RefundOrder gives. The
+// submission goes in the refund's metadata so that somebody looking at it in
+// the dashboard can find the registration it was for.
+func (g *Gateway) Refund(ctx context.Context, o paybus.RefundOrder) (paybus.RefundDone, error) {
+	params := &stripe.RefundCreateParams{
+		PaymentIntent: stripe.String(o.PaymentRef),
+		Amount:        stripe.Int64(int64(o.Amount)),
+		Reason:        stripe.String(string(stripe.RefundReasonRequestedByCustomer)),
+		Metadata:      map[string]string{metaSubmission: o.SubmissionID.String()},
+	}
+
+	params.IdempotencyKey = stripe.String(o.Key)
+
+	r, err := g.client.V1Refunds.Create(ctx, params)
+	if err != nil {
+		return paybus.RefundDone{}, refundRefusal(err)
+	}
+
+	// Pending is a refund Stripe has accepted and will finish, which is
+	// every card refund for a moment and some for days. Failed and cancelled
+	// are refunds that will not happen.
+	if r.Status == stripe.RefundStatusFailed || r.Status == stripe.RefundStatusCanceled {
+		return paybus.RefundDone{}, fmt.Errorf("the refund was not made: Stripe reports it as %s", r.Status)
+	}
+
+	return paybus.RefundDone{ID: r.ID, Amount: types.Money(r.Amount)}, nil
+}
+
+// refundRefusal is refusal's sentence for a key that may not refund.
+func refundRefusal(err error) error {
+	se, ok := errors.AsType[*stripe.Error](err)
+	if !ok || se.HTTPStatusCode != http.StatusForbidden {
+		return fmt.Errorf("asking Stripe for the refund: %w", err)
+	}
+
+	return fmt.Errorf("the Stripe key may not make refunds; give it Refunds: Write on the API keys page of the Stripe dashboard (Stripe said: %s)", se.Msg)
+}
+
 // object is the part of an event's data we read.
 //
 // Declared here rather than taken from a generated type, for the reason in the
@@ -214,6 +261,7 @@ type object struct {
 
 	AmountTotal    int64  `json:"amount_total"`
 	AmountReceived int64  `json:"amount_received"`
+	AmountRefunded int64  `json:"amount_refunded"`
 	Currency       string `json:"currency"`
 
 	// PaymentStatus distinguishes a completed session that has been paid from
@@ -352,6 +400,10 @@ func (g *Gateway) Verify(payload []byte, signature string) (paybus.Event, error)
 
 	case kindDisputed:
 		out.Result = paybus.ResultDisputed
+
+	case kindRefunded:
+		out.Result = paybus.ResultRefunded
+		out.Refunded = types.Money(obj.AmountRefunded)
 	}
 
 	return out, nil

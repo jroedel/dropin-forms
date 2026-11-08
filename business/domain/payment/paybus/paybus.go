@@ -184,6 +184,10 @@ const (
 	// decision for a person.
 	ResultDisputed Result = "disputed"
 
+	// ResultRefunded is money given back on a payment, from the refund form
+	// or from Stripe's dashboard. Event.Refunded is the running total.
+	ResultRefunded Result = "refunded"
+
 	// ResultIgnored is an event we are not interested in. Stripe delivers
 	// whatever the account is subscribed to, and acknowledging an event we do
 	// not handle is correct: refusing it would make Stripe retry it for days.
@@ -223,6 +227,37 @@ type Event struct {
 	// derived, and it is already stored.
 	Total    types.Money
 	Currency string
+
+	// Refunded is how much of the payment has been refunded so far, all
+	// refunds together, on a refund event. Cumulative, which is what lets it
+	// be applied any number of times and in any order.
+	Refunded types.Money
+}
+
+// RefundOrder is money to give back on one payment.
+type RefundOrder struct {
+	SubmissionID types.ID
+
+	// PaymentRef is the payment intent the money was taken on, as stored on
+	// the submission. A refund can only go back to where the money came from,
+	// which is the property that made granting this to the key acceptable.
+	PaymentRef string
+
+	Amount types.Money
+
+	// Key dedupes a retry of this one request -- a double click, a timeout --
+	// and nothing else. It is built from the submission, how much had been
+	// refunded when the page was drawn and how much this is, so the same
+	// press twice is one refund and a second deliberate one is a second.
+	Key string
+}
+
+// RefundDone is a refund Stripe has made.
+type RefundDone struct {
+	// ID is Stripe's re_ identifier, which is what the office searches for in
+	// the dashboard.
+	ID     string
+	Amount types.Money
 }
 
 // Gateway is the payment processor.
@@ -247,6 +282,11 @@ type Gateway interface {
 	// implementation ignores. A test of the tolerance builds a signature with
 	// a stale timestamp instead of moving a clock.
 	Verify(payload []byte, signature string) (Event, error)
+
+	// Refund gives money back on a payment, all or part of it. It answers
+	// only once Stripe has accepted the refund; one Stripe reports as failed
+	// or cancelled is an error.
+	Refund(ctx context.Context, o RefundOrder) (RefundDone, error)
 }
 
 // Seen records which events have been acted on.
@@ -264,6 +304,7 @@ type Seen interface {
 // Submissions is what fulfilment does to a submission.
 type Submissions interface {
 	Settle(ctx context.Context, now time.Time, id types.ID, to submissionbus.Status, ref string) error
+	SyncRefunded(ctx context.Context, now time.Time, ref string, cumulative types.Money) error
 }
 
 // declinesPerHour is how many payments may fail in an hour before somebody is
@@ -304,6 +345,36 @@ func NewBusiness(log *slog.Logger, gateway Gateway, seen Seen, submissions Submi
 		submissions: submissions,
 		declines:    alarm.NewCeiling(declinesPerHour, time.Hour),
 	}
+}
+
+// Refund gives money back on a payment.
+//
+// The checks are the ones that are about the request rather than about the
+// submission -- whether it is one that can be refunded is submissionbus's
+// question, asked before this. A refund of nothing, or with nowhere to go, is
+// refused here so that it never reaches Stripe.
+func (b *Business) Refund(ctx context.Context, o RefundOrder) (RefundDone, error) {
+	switch {
+	case o.SubmissionID.Zero():
+		return RefundDone{}, errors.New("a refund needs the submission it is for")
+	case o.PaymentRef == "":
+		return RefundDone{}, errors.New("a refund needs the payment it gives money back on")
+	case o.Amount <= 0:
+		return RefundDone{}, errors.New("a refund needs an amount")
+	case o.Key == "":
+		return RefundDone{}, errors.New("a refund needs a key that stops a double click making two")
+	}
+
+	done, err := b.gateway.Refund(ctx, o)
+	if err != nil {
+		return RefundDone{}, fmt.Errorf("making the refund: %w", err)
+	}
+
+	b.log.Info("refund made",
+		"submission_id", o.SubmissionID.String(), "ref", o.PaymentRef,
+		"amount", done.Amount.String(), "refund", done.ID)
+
+	return done, nil
 }
 
 // Start creates the hosted payment session for an accepted submission.
@@ -421,6 +492,36 @@ func (b *Business) Fulfil(ctx context.Context, now time.Time, payload []byte, si
 		if _, err := b.seen.Record(ctx, e.ID, e.Kind, now); err != nil {
 			b.log.Error("a disputed payment was logged but not recorded",
 				"event", e.ID, "error", err)
+		}
+
+		return e, nil
+	}
+
+	// A refund is found by its payment, not by metadata: our submission
+	// identifier is on the payment intent, and a refund event's object is the
+	// charge, which carries the intent's id and not its metadata. Applied
+	// before the submission check below for the dispute's reason, and recorded
+	// second for the same reason as a payment.
+	if e.Result == ResultRefunded {
+		if e.Ref == "" {
+			b.log.Warn("a refund notification names no payment", "event", e.ID)
+
+			e.Result = ResultIgnored
+
+			return e, nil
+		}
+
+		if err := b.submissions.SyncRefunded(ctx, now, e.Ref, e.Refunded); err != nil {
+			return Event{}, fmt.Errorf("recording a refund: %w", err)
+		}
+
+		fresh, err := b.seen.Record(ctx, e.ID, e.Kind, now)
+		switch {
+		case err != nil:
+			b.log.Error("a refund notification was acted on but not recorded",
+				"event", e.ID, "ref", e.Ref, "error", err)
+		case !fresh:
+			return e, ErrSeen
 		}
 
 		return e, nil
