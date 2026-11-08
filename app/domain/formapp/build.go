@@ -162,6 +162,28 @@ func (a app) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Nobody may already hold anything on a form that did not exist a moment
+	// ago, so any grant naming it is left over from a deleted draft of the
+	// same name -- and would otherwise hand whoever helped with that one this
+	// one too. remove clears them as well; this is the line that also covers
+	// every draft deleted before it did.
+	//
+	// After Create rather than before it, because before it the name might
+	// still belong to a form that exists, and clearing that form's grants
+	// would be the opposite of the point. If it fails the form is taken back
+	// out again: it is unpublished, nothing points at it, and a new form
+	// whose access could not be cleared is not one to leave lying around.
+	if err := a.cfg.Grants.RevokeForm(r.Context(), slug); err != nil {
+		if derr := a.cfg.Catalog.Delete(r.Context(), slug); derr != nil {
+			a.cfg.Log.Error("a form whose old grants could not be cleared could not be removed either",
+				"request_id", web.RequestIDFrom(r.Context()), "form", slug.String(), "error", derr)
+		}
+
+		a.oops(w, r, "the grants left on that form's name could not be cleared", err)
+
+		return
+	}
+
 	// Made an administrator of what was just made. A site-wide administrator
 	// does not need this -- their own grant already reaches every form -- but
 	// an account holding nothing but accessbus.RoleCreator does: that role
@@ -270,6 +292,15 @@ func (a app) remove(w http.ResponseWriter, r *http.Request) {
 
 	a.cfg.Log.Info("a form was deleted from the builder",
 		"request_id", web.RequestIDFrom(r.Context()), "form", s.Form.ID.String())
+
+	// And everybody's access to it, since a draft can be shared with the
+	// people helping to write it. Logged rather than refused when it fails:
+	// the form is already gone, a grant on a name nothing claims reaches no
+	// page, and create clears whatever is left before the name is used again.
+	if err := a.cfg.Grants.RevokeForm(r.Context(), s.Form.ID); err != nil {
+		a.cfg.Log.Error("a deleted form's grants could not be cleared",
+			"request_id", web.RequestIDFrom(r.Context()), "form", s.Form.ID.String(), "error", err)
+	}
 
 	http.Redirect(w, r, "/build", http.StatusSeeOther)
 }

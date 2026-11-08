@@ -206,6 +206,14 @@ sign-up sheet.</p>
 
 <p><a href="/forms/{{.FormID}}/edit/settings">Change the settings</a></p>
 
+{{/* Here as well as on the landing page, because before it is published this
+     is where the person writing it is, and "who else can work on this" is a
+     question asked from inside the work. */}}
+<h2>Who is working on it</h2>
+<p><a href="/forms/{{.FormID}}/people">Who can see and change this form</a>
+{{- if not .Live}} &mdash; anybody you give admin there can open this page and
+help write it before it goes on the web{{end}}.</p>
+
 <h2>{{if .Live}}It is on the web{{else}}Putting it on the web{{end}}</h2>
 
 {{if .Live}}

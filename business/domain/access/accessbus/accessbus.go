@@ -424,6 +424,43 @@ func (b *Business) Revoke(ctx context.Context, userID types.ID, form types.Slug)
 	return nil
 }
 
+// RevokeForm removes every grant held on one form, and only on that form.
+//
+// A grant is a row naming a slug, and nothing ties the row to a definition: a
+// draft that is deleted leaves its grants behind, and a new form made later
+// under the same name would inherit them -- somebody invited to help with one
+// parish's draft in March reading another's registrations in June. So this is
+// called both when a draft is deleted and when a form is created, the second
+// because a brand-new form has nobody to inherit and any row already naming it
+// is left over from something that is gone.
+//
+// The site-wide grants are not touched, and a zero slug is refused rather
+// than read as "all of them": that slug *is* the site-wide grants, and an
+// empty value reaching here is a bug, not a request to remove every
+// administrator at once.
+func (b *Business) RevokeForm(ctx context.Context, form types.Slug) error {
+	if form.Zero() {
+		return errors.New("revoking every grant on a form needs the form")
+	}
+
+	grants, err := b.store.ByForm(ctx, form)
+	if err != nil {
+		return fmt.Errorf("listing the grants on %q: %w", form.String(), err)
+	}
+
+	for _, g := range grants {
+		if err := b.store.Delete(ctx, g.UserID, form); err != nil {
+			return fmt.Errorf("revoking the grant on %q: %w", form.String(), err)
+		}
+	}
+
+	if len(grants) > 0 {
+		b.log.Info("revoked every grant on a form", "form", form.String(), "grants", len(grants))
+	}
+
+	return nil
+}
+
 // lastSiteAdmin reports whether this account is the only site-wide admin.
 func (b *Business) lastSiteAdmin(ctx context.Context, userID types.ID) (bool, error) {
 	grants, err := b.store.ByForm(ctx, types.Slug{})

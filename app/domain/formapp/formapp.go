@@ -35,10 +35,15 @@
 // editor at /forms/{slug}/edit reachable next; the same-named page for
 // everyone else is one it cannot open.
 //
-// A consequence worth naming: a draft cannot be handed to anybody, because
-// peopleapp resolves a form through the served catalogue and a draft is not in
-// it. Access to a new form is given once it is live, which is the moment there
-// is anything to give access to.
+// A draft can be shared before it is published, which is how two people write
+// one form: its creator gives somebody admin on it from its people page, and
+// they find it on their own landing page and open this editor, behind the same
+// gate. Nothing here had to change for that -- the gate asks about a grant,
+// and a grant does not care whether the form is live. What changed is that
+// peopleapp now finds a draft through the builder's store as well as the
+// served catalogue. Because a draft can have people on it, deleting one
+// clears their grants, and creating a form clears any grant already naming
+// it; see accessbus.Business.RevokeForm for why both.
 //
 // # There is no JavaScript, and that is not a constraint being worked around
 //
@@ -120,8 +125,9 @@ type Catalog interface {
 	Delete(ctx context.Context, slug types.Slug) error
 }
 
-// Grants is the one thing this app needs from the access domain: making the
-// person who has just created a form an administrator of it.
+// Grants is what this app needs from the access domain: making the person who
+// has just created a form an administrator of it, and clearing whatever access
+// is left on a name when the form behind it is deleted or the name is new.
 //
 // A site-wide administrator does not strictly need this grant -- their
 // site-wide one already reaches every form -- but it is made anyway, without
@@ -133,6 +139,7 @@ type Catalog interface {
 // could not open it.
 type Grants interface {
 	Grant(ctx context.Context, now time.Time, granter, userID types.ID, form types.Slug, role accessbus.Role) (accessbus.Grant, error)
+	RevokeForm(ctx context.Context, form types.Slug) error
 }
 
 // Config is what this app needs.

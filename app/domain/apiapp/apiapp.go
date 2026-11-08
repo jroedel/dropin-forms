@@ -91,12 +91,14 @@ type Catalog interface {
 }
 
 // Grants is what this app asks of the access domain: what an account holds,
-// for the list of forms, and the grant that makes a form's creator its
-// administrator, which formapp makes for the same reason.
+// for the list of forms, the grant that makes a form's creator its
+// administrator, and clearing what is left on a name when its form is deleted
+// or the name is new -- all three for the reasons formapp gives.
 type Grants interface {
 	Allowed(ctx context.Context, userID types.ID, form types.Slug, want accessbus.Role) (bool, error)
 	CanCreateForms(ctx context.Context, userID types.ID) (bool, error)
 	Grant(ctx context.Context, now time.Time, granter, userID types.ID, form types.Slug, role accessbus.Role) (accessbus.Grant, error)
+	RevokeForm(ctx context.Context, form types.Slug) error
 }
 
 // Submissions is the read half of the submission domain. Nothing here writes
@@ -348,6 +350,19 @@ func (a app) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Nobody keeps access from a deleted draft that had this name. Taken back
+	// out if that fails, as formapp.create does and for its reason.
+	if err := a.cfg.Grants.RevokeForm(r.Context(), slug); err != nil {
+		if derr := a.cfg.Catalog.Delete(r.Context(), slug); derr != nil {
+			a.cfg.Log.Error("a form whose old grants could not be cleared could not be removed either",
+				"request_id", web.RequestIDFrom(r.Context()), "form", slug.String(), "error", derr)
+		}
+
+		a.oops(w, r, "the grants left on that form's name could not be cleared", err)
+
+		return
+	}
+
 	// Its creator administers it, for the reason formapp.create gives: an
 	// account holding only the creator role could not otherwise reach the
 	// form it has just made. Logged rather than refused if it fails, because
@@ -479,6 +494,13 @@ func (a app) remove(w http.ResponseWriter, r *http.Request) {
 
 	a.cfg.Log.Info("a form was deleted through the api",
 		"request_id", web.RequestIDFrom(r.Context()), "form", s.Form.ID.String())
+
+	// And everybody's access to it, logged rather than refused, as
+	// formapp.remove does and for its reason.
+	if err := a.cfg.Grants.RevokeForm(r.Context(), s.Form.ID); err != nil {
+		a.cfg.Log.Error("a deleted form's grants could not be cleared",
+			"request_id", web.RequestIDFrom(r.Context()), "form", s.Form.ID.String(), "error", err)
+	}
 
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -847,3 +847,51 @@ func TestCanCreateFormsReportsAFailingStore(t *testing.T) {
 		t.Error("a failing store answered true")
 	}
 }
+
+// Clearing a form takes everybody's grant on it and nothing else: not their
+// grants on other forms, and not anybody's site-wide one.
+func TestRevokeFormClearsThatFormAndOnlyThatForm(t *testing.T) {
+	b, _ := newBusiness()
+	helper, boss := types.NewID(), types.NewID()
+	draft := mustSlug(t, "christmas-pageant")
+	other := mustSlug(t, "fall-retreat")
+
+	for _, g := range []struct {
+		user types.ID
+		form types.Slug
+		role accessbus.Role
+	}{
+		{helper, draft, accessbus.RoleAdmin},
+		{helper, other, accessbus.RoleResults},
+		{boss, types.Slug{}, accessbus.RoleAdmin},
+	} {
+		if _, err := b.Grant(t.Context(), now, types.NewID(), g.user, g.form, g.role); err != nil {
+			t.Fatalf("Grant: %v", err)
+		}
+	}
+
+	if err := b.RevokeForm(t.Context(), draft); err != nil {
+		t.Fatalf("RevokeForm: %v", err)
+	}
+
+	if allowed, err := b.Allowed(t.Context(), helper, draft, accessbus.RoleResults); err != nil || allowed {
+		t.Errorf("after clearing the form, its helper is allowed = %v, err = %v", allowed, err)
+	}
+
+	if allowed, err := b.Allowed(t.Context(), helper, other, accessbus.RoleResults); err != nil || !allowed {
+		t.Errorf("clearing one form took a grant on another: allowed = %v, err = %v", allowed, err)
+	}
+
+	if allowed, err := b.Allowed(t.Context(), boss, draft, accessbus.RoleAdmin); err != nil || !allowed {
+		t.Errorf("clearing one form took a site-wide grant: allowed = %v, err = %v", allowed, err)
+	}
+
+	// The zero slug is the site-wide grants. Refused, not obeyed.
+	if err := b.RevokeForm(t.Context(), types.Slug{}); err == nil {
+		t.Error("RevokeForm with no form was not refused")
+	}
+
+	if allowed, err := b.Allowed(t.Context(), boss, other, accessbus.RoleAdmin); err != nil || !allowed {
+		t.Errorf("a refused RevokeForm still took the site-wide grant: allowed = %v, err = %v", allowed, err)
+	}
+}

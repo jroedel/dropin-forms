@@ -1754,9 +1754,20 @@ to, not a second one.
 
 That is also why the builder's listing is at `/build` rather than folded into
 `/forms`: that page is built from the catalogue of forms being *served*, and a
-draft is by definition not in it. A consequence worth naming is that a draft
-cannot be handed to anybody, since `peopleapp` resolves a form through the
-served catalogue — access is given once there is something to give access to.
+draft is by definition not in it.
+
+**A draft can be shared before it is published** (a later change). At first it
+could not: `peopleapp` resolved a form through the served catalogue only, so
+the one way for a second person to help write a form was to put it on the web
+first. Now the people page also finds a draft through the builder's store, and
+giving somebody admin on it is all that sharing takes — admin on the slug is
+already the editor's gate, and the landing page already lists a draft to its
+administrators. The page preselects admin on a draft, and the invitation signs
+the person in to the editor rather than to a submissions page that would answer
+404. Because a draft can now have people on it, deleting one clears every grant
+on its name, and creating a form clears any grant already naming it: a grant is
+a row naming a slug, and without that a form made later under the same name
+would inherit whoever helped with the deleted one.
 
 **Two things cannot be renamed, and both for the same reason.** A field's name
 is the HTML name, the CSV column heading and the key in every submission
