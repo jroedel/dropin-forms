@@ -350,6 +350,30 @@ type Form struct {
 	Fields []Field
 	Items  []Item
 
+	// Fee is what every submission costs, by being one: the price of a
+	// registration, as against the price of a thing somebody buys some number
+	// of. Zero, the usual answer, means none.
+	//
+	// Not an item, which is what it was before it existed, and the difference
+	// is the whole reason for it. A retreat registration modelled as an item
+	// came with a "how many" box beside it, so one submission could be four
+	// people with one set of answers between them; and a box nobody should
+	// touch, held at one by a per-order cap, still invites them to. A fee has
+	// no quantity to choose. It is charged on its own line -- see [FeeLineID]
+	// -- ahead of any items and any typed amount, so a registration with a
+	// donation on top is the fee plus the donation.
+	//
+	// In the fingerprint when set, because it is a price: changing it must
+	// re-render every half-filled copy at the new one, for the reason [Item]
+	// gives.
+	Fee types.Money
+
+	// FeeLabel is what that line is called wherever a line is shown: the
+	// confirmation page, the emails, the Stripe page and the receipt Stripe
+	// sends. Empty means [DefaultFeeLabel]. Not in the fingerprint -- it is
+	// words, and fixing a typo in them must not throw half-filled forms away.
+	FeeLabel string
+
 	// MinPerOrder and MaxPerOrder bound the quantities of all items added
 	// together. Zero means unbounded at that end.
 	//
@@ -446,6 +470,30 @@ type Form struct {
 	// itself. Off unless its Line is set; see [Listing]. Which fields it
 	// names is in the fingerprint, and [Form.Fingerprint] says why.
 	Listing Listing
+}
+
+// FeeLineID is the item id of the line a [Form.Fee] is charged on.
+//
+// A line rather than a field of its own on [Answers], so that everything that
+// already shows or charges an order's lines -- Stripe, the emails, the
+// confirmation page, the will-call table, the API -- charges and shows the fee
+// without being taught about it. And stored with the submission, so a fee
+// changed in March does not rewrite what somebody agreed to in February.
+//
+// Its prefix is one a field name may not take (see reserved), and item ids
+// are held to the field-name rules, so no item can be given this id.
+const FeeLineID = "dropin_fee"
+
+// DefaultFeeLabel is what a fee's line is called when the form does not say.
+const DefaultFeeLabel = "Registration"
+
+// FeeName is what this form's fee is called.
+func (f Form) FeeName() string {
+	if l := strings.TrimSpace(f.FeeLabel); l != "" {
+		return l
+	}
+
+	return DefaultFeeLabel
 }
 
 // Currencies this service will take. One, today. The list exists so that
@@ -579,6 +627,15 @@ func (f *Form) Check() error {
 	}
 	if f.DailyCap < 0 {
 		add("its daily cap is negative; leave it out for no cap")
+	}
+	if f.Fee < 0 {
+		add("its registration fee is negative")
+	}
+	if f.Fee > types.MaxAmount() {
+		add("its registration fee is larger than this service will take")
+	}
+	if !utf8.ValidString(f.FeeLabel) || strings.ContainsAny(f.FeeLabel, "\r\n") {
+		add("what its registration fee is called is not one line of text")
 	}
 	if f.Capacity < 0 {
 		add("its number of places is negative; leave it out for no limit")
@@ -1068,7 +1125,7 @@ func (f Form) Item(id string) (Item, bool) {
 // nothing needs no payment step at all, and the app layer branches on this
 // rather than on whether a particular total happened to come out at zero.
 func (f Form) Sells() bool {
-	if len(f.Items) > 0 {
+	if len(f.Items) > 0 || f.Fee > 0 {
 		return true
 	}
 
@@ -1219,6 +1276,13 @@ func (f Form) Fingerprint() string {
 
 	if f.PaymentRequired {
 		h.Write([]byte("pay|"))
+	}
+
+	// Only when there is one, so that every form without a fee keeps the
+	// version it had before fees existed.
+	if f.Fee > 0 {
+		write("fee")
+		num(int64(f.Fee))
 	}
 
 	for _, o := range f.Origins {

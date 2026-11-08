@@ -38,6 +38,12 @@ type definition struct {
 	MinTotal int64 `json:"min_total,omitempty"`
 	MaxTotal int64 `json:"max_total,omitempty"`
 
+	// The registration fee, in minor units like the totals, and what it is
+	// called. Omitted when unset, so a form with no fee is stored exactly as
+	// it was before fees existed.
+	Fee      int64  `json:"fee,omitempty"`
+	FeeLabel string `json:"fee_label,omitempty"`
+
 	PaymentRequired bool   `json:"payment_required,omitempty"`
 	PaymentNote     string `json:"payment_note,omitempty"`
 
@@ -153,6 +159,8 @@ func encode(f formbus.Form) (string, error) {
 		MaxPerOrder:     f.MaxPerOrder,
 		MinTotal:        int64(f.MinTotal),
 		MaxTotal:        int64(f.MaxTotal),
+		Fee:             int64(f.Fee),
+		FeeLabel:        f.FeeLabel,
 		PaymentRequired: f.PaymentRequired,
 		PaymentNote:     f.PaymentNote,
 		NeedsApproval:   f.NeedsApproval,
@@ -260,6 +268,8 @@ func decode(body string) (formbus.Form, error) {
 		MaxPerOrder:     w.MaxPerOrder,
 		MinTotal:        types.Money(w.MinTotal),
 		MaxTotal:        types.Money(w.MaxTotal),
+		Fee:             types.Money(w.Fee),
+		FeeLabel:        w.FeeLabel,
 		PaymentRequired: w.PaymentRequired,
 		PaymentNote:     w.PaymentNote,
 		NeedsApproval:   w.NeedsApproval,

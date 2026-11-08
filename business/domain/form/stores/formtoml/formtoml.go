@@ -205,6 +205,11 @@ type form struct {
 	MinTotal string `toml:"min_total"`
 	MaxTotal string `toml:"max_total"`
 
+	// The registration fee, written like an item's price, and what it is
+	// called. See formbus.Form.Fee.
+	Fee      string `toml:"fee"`
+	FeeLabel string `toml:"fee_label"`
+
 	PaymentRequired bool   `toml:"payment_required"`
 	PaymentNote     string `toml:"payment_note"`
 
@@ -316,6 +321,7 @@ func (w form) toForm() (formbus.Form, error) {
 		MaxPerOrder:     w.MaxPerOrder,
 		PaymentRequired: w.PaymentRequired,
 		PaymentNote:     w.PaymentNote,
+		FeeLabel:        w.FeeLabel,
 		NeedsApproval:   w.NeedsApproval,
 		DailyCap:        w.DailyCap,
 		Capacity:        w.Capacity,
@@ -356,6 +362,9 @@ func (w form) toForm() (formbus.Form, error) {
 		return formbus.Form{}, err
 	}
 	if f.MaxTotal, err = parseAmount("max_total", w.MaxTotal); err != nil {
+		return formbus.Form{}, err
+	}
+	if f.Fee, err = parseAmount("fee", w.Fee); err != nil {
 		return formbus.Form{}, err
 	}
 

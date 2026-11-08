@@ -300,6 +300,8 @@ func definitionSchema(creating bool) map[string]any {
 		"max_per_order":    integer("Most items in one order, all items together."),
 		"min_total":        integer("Smallest total, in cents, when the total is not zero."),
 		"max_total":        integer("Largest total, in cents."),
+		"fee":              integer("A registration fee, in cents: what every submission costs, charged once with no quantity box. Use this rather than an item when one submission is one person. A donation (amount question) or items add to it."),
+		"fee_label":        str("What the fee is called on the form, the emails and the receipt. Omit for Registration."),
 		"payment_required": boolean("Refuse a submission that comes to nothing. Needs payment_note."),
 		"payment_note":     str("What to tell somebody whose submission comes to nothing, when payment_required."),
 		"needs_approval":   boolean("Hold each submission until somebody who can read the results approves or declines it. A waiting one keeps its limited place; declining frees it. Not allowed on a form that sells anything."),

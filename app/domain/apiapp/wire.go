@@ -55,6 +55,10 @@ type definitionDoc struct {
 	MinTotal    int64 `json:"min_total,omitempty"`
 	MaxTotal    int64 `json:"max_total,omitempty"`
 
+	// What every submission costs, in cents, and what that line is called.
+	Fee      int64  `json:"fee,omitempty"`
+	FeeLabel string `json:"fee_label,omitempty"`
+
 	PaymentRequired bool   `json:"payment_required,omitempty"`
 	PaymentNote     string `json:"payment_note,omitempty"`
 	NeedsApproval   bool   `json:"needs_approval,omitempty"`
@@ -209,6 +213,8 @@ func formOf(d definitionDoc) (formbus.Form, []string) {
 		MaxPerOrder:     d.MaxPerOrder,
 		MinTotal:        types.Money(d.MinTotal),
 		MaxTotal:        types.Money(d.MaxTotal),
+		Fee:             types.Money(d.Fee),
+		FeeLabel:        d.FeeLabel,
 		PaymentRequired: d.PaymentRequired,
 		PaymentNote:     d.PaymentNote,
 		NeedsApproval:   d.NeedsApproval,
@@ -337,6 +343,8 @@ func definitionOf(f formbus.Form) definitionDoc {
 		MaxPerOrder:     f.MaxPerOrder,
 		MinTotal:        int64(f.MinTotal),
 		MaxTotal:        int64(f.MaxTotal),
+		Fee:             int64(f.Fee),
+		FeeLabel:        f.FeeLabel,
 		PaymentRequired: f.PaymentRequired,
 		PaymentNote:     f.PaymentNote,
 		NeedsApproval:   f.NeedsApproval,

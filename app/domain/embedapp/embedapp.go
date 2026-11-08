@@ -418,6 +418,12 @@ type formView struct {
 	Groups []groupView
 	Items  []itemView
 
+	// Fee is the registration fee as it is shown, with FeeLabel beside it, or
+	// empty on a form with none. A line with no box: there is nothing to
+	// choose about it, and the server charges it whatever is sent.
+	Fee      string
+	FeeLabel string
+
 	// MinPerOrder and MaxPerOrder are the order's own bounds, as a sentence
 	// the template shows above the quantity boxes. A rule enforced on the
 	// server and never stated on the page is a refusal somebody cannot
@@ -1135,6 +1141,8 @@ func (a app) formView(
 		Symbol:        formbus.Symbol(f.Currency),
 		Groups:        viewGroups(f, values, problems, taken),
 		Items:         viewItems(f, values, problems),
+		Fee:           feeShown(f),
+		FeeLabel:      f.FeeName(),
 		OrderNote:     orderNote(f),
 		OrderProblems: problems.For(""),
 		Problems:      problems,

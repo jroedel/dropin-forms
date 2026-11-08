@@ -226,6 +226,7 @@ Every key:
 | `return_url` | the page it is embedded on, required when it sells |
 | `min_per_order`, `max_per_order` | how many items in one order, all together |
 | `min_total`, `max_total` | bounds on a non-zero total, in cents |
+| `fee`, `fee_label` | a registration fee in cents, and what it is called (default `Registration`). Every submission is charged it once, on a line of its own ahead of any items or donation, with no quantity box. Use it when one submission is one person; a submission's `lines` show it with the item id `dropin_fee` |
 | `payment_required`, `payment_note` | refuse a submission that comes to nothing, and what to say when one does |
 | `daily_cap` | an abuse control, the most submissions in 24 hours. Leave it out unless asked |
 | `capacity` | how many submissions the form takes before it is full, like the beds at a retreat; leave it out for no limit. An order still in checkout holds its place until it is paid or abandoned. A full form shows its `closed_note`, or a sentence saying every place is taken |

@@ -223,6 +223,11 @@ func (a Answers) Values() Values {
 	}
 
 	for _, l := range a.Lines {
+		// A fee has no box to put a quantity back into.
+		if l.ItemID == FeeLineID {
+			continue
+		}
+
 		out[QuantityField(l.ItemID)] = []string{strconv.Itoa(l.Qty)}
 	}
 
@@ -360,6 +365,27 @@ func (f Form) judge(in Values) (Answers, error) {
 
 	lines, ordered, charged, problems := f.order(in)
 	vs = append(vs, problems...)
+
+	// The fee first, on a line of its own, whatever the body said: there is no
+	// input for it and nothing a request can send changes it. Not counted in
+	// ordered, which is the per-order bound on things bought by the number.
+	if f.Fee > 0 {
+		sum, err := charged.Add(f.Fee)
+		if err != nil {
+			vs = append(vs, Violation{Message: "That order is larger than we can take."})
+		} else {
+			charged = sum
+		}
+
+		lines = append([]Line{{
+			ItemID: FeeLineID,
+			Label:  f.FeeName(),
+			Price:  f.Fee,
+			Qty:    1,
+			Amount: f.Fee,
+		}}, lines...)
+	}
+
 	ans.Lines = lines
 
 	total, err := charged.Add(typed)

@@ -343,6 +343,25 @@ server and render in place.
 
 ## 7. Money
 
+### 7.0 A registration fee is not an item (a later change)
+
+A retreat registration was first modelled as an item at a fixed price, and an
+item comes with a "how many" box — so one submission could be four people
+sharing one set of answers, and the nearest fix (a per-item and per-order cap
+of one) still showed a box nobody should touch. The office's own words were the
+better model: *a registration costs $150*. So a form now has a `Fee` of its own,
+the price of a submission by being one, and `FeeLabel`, what that is called.
+
+It is charged on a line like an item's, with the reserved id `dropin_fee`
+(field names may not start `dropin_`, and item ids are held to the same rules),
+first in the order and always at quantity one. Nothing the browser sends can
+move it. Being a line is what made it cheap: Stripe, the emails, the
+confirmation, will-call and the API already show and charge an order's lines,
+and the line is stored with the submission, so a fee raised in March does not
+rewrite what somebody agreed to in February. A donation question and items
+still add on top. A form with a fee *sells*, so every rule for a paid form
+applies to it. The fee is in the fingerprint when set and its label is not.
+
 ### 7.1 Amounts are derived, never received
 
 The browser never sends a price. It sends item selections and, for

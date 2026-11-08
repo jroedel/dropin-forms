@@ -338,6 +338,13 @@ func settingsSummary(f formbus.Form) []settingRow {
 		rows = append(rows,
 			set("Currency", strings.ToUpper(f.Currency)),
 			set("Sends buyers back to", f.ReturnURL),
+		)
+
+		if f.Fee > 0 {
+			rows = append(rows, set("Registration fee", f.FeeName()+", "+formbus.Show(f.Fee, f.Currency)))
+		}
+
+		rows = append(rows,
 			set("Order size", countRange(f.MinPerOrder, f.MaxPerOrder, "no limit")),
 			set("Order total", moneyRange(f.MinTotal, f.MaxTotal, f.Currency)),
 		)

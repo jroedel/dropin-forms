@@ -319,6 +319,12 @@ textarea:user-invalid {
   font-variant-numeric: tabular-nums;
 }
 
+/* A registration fee has no box beside it, so its price is the line's whole
+   point rather than a note beside a choice. */
+.item.fee .item-price {
+  color: inherit;
+}
+
 .item input[type="number"] {
   flex: 0 0 5rem;
   width: 5rem;
