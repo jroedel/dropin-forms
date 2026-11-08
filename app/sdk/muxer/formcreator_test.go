@@ -298,7 +298,14 @@ func TestACreatorFindsTheirOwnUnpublishedDraftOnTheLandingPage(t *testing.T) {
 
 	body := w.Body.String()
 
-	for _, want := range []string{"Bake sale", `href="/forms/bake-sale-2026/edit"`, "draft"} {
+	// The editor, and the people page that shares the draft with whoever is
+	// helping to write it.
+	for _, want := range []string{
+		"Bake sale",
+		`href="/forms/bake-sale-2026/edit"`,
+		`href="/forms/bake-sale-2026/people"`,
+		"draft",
+	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the landing page does not show %q for a draft they administer:\n%s", want, body)
 		}
@@ -310,7 +317,6 @@ func TestACreatorFindsTheirOwnUnpublishedDraftOnTheLandingPage(t *testing.T) {
 	for _, gone := range []string{
 		`href="/forms/bake-sale-2026/submissions"`,
 		`href="/forms/bake-sale-2026/will-call"`,
-		`href="/forms/bake-sale-2026/people"`,
 		`href="/notifications/bake-sale-2026"`,
 	} {
 		if strings.Contains(body, gone) {
@@ -322,11 +328,14 @@ func TestACreatorFindsTheirOwnUnpublishedDraftOnTheLandingPage(t *testing.T) {
 	for _, target := range []string{
 		"/forms/bake-sale-2026/submissions",
 		"/forms/bake-sale-2026/will-call",
-		"/forms/bake-sale-2026/people",
 	} {
 		if res := a.get(t, target, cookie); res.Code == http.StatusOK {
 			t.Errorf("GET %s on a draft = 200; the row was right not to link it", target)
 		}
+	}
+
+	if res := a.get(t, "/forms/bake-sale-2026/people", cookie); res.Code != http.StatusOK {
+		t.Errorf("GET the people page of their own draft = %d, want 200:\n%s", res.Code, res.Body)
 	}
 
 	// And the whole picture is still not theirs.
@@ -507,11 +516,8 @@ func TestCreatingAFormThatExistsGrantsNothing(t *testing.T) {
 func TestACreatorCannotHandOutACreatorRoleFromTheirOwnFormsPeoplePage(t *testing.T) {
 	a := newAdmin(t, "")
 
-	// An admin on a served form, which is what a creator becomes on their own
-	// form the moment they publish it. Done this way round because a draft
-	// has no people page at all -- peopleapp resolves the form through the
-	// served catalogue -- and the rule under test is about the role, not
-	// about which form it is.
+	// An admin on a served form. A draft has a people page too, and the rule
+	// under test is about the role, not about which form it is.
 	boss := formAdmin(t, a, "boss@schoenstatt.test")
 	cookie := sessionFor(t, a, boss)
 

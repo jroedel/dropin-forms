@@ -78,6 +78,17 @@ type Forms interface {
 	ByID(slug types.Slug) (formbus.Form, error)
 }
 
+// Drafts is the builder's store, for a form that is not being served yet.
+//
+// Forms answers only for what the public can see, and a form being written by
+// two people has to be shareable before then -- that is the point of sharing
+// it. So a slug the served catalogue does not know is looked up here as well.
+// Nothing about the grant differs: admin on a draft is admin on the form, and
+// is what opens the editor at /forms/{slug}/edit.
+type Drafts interface {
+	Draft(ctx context.Context, slug types.Slug) (formbus.Stored, error)
+}
+
 // Accounts is the slice of the account domain this app needs.
 //
 // No sign-in and no session: making an account and finding one are the whole
@@ -121,6 +132,11 @@ type Config struct {
 	// whoever receives it cannot tell.
 	BaseURL string
 
+	// Drafts is optional, and set only where the builder is mounted, which is
+	// the only thing that makes a draft. Without it a form that is not being
+	// served has no people page, exactly as before there were drafts.
+	Drafts Drafts
+
 	// Notifications is optional, and without it the page simply does not
 	// mention email -- which is right for an installation that sends none. A
 	// column saying somebody is being emailed by a service with no relay is
@@ -161,6 +177,11 @@ type listView struct {
 	// Email says whether this installation can tell anybody about a
 	// submission, and therefore whether the email column means anything.
 	Email bool
+
+	// Draft is a form that is not on the web yet. The page then says that
+	// admin is the role that can help write it, and leads back to the editor
+	// rather than to submissions there cannot be.
+	Draft bool
 
 	// Done and Problem are what just happened. One of them at most, and both
 	// are sentences rather than statuses, because this page is the only place
@@ -646,6 +667,14 @@ func (a app) show(w http.ResponseWriter, r *http.Request, status int, f formbus.
 	view.Form = f
 	view.FormID = f.ID.String()
 	view.Roles = rolesFor()
+	view.Draft = !a.live(f.ID)
+
+	// On a draft the reason somebody is being added is almost always to help
+	// write it, so that is the choice already made. Only when nothing was
+	// picked: a refused entry comes back with what was chosen.
+	if view.Draft && view.Role == "" {
+		view.Role = accessbus.RoleAdmin.String()
+	}
 
 	me, _ := mid.UserFrom(r.Context())
 
@@ -878,16 +907,41 @@ func (a app) invite(u userbus.User, f formbus.Form, role accessbus.Role, created
 		b.WriteString("You have been given access to " + f.Title + " in the Schoenstatt Austin forms admin.\r\n\r\n")
 	}
 
-	b.WriteString("You can read its submissions")
+	// Where signing in lands them. The submissions page for a live form,
+	// because every role can read that one; on a draft there are no
+	// submissions and that page answers 404, so an administrator goes to the
+	// editor and anybody else to their list, where the form appears once it
+	// is published.
+	next := "/forms/" + f.ID.String() + "/submissions"
 
-	switch role {
-	case accessbus.RoleDoor:
-		b.WriteString(", and check people off at the will-call table")
-	case accessbus.RoleAdmin:
-		b.WriteString(", and decide who else can")
+	switch {
+	case !a.live(f.ID) && role == accessbus.RoleAdmin:
+		next = "/forms/" + f.ID.String() + "/edit"
+
+		b.WriteString("It is not on the web yet. You can help write it: change its questions " +
+			"and settings, decide who else can work on it, and publish it when it is ready.\r\n\r\n")
+	case !a.live(f.ID):
+		next = "/forms"
+
+		b.WriteString("It is not on the web yet. Once it is, you can read its submissions")
+
+		if role == accessbus.RoleDoor {
+			b.WriteString(" and check people off at the will-call table")
+		}
+
+		b.WriteString(", and it will be on your list when you sign in.\r\n\r\n")
+	default:
+		b.WriteString("You can read its submissions")
+
+		switch role {
+		case accessbus.RoleDoor:
+			b.WriteString(", and check people off at the will-call table")
+		case accessbus.RoleAdmin:
+			b.WriteString(", and decide who else can")
+		}
+
+		b.WriteString(".\r\n\r\n")
 	}
-
-	b.WriteString(".\r\n\r\n")
 
 	// The sign-in page rather than a link that signs them in. See the package
 	// comment: a fifteen-minute token in a message read that evening is a dead
@@ -903,11 +957,10 @@ func (a app) invite(u userbus.User, f formbus.Form, role accessbus.Role, created
 	// removes the guess.
 	//
 	// And the form they were given travels too, so that signing in opens it
-	// rather than a list they have to find it in. Its submissions page,
-	// because every role can read that one.
+	// rather than a list they have to find it in. See next, above.
 	link := url.Values{
 		"email": {u.Email.String()},
-		"next":  {"/forms/" + f.ID.String() + "/submissions"},
+		"next":  {next},
 	}
 
 	b.WriteString("Sign in here and we will email you a code:\r\n\r\n" +
@@ -926,7 +979,8 @@ func (a app) invite(u userbus.User, f formbus.Form, role accessbus.Role, created
 	}
 }
 
-// form resolves the slug in the path.
+// form resolves the slug in the path: the served catalogue first, and then,
+// where the builder is mounted, the drafts it has not published yet.
 //
 // The role gate in front of these routes has already checked an admin grant on
 // that slug, so reaching here means the account may manage this form -- but the
@@ -943,6 +997,13 @@ func (a app) form(w http.ResponseWriter, r *http.Request) (formbus.Form, bool) {
 
 	f, err := a.cfg.Forms.ByID(slug)
 
+	if errors.Is(err, formtoml.ErrNotFound) && a.cfg.Drafts != nil {
+		var s formbus.Stored
+
+		s, err = a.cfg.Drafts.Draft(r.Context(), slug)
+		f = s.Form
+	}
+
 	switch {
 	case errors.Is(err, formtoml.ErrNotFound):
 		a.notFound(w, r)
@@ -955,6 +1016,16 @@ func (a app) form(w http.ResponseWriter, r *http.Request) (formbus.Form, bool) {
 	}
 
 	return f, true
+}
+
+// live reports whether a form is being served. Asked again rather than
+// returned from form alongside the definition: it is one map read, and
+// asking it here saves threading a second value through every handler that
+// ends on this page.
+func (a app) live(slug types.Slug) bool {
+	_, err := a.cfg.Forms.ByID(slug)
+
+	return err == nil
 }
 
 // notFound is plain text rather than a page, and deliberately the same

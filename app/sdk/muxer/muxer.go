@@ -517,6 +517,14 @@ func Admin(cfg Config) (http.Handler, error) {
 		pc.Notifications = cfg.Notify
 	}
 
+	// A draft can be shared with whoever is helping to write it, so the people
+	// page finds a form through the builder's store as well as through what is
+	// served. The gate is unchanged: admin on that slug, which is also the
+	// editor's gate, and that is what the person added gets.
+	if cfg.Builder != nil {
+		pc.Drafts = cfg.Builder
+	}
+
 	peopleapp.Routes(mux, pc, guard, admins)
 
 	// Hiding a submission, behind admin on that form: it changes the totals

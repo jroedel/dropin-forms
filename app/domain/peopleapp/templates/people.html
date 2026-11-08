@@ -5,6 +5,13 @@
 {{define "content"}}
 <h1>Who can see {{.Form.Title}}</h1>
 
+{{if .Draft}}
+<p class="help">This form is not on the web yet. Anybody you let edit it
+&mdash; <strong>admin</strong>, the last choice below &mdash; can open it in the
+builder and help write it. The other choices start to mean something once it is
+published.</p>
+{{end}}
+
 {{if .Done}}<p class="notice">{{.Done}}</p>{{end}}
 {{if .Problem}}<p class="problem">{{.Problem}}</p>{{end}}
 
@@ -133,5 +140,9 @@ row. Adding an address that already appears above does the same thing.</p>
   <button type="submit">Give access</button>
 </form>
 
+{{if .Draft}}
+<p><a href="/forms/{{.FormID}}/edit">Back to the form</a></p>
+{{else}}
 <p><a href="/forms/{{.FormID}}/submissions">Back to the submissions</a></p>
+{{end}}
 {{end}}
