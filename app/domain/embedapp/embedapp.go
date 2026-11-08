@@ -117,6 +117,8 @@ type Forms interface {
 type Submissions interface {
 	Accept(ctx context.Context, now time.Time, g formbus.Grant, ns submissionbus.New) (submissionbus.Submission, error)
 	Waiting(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error)
+	ForPayment(ctx context.Context, form types.Slug, id types.ID) (submissionbus.Submission, error)
+	Hold(ctx context.Context, now time.Time, form types.Slug, id types.ID, until time.Time) (submissionbus.Submission, error)
 	Recent(ctx context.Context, form types.Slug, limit int) ([]submissionbus.Submission, error)
 	Taken(ctx context.Context, form types.Slug) (formbus.Taken, error)
 	Mine(ctx context.Context, form types.Slug, id types.ID) (submissionbus.Submission, error)
@@ -375,6 +377,15 @@ func Routes(mux *http.ServeMux, cfg Config, writes func(http.Handler) http.Handl
 	// allowance is for.
 	mux.Handle("GET /f/{slug}/link", reads(http.HandlerFunc(a.lostLink)))
 	mux.Handle("POST /f/{slug}/link", submits(writes(http.HandlerFunc(a.sendLink))))
+
+	// Paying for a place offered from a waiting list, through the link in the
+	// message that offered it. The GET only shows what is held and until
+	// when: a mail scanner that follows every link in a message must not be
+	// able to start a payment. The POST holds the place for the length of a
+	// payment page and makes one, so it is held to the submit allowance, the
+	// one that makes card testing expensive.
+	mux.Handle("GET /f/{slug}/pay", reads(http.HandlerFunc(a.payPage)))
+	mux.Handle("POST /f/{slug}/pay", submits(writes(http.HandlerFunc(a.pay))))
 
 	// Where Stripe sends the browser back to. Strictly speaking Stripe sends
 	// it to the *hosting* page and embed.js brings it here, which is the only

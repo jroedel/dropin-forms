@@ -455,8 +455,9 @@ type Form struct {
 
 	// Waitlist is what a full form does instead of closing: it keeps taking
 	// submissions, each on a waiting list, and the office offers a place to
-	// whoever it chooses when one opens. Meaningless without a Capacity, and
-	// Check says so. Not in the fingerprint either: it changes what happens to
+	// whoever it chooses when one opens. On a form that takes money the place
+	// is held for the person to pay for, through a link they are emailed.
+	// Meaningless without a Capacity, and Check says so. Not in the fingerprint either: it changes what happens to
 	// a submission when the form is full, which is decided when it arrives.
 	Waitlist bool
 
@@ -642,12 +643,6 @@ func (f *Form) Check() error {
 	}
 	if f.Waitlist && f.Capacity == 0 {
 		add("it takes a waiting list but has no number of places, so it is never full")
-	}
-	if f.Waitlist && f.Sells() {
-		// Offering a place that has to be paid for needs a way to pay
-		// days later, with the place held meanwhile, and that is not built
-		// yet. Until it is, a paid form that fills simply closes.
-		add("it takes a waiting list and it takes money; a waiting list on a form that takes money is not ready yet")
 	}
 	if f.MinTotal < 0 {
 		add("its minimum total is negative")

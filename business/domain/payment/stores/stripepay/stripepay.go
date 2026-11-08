@@ -135,7 +135,17 @@ func (g *Gateway) Checkout(ctx context.Context, o paybus.Order) (paybus.Handoff,
 	// timeout where the session may or may not have been created. It dedupes
 	// nothing a person does: what stops a second order is the single-use
 	// grant, which was already spent before this call was reached.
-	params.IdempotencyKey = stripe.String("checkout:" + o.SubmissionID.String())
+	//
+	// An offered place's second page is a second call rather than a retry of
+	// the first -- the first has expired or been closed -- so its key carries
+	// the attempt. With the same key Stripe would answer the second request
+	// with the first's error, since its expiry differs.
+	key := "checkout:" + o.SubmissionID.String()
+	if o.Attempt != "" {
+		key += ":" + o.Attempt
+	}
+
+	params.IdempotencyKey = stripe.String(key)
 
 	if e := o.Email.String(); e != "" {
 		params.CustomerEmail = stripe.String(e)

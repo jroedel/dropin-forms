@@ -1,0 +1,64 @@
+{{define "title"}}{{.Form.Title}}{{end}}
+
+{{define "content"}}
+{{/* Opened from an email rather than inside a frame, so there is no parent
+     to post a height to; ParentOrigin is empty, and the attribute is kept
+     only so the page's script finds the element it looks for. */}}
+<div id="dropin-root" data-parent-origin="{{.ParentOrigin}}" class="outcome">
+<div class="said">
+<h1>{{.Form.Title}}</h1>
+{{if .Broken}}
+<p>This payment link did not work. If you copied it from an email, please
+check that you copied all of it, or reply to that email and we will help.</p>
+{{else if .Paid}}
+<p>This place is paid for, and it is yours. Thank you.</p>
+{{else if .Gone}}
+<p>This place is no longer being held for you: it was not paid for in time,
+and it has gone back to the office to offer to somebody else. If you would
+still like to come, reply to the email we sent you.</p>
+{{else}}
+<p>A place has opened, and we are holding it for you until {{.Until}}.</p>
+{{end}}
+</div>
+
+{{if .Held}}
+{{if .Lines}}
+<table class="receipt">
+<tbody>
+{{range .Lines}}
+<tr>
+<th scope="row">{{.Label}}</th>
+<td class="figure">{{.Qty}}</td>
+<td class="figure">{{.Amount}}</td>
+</tr>
+{{end}}
+{{with .Total}}
+<tr class="total">
+<th scope="row" colspan="2">Total</th>
+<td class="figure">{{.}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{end}}
+
+{{if .PayURL}}
+<p class="pay">
+<a class="button" href="{{.PayURL}}" target="_top" rel="noopener">Continue to payment</a>
+</p>
+<p class="note">Payment is handled by Stripe. Your card details are never sent to this site.</p>
+{{else if .Unavailable}}
+<p class="note">We could not open the payment page just now. Nothing has been
+charged, and the place is still held for you. Please try again in a few
+minutes, or reply to the email we sent you.</p>
+{{else}}
+{{/* A button, not a link: making a payment page is a write, and a GET on
+     this address is made by every mail scanner that opens the email. */}}
+<form method="post" action="/f/{{.Form.ID}}/pay">
+<input type="hidden" name="t" value="{{.Token}}">
+<button class="go" type="submit" data-busy="One moment…">Pay now</button>
+</form>
+{{end}}
+{{end}}
+</div>
+{{end}}

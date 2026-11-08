@@ -87,7 +87,11 @@ func (b *Business) Mine(ctx context.Context, form types.Slug, id types.ID) (Subm
 
 	// Declined is in the same sentence as everything else: the link stops
 	// working, and the email that said so is where the person was told why.
-	if s.Form != form || s.Status != StatusReceived || s.Review == ReviewDeclined {
+	//
+	// Somebody on the waiting list may change theirs: they were sent the
+	// link with the message saying they were on it, and a phone number that
+	// changes while they wait is the reason the link exists.
+	if s.Form != form || (s.Status != StatusReceived && s.Status != StatusWaiting) || s.Review == ReviewDeclined {
 		return Submission{}, ErrNotFound
 	}
 

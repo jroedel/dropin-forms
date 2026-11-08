@@ -96,8 +96,44 @@ func (b *Business) forSubmitter(f formbus.Form, sub submissionbus.Submission, pa
 // confirmation, their answers and the way back -- unless the form also waits
 // for approval, when the confirmation is held back for the message that says
 // so, as forSubmitter holds it back.
+//
+// On a form that takes money the place is held rather than given, and the
+// message is the link to pay for it and the time it is held until. No
+// confirmation text: it is written as "see you there", and nobody has paid.
 func (b *Business) forOffered(f formbus.Form, sub submissionbus.Submission) mail.Message {
 	var body strings.Builder
+
+	if sub.Status == submissionbus.StatusOffered {
+		fmt.Fprintf(&body, "A place has opened, and we are holding it for you until %s.\n\n",
+			b.when(sub.OfferExpiresAt))
+
+		if link := b.payLink(f, sub); link != "" {
+			body.WriteString("To take it, pay here:\n\n")
+			body.WriteString(link)
+			body.WriteString("\n\n")
+		} else {
+			body.WriteString("Reply to this message and we will arrange the payment with you.\n\n")
+		}
+
+		body.WriteString("If it is not paid for by then, we will offer it to the next person on the\n" +
+			"waiting list.\n\n")
+
+		if lines := receipt(f, sub); lines != "" {
+			body.WriteString("What it comes to:\n\n")
+			body.WriteString(lines)
+			body.WriteString("\n")
+		}
+
+		if answers := answered(sub); answers != "" {
+			body.WriteString("What you sent us:\n\n")
+			body.WriteString(answers)
+			body.WriteString("\n")
+		}
+
+		body.WriteString("If you no longer need it, reply and let us know, so it can go to somebody else.\n")
+
+		return mail.Message{Subject: f.Title + ": a place is held for you", Text: body.String()}
+	}
 
 	body.WriteString("A place has opened, and it is yours.\n\n")
 
@@ -211,6 +247,24 @@ func (b *Business) answerLink(f formbus.Form, sub submissionbus.Submission) stri
 	}
 
 	return b.cfg.EmbedBaseURL + "/f/" + f.ID.String() + "/mine?t=" + token
+}
+
+// payLink is the address of the page for paying for an offered place, or
+// empty when this installation cannot build one.
+func (b *Business) payLink(f formbus.Form, sub submissionbus.Submission) string {
+	if b.cfg.AnswerKey.Zero() || b.cfg.EmbedBaseURL == "" {
+		return ""
+	}
+
+	token, err := submissionbus.MintPayLink(b.cfg.AnswerKey, f.ID, sub.ID)
+	if err != nil {
+		b.cfg.Log.Error("a payment link could not be built",
+			"form", f.ID.String(), "submission_id", sub.ID.String(), "error", err)
+
+		return ""
+	}
+
+	return b.cfg.EmbedBaseURL + "/f/" + f.ID.String() + "/pay?t=" + token
 }
 
 // forOffice is the message to whoever has to act on a submission.

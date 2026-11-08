@@ -2319,11 +2319,28 @@ a full form is refused with a sentence. The person is emailed that the place is
 theirs. Someone on the waiting list of a form that also asks for approval
 cannot be approved or declined until they are offered a place.
 
-**Not yet on a form that takes money.** Offering a paid place days later needs a
-way to pay then, with the place held meanwhile, and that is the next change;
-until it lands, `Check` refuses a waiting list on a form that sells. Neither
-setting is in the fingerprint: raising the number so one more can come must not
-throw away anybody's half-filled form.
+**On a form that takes money, the place is held while they pay.** Offering a
+paid place moves the row to `offered`, which holds the place, with
+`OfferExpiresAt` two days on (`submissionbus.OfferHold`). The email carries a
+link to `/f/{slug}/pay`, signed like the answer link but under a key derived
+from it with its own label, so a link for changing answers is never a link for
+paying, or the other way round. Opening the link shows the place, what it comes
+to and until when it is held, and starts nothing: mail scanners follow every
+link in a message, and a GET that made a Stripe session would make them for
+nobody. **Pay now** is a POST, on the submit allowance, that first lengthens the
+hold to cover the payment page it is about to make (never shortening it), so a
+page opened in the last hour of a hold cannot outlive it and land a payment on
+a place that has been given away. Each press is its own page, with its own
+idempotency key, so somebody who closed the first can be given a second.
+
+The webhook settles an offered row to paid like any order. A declined card
+leaves it offered — the person is still on Stripe's page and may try another
+card — where an ordinary order would be marked failed. The housekeeping sweep
+that marks unpaid orders abandoned also moves every offer past its hold to
+`abandoned`, which gives the place back; the results page lists the held places
+with when each ends, so the office knows when to offer again. Neither setting is
+in the fingerprint: raising the number so one more can come must not throw away
+anybody's half-filled form.
 
 ### The API and the MCP endpoint, as built
 

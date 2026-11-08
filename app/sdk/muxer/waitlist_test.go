@@ -51,14 +51,23 @@ type quietHarness struct {
 	office
 	subs   *submissionbus.Business
 	sent   *mail.Recorder
+	pay    *counter
 	cookie string
 }
 
 func quietSurface(t *testing.T, waitlist bool) quietHarness {
 	t.Helper()
 
-	f := quietDay(t, waitlist)
-	start := time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)
+	return quietSurfaceFor(t, quietDay(t, waitlist))
+}
+
+func quietSurfaceFor(t *testing.T, f formbus.Form) quietHarness {
+	t.Helper()
+
+	// From the real clock, because the office's side -- offering a place,
+	// and the hold that starts then -- reads it, and the public side has to
+	// agree with it about whether that hold has ended.
+	start := time.Now().UTC()
 
 	// A minute between requests, so the order people joined the list in is
 	// the order they asked rather than a tie.
@@ -71,7 +80,11 @@ func quietSurface(t *testing.T, waitlist bool) quietHarness {
 		return start.Add(ticks)
 	}
 	cfg.Embed.Forms = formAt{&f}
+	cfg.Embed.AnswerKey = answerKey
 	cfg.Forms = formAt{&f}
+
+	pay := &counter{}
+	cfg.Embed.Payments = pay
 
 	subs, ok := cfg.Embed.Submissions.(*submissionbus.Business)
 	if !ok {
@@ -91,6 +104,8 @@ func quietSurface(t *testing.T, waitlist bool) quietHarness {
 		Accounts:     cfg.Users,
 		Office:       "office@schoenstatt.test",
 		AdminBaseURL: "https://forms.test",
+		AnswerKey:    answerKey,
+		EmbedBaseURL: "https://f.forms.test",
 	})
 	if err != nil {
 		t.Fatalf("notifybus.NewBusiness: %v", err)
@@ -103,7 +118,7 @@ func quietSurface(t *testing.T, waitlist bool) quietHarness {
 	who, cookie := o.reader(t, "secretary@schoenstatt.test")
 	o.grant(t, who, "quiet-day", accessbus.RoleResults)
 
-	return quietHarness{office: o, subs: subs, sent: sent, cookie: cookie}
+	return quietHarness{office: o, subs: subs, sent: sent, pay: pay, cookie: cookie}
 }
 
 // sign fills the form in from a freshly drawn page.

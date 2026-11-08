@@ -65,6 +65,24 @@ charges nothing.</caption>
 checkout holds its place until it is paid or abandoned.</p>
 {{end}}
 
+{{if .Offered}}
+<table class="listing">
+<caption>Offered a place, not paid yet. Each is held until the time shown,
+then given back.</caption>
+<thead>
+<tr><th scope="col">Who</th><th scope="col">Held until</th></tr>
+</thead>
+<tbody>
+{{range .Offered}}
+<tr>
+<th scope="row"><a href="/forms/{{$.FormID}}/submissions/{{.ID}}">{{if .Who}}{{.Who}}{{else}}Submission{{end}}</a></th>
+<td class="when">{{.Until}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{end}}
+
 {{if .Waiting}}
 {{/* Oldest first, because that is the usual order to offer places in -- but
      a button on every row, because who gets one is the office's choice. */}}

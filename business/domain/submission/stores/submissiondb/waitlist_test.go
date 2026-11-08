@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
@@ -114,5 +115,57 @@ func TestPromoteTakesAPlaceOnceAndOnlyWhileThereIsOne(t *testing.T) {
 
 	if got, _ := store.ByID(t.Context(), second.ID); got.Status != submissionbus.StatusWaiting {
 		t.Errorf("a refused Promote left the row %s, want waiting", got.Status)
+	}
+}
+
+// An offer's hold is stored and read back, lengthened only while it is still
+// held, and let go of by the sweep once it has ended.
+func TestAnOfferIsHeldLengthenedAndLapsed(t *testing.T) {
+	_, store := open(t)
+
+	s := signup(t, "a")
+	s.Status = submissionbus.StatusWaiting
+
+	if _, err := store.Accept(t.Context(), s, "one", nil); err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+
+	offered := s
+	offered.Status = submissionbus.StatusOffered
+	offered.OfferExpiresAt = now.Add(48 * time.Hour)
+
+	if err := store.Promote(t.Context(), s, offered, []formbus.Claim{{Limit: 1}}); err != nil {
+		t.Fatalf("Promote: %v", err)
+	}
+
+	got, err := store.ByID(t.Context(), s.ID)
+	if err != nil || got.Status != submissionbus.StatusOffered || !got.OfferExpiresAt.Equal(offered.OfferExpiresAt) {
+		t.Fatalf("read back %s until %v, %v", got.Status, got.OfferExpiresAt, err)
+	}
+
+	if taken, _ := store.Taken(t.Context(), s.Form); taken.Held() != 1 {
+		t.Errorf("an offered place is not counted as held: %d", taken.Held())
+	}
+
+	later := now.Add(50 * time.Hour)
+
+	if err := store.Hold(t.Context(), s.ID, now.Add(47*time.Hour), later); err != nil {
+		t.Fatalf("Hold: %v", err)
+	}
+
+	if n, err := store.Lapse(t.Context(), now.Add(49*time.Hour)); err != nil || n != 0 {
+		t.Errorf("Lapse inside the lengthened hold let go of %d, %v", n, err)
+	}
+
+	if n, err := store.Lapse(t.Context(), later.Add(time.Minute)); err != nil || n != 1 {
+		t.Errorf("Lapse after the hold let go of %d, %v; want 1", n, err)
+	}
+
+	if got, _ := store.ByID(t.Context(), s.ID); got.Status != submissionbus.StatusAbandoned {
+		t.Errorf("a lapsed offer is %s, want abandoned", got.Status)
+	}
+
+	if err := store.Hold(t.Context(), s.ID, later, later.Add(time.Hour)); !errors.Is(err, submissionbus.ErrOfferLapsed) {
+		t.Errorf("holding a lapsed offer: %v, want ErrOfferLapsed", err)
 	}
 }

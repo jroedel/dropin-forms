@@ -96,10 +96,6 @@ func TestCheckRefusesAWaitingListItCannotKeep(t *testing.T) {
 	}{
 		{"negative places", func(f *formbus.Form) { f.Capacity = -1 }, "negative"},
 		{"a waiting list with no number of places", func(f *formbus.Form) { f.Capacity = 0 }, "never full"},
-		{"a waiting list on a paid form", func(f *formbus.Form) {
-			f.Items = []formbus.Item{{ID: "ticket", Label: "Ticket", Price: 1500}}
-			f.ReturnURL = "https://example.test/pageant"
-		}, "not ready yet"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			f := pageant(t)
@@ -110,6 +106,19 @@ func TestCheckRefusesAWaitingListItCannotKeep(t *testing.T) {
 				t.Errorf("Check = %v, want a problem mentioning %q", err, tt.want)
 			}
 		})
+	}
+}
+
+// A paid form may keep a waiting list: an offered place is held for the
+// person to pay for.
+func TestAPaidFormMayKeepAWaitingList(t *testing.T) {
+	f := pageant(t)
+	f.Fee = 15000
+	f.ReturnURL = "https://example.test/pageant"
+	f.Stamp()
+
+	if err := f.Check(); err != nil {
+		t.Errorf("Check refused a waiting list on a form with a fee: %v", err)
 	}
 }
 
