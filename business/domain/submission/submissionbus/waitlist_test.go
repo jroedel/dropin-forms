@@ -186,3 +186,28 @@ func ids(list []submissionbus.Submission) []types.ID {
 
 	return slices.Clip(out)
 }
+
+// Somebody on the waiting list was sent their link with the message saying
+// so, and it works: a phone number that changes while they wait is what it is
+// for.
+func TestSomebodyWaitingCanReachTheirOwnAnswers(t *testing.T) {
+	b, _ := newBusiness()
+	form := mustSlug(t, "retreat")
+	one := []formbus.Claim{{Limit: 1}}
+
+	for _, nonce := range []string{"one", "two"} {
+		a := answers(t, form, 0)
+		if _, err := b.Accept(t.Context(), now, grantFor(a, nonce), submissionbus.New{Answers: a, Claims: one, Waitlist: true}); err != nil {
+			t.Fatalf("Accept: %v", err)
+		}
+	}
+
+	list, err := b.Waiting(t.Context(), form)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("Waiting: %v, %d", err, len(list))
+	}
+
+	if _, err := b.Mine(t.Context(), form, list[0].ID); err != nil {
+		t.Errorf("Mine on a waiting submission: %v", err)
+	}
+}

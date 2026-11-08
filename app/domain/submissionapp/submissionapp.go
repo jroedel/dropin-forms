@@ -94,6 +94,7 @@ type Submissions interface {
 	Taken(ctx context.Context, form types.Slug) (formbus.Taken, error)
 	Declined(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error)
 	Waiting(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error)
+	Offered(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error)
 }
 
 // Grants answers which forms an account may reach, for the index page. The
@@ -519,6 +520,11 @@ type listView struct {
 	// place to offer.
 	Waiting  []waitingRow
 	CanOffer bool
+
+	// Offered is the places offered from the waiting list on a form that
+	// takes money, held for somebody to pay for and not paid yet, with when
+	// each hold ends. They hold their places, so they are in Held.
+	Offered []waitingRow
 }
 
 // waitingRow is one person on the waiting list.
@@ -530,6 +536,9 @@ type waitingRow struct {
 	// Who is the first answer, as the list's own first column would show it:
 	// enough to tell two rows apart without opening either.
 	Who string
+
+	// Until is when an offered place stops being held, on the list of those.
+	Until string
 }
 
 type rowView struct {
@@ -760,6 +769,20 @@ func (a app) waitingList(r *http.Request, f formbus.Form, view *listView) {
 		return
 	}
 
+	offered, err := a.cfg.Submissions.Offered(r.Context(), f.ID)
+	if err != nil {
+		a.cfg.Log.Error("the offered places could not be read",
+			"request_id", web.RequestIDFrom(r.Context()), "form", f.ID.String(), "error", err)
+	}
+
+	for _, s := range offered {
+		view.Offered = append(view.Offered, waitingRow{
+			ID:    s.ID.String(),
+			Until: s.OfferExpiresAt.Local().Format("2 Jan 2006, 15:04"),
+			Who:   firstAnswer(f, s),
+		})
+	}
+
 	// Results, which every reader of this page holds, and a place to give:
 	// the route says no to a full form anyway, and a button that can only be
 	// refused is a button not to draw.
@@ -803,6 +826,8 @@ func statusWords(s submissionbus.Status) string {
 		return "card declined"
 	case submissionbus.StatusWaiting:
 		return "on the waiting list"
+	case submissionbus.StatusOffered:
+		return "offered a place, not paid yet"
 	}
 
 	return s.String()
@@ -880,6 +905,10 @@ type oneView struct {
 	Position int
 	CanOffer bool
 	Full     bool
+
+	// HeldUntil is when a place offered to this submission stops being held
+	// for it to pay for, or empty.
+	HeldUntil string
 }
 
 // revisionView is one set of answers a submission held and no longer does.
@@ -948,8 +977,10 @@ func (a app) one(w http.ResponseWriter, r *http.Request) {
 	// email sent before these were taken out of everybody else's view.
 	//
 	// Somebody on the waiting list is not one of those. They owe nothing, and
-	// whoever reads the sign-ups is whoever offers them a place, from here.
-	if !s.Status.Settled() && s.Status != submissionbus.StatusWaiting && !a.administers(r, f.ID) {
+	// whoever reads the sign-ups is whoever offers them a place, from here --
+	// and whoever offered a place is whoever is asked, a day later, whether
+	// it has been paid for.
+	if !s.Status.Settled() && s.Status != submissionbus.StatusWaiting && s.Status != submissionbus.StatusOffered && !a.administers(r, f.ID) {
 		a.notFound(w, r)
 
 		return
@@ -1081,6 +1112,10 @@ func (a app) hiding(r *http.Request, s submissionbus.Submission, view *oneView) 
 
 // waiting fills in where a submission on the waiting list stands on it.
 func (a app) waiting(r *http.Request, f formbus.Form, s submissionbus.Submission, view *oneView) {
+	if s.Status == submissionbus.StatusOffered {
+		view.HeldUntil = s.OfferExpiresAt.Local().Format(longWhen)
+	}
+
 	if s.Status != submissionbus.StatusWaiting {
 		return
 	}

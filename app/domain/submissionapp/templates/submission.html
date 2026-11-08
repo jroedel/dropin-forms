@@ -83,6 +83,13 @@ They were changed through the link in the emails sent to whoever answered.</p>
 </table>
 {{end}}
 
+{{with .HeldUntil}}
+<h2>Waiting list</h2>
+<p>Offered a place from the waiting list, and held for them to pay for until
+{{.}}. They were emailed a link to pay. If it is not paid by then, the place
+is given back and you can offer it to somebody else.</p>
+{{end}}
+
 {{if .Waiting}}
 <h2>Waiting list</h2>
 {{if .Full}}
@@ -93,8 +100,10 @@ it chose has been taken. Nothing was changed.</p>
 It holds no place and is not counted anywhere until it is offered one.</p>
 {{if .CanOffer}}
 <form method="post" action="/forms/{{.FormID}}/submissions/{{.ID}}/offer">
-  <p class="help">They are emailed to say the place is theirs{{if .Review}}, and
-  it then waits for approval like any other{{end}}.</p>
+  <p class="help">{{if .Form.Sells}}The place is held for them for two days,
+  and they are emailed a link to pay for it{{else}}They are emailed to say the
+  place is theirs{{if .Review}}, and it then waits for approval like any
+  other{{end}}{{end}}.</p>
   <button type="submit">Offer a place</button>
 </form>
 {{end}}

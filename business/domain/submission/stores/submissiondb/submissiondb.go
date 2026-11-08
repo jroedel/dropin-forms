@@ -59,7 +59,7 @@ func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 // will read.
 var Expected = sqldb.Expected{
 	"submissions": {"id", "form_slug", "version", "status", "answers", "email", "total", "currency", "remote_ip", "payment_ref", "created_at", "updated_at",
-		"review", "reviewed_by", "reviewed_at", "review_note"},
+		"review", "reviewed_by", "reviewed_at", "review_note", "offer_expires_at"},
 	"spent_grants":       {"nonce", "form_slug", "spent_at"},
 	"collections":        {"submission_id", "form_slug", "collected_at", "collected_by"},
 	"hidden_submissions": {"submission_id", "form_slug", "hidden_at", "hidden_by"},
@@ -210,6 +210,14 @@ CREATE TABLE IF NOT EXISTS submission_revisions (
 		}
 	}
 
+	// When a place offered from a waiting list stops being held, in
+	// milliseconds, and zero on every row that is not such an offer. A column
+	// of the row for the reason the review is one: the sweep that lets a
+	// lapsed offer go filters on it in the same statement as the status.
+	if err := sqldb.AddColumn(ctx, db, "submissions", "offer_expires_at", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -258,8 +266,8 @@ func (s *Store) Accept(ctx context.Context, sub submissionbus.Submission, nonce 
 	const insert = `
 INSERT INTO submissions
     (id, form_slug, version, status, answers, email, total, currency, remote_ip, payment_ref, created_at, updated_at,
-     review, reviewed_by, reviewed_at, review_note)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     review, reviewed_by, reviewed_at, review_note, offer_expires_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	by, at := reviewedOf(sub)
 
@@ -267,7 +275,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		sub.ID.String(), sub.Form.String(), sub.Version, sub.Status.String(), doc,
 		sub.Email.String(), int64(sub.Answers.Total), sub.Answers.Currency,
 		sub.RemoteIP, sub.PaymentRef, msOf(sub.CreatedAt), msOf(sub.UpdatedAt),
-		sub.Review.String(), by, at, sub.ReviewNote)
+		sub.Review.String(), by, at, sub.ReviewNote, zeroMS(sub.OfferExpiresAt))
 	if err != nil {
 		return false, fmt.Errorf("inserting the submission: %w", err)
 	}
@@ -822,6 +830,63 @@ RETURNING form_slug`
 	return out, nil
 }
 
+// Lapse lets go of every place offered from a waiting list whose hold ended
+// before now, moving it to abandoned in one conditional statement: a row the
+// webhook has just settled as paid is no longer offered by the time this
+// reaches it, so it cannot undo a payment. Hidden rows are included, for
+// Abandon's reason.
+func (s *Store) Lapse(ctx context.Context, now time.Time) (int, error) {
+	const q = `UPDATE submissions SET status = ?, updated_at = ?
+WHERE status = ? AND offer_expires_at < ?`
+
+	res, err := s.db.ExecContext(ctx, q,
+		submissionbus.StatusAbandoned.String(), msOf(now),
+		submissionbus.StatusOffered.String(), msOf(now))
+	if err != nil {
+		return 0, fmt.Errorf("letting go of the lapsed offers: %w", err)
+	}
+
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("counting the lapsed offers: %w", err)
+	}
+
+	return int(n), nil
+}
+
+// Hold lengthens an offered place's hold to until, if that is later, on
+// condition that it is still offered and its hold has not ended at now.
+func (s *Store) Hold(ctx context.Context, id types.ID, now, until time.Time) error {
+	const q = `UPDATE submissions SET offer_expires_at = MAX(offer_expires_at, ?)
+WHERE id = ? AND status = ? AND offer_expires_at > ?`
+
+	res, err := s.db.ExecContext(ctx, q,
+		msOf(until), id.String(), submissionbus.StatusOffered.String(), msOf(now))
+	if err != nil {
+		return fmt.Errorf("holding the offered place: %w", err)
+	}
+
+	n, err := res.RowsAffected()
+	switch {
+	case err != nil:
+		return fmt.Errorf("holding the offered place: %w", err)
+	case n == 0:
+		return submissionbus.ErrOfferLapsed
+	}
+
+	return nil
+}
+
+// zeroMS is msOf, with the zero time stored as nothing rather than as the
+// start of 1970 -- the convention reviewed_at keeps.
+func zeroMS(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+
+	return msOf(t)
+}
+
 // Outcomes counts a form's paid and abandoned submissions made since an
 // instant, hidden ones included: what it answers is whether the payment page
 // works, and hiding an order changes nothing about that.
@@ -930,7 +995,7 @@ func (s *Store) PruneNonces(ctx context.Context, before time.Time) error {
 
 const selectColumns = `
 SELECT id, form_slug, version, status, answers, email, total, currency, remote_ip, payment_ref, created_at, updated_at,
-       review, reviewed_by, reviewed_at, review_note
+       review, reviewed_by, reviewed_at, review_note, offer_expires_at
 FROM submissions`
 
 // scanner is what QueryRow and Rows have in common.
@@ -949,12 +1014,12 @@ func scan(row scanner) (submissionbus.Submission, error) {
 		total                         int64
 		createdAt, updatedAt          int64
 		review, reviewedBy, note      string
-		reviewedAt                    int64
+		reviewedAt, offerExpires      int64
 	)
 
 	err := row.Scan(&id, &formSlug, &version, &status, &doc, &email,
 		&total, &currency, &remoteIP, &paymentRef, &createdAt, &updatedAt,
-		&review, &reviewedBy, &reviewedAt, &note)
+		&review, &reviewedBy, &reviewedAt, &note, &offerExpires)
 	if err != nil {
 		return submissionbus.Submission{}, err
 	}
@@ -1002,6 +1067,10 @@ func scan(row scanner) (submissionbus.Submission, error) {
 	// the start of 1970.
 	if reviewedAt != 0 {
 		sub.ReviewedAt = timeOf(reviewedAt)
+	}
+
+	if offerExpires != 0 {
+		sub.OfferExpiresAt = timeOf(offerExpires)
 	}
 
 	if reviewedBy != "" {
@@ -1303,11 +1372,11 @@ func (s *Store) Promote(ctx context.Context, before, after submissionbus.Submiss
 	}
 
 	const update = `
-UPDATE submissions SET status = ?, updated_at = ?
+UPDATE submissions SET status = ?, updated_at = ?, offer_expires_at = ?
 WHERE id = ? AND form_slug = ? AND status = ? AND ` + notHidden
 
 	res, err := tx.ExecContext(ctx, update,
-		after.Status.String(), msOf(after.UpdatedAt),
+		after.Status.String(), msOf(after.UpdatedAt), zeroMS(after.OfferExpiresAt),
 		before.ID.String(), before.Form.String(), before.Status.String())
 	if err != nil {
 		return fmt.Errorf("offering the place: %w", err)

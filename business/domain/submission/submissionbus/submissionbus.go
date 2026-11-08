@@ -96,10 +96,29 @@ const (
 	// for approval and has a waiting list keeps both: waiting here, and
 	// awaiting a decision once it has a place.
 	StatusWaiting Status = "waiting"
+
+	// StatusOffered is somebody from the waiting list of a form that takes
+	// money, offered a place and given until [Submission.OfferExpiresAt] to
+	// pay for it. It holds the place meanwhile -- that is the whole of the
+	// offer -- and is settled for nothing. The webhook moves it to paid like
+	// any order; a declined card leaves it here, because the person may try
+	// another until the hold runs out; and the housekeeping sweep moves one
+	// still unpaid at the end of its hold to abandoned, which gives the place
+	// back for the office to offer again.
+	StatusOffered Status = "offered"
 )
 
 // statuses is every Status, in the order a submission moves through them.
-var statuses = []Status{StatusWaiting, StatusReceived, StatusPending, StatusPaid, StatusFailed, StatusAbandoned}
+var statuses = []Status{StatusWaiting, StatusOffered, StatusReceived, StatusPending, StatusPaid, StatusFailed, StatusAbandoned}
+
+// OfferHold is how long a place offered from a waiting list is held for
+// somebody to pay for it.
+//
+// Two days, which is long enough for somebody who reads their email once a
+// day and short enough that a retreat a few weeks away is not left with an
+// empty bed while the office waits. A constant rather than a setting: one
+// number to explain, and the office can always offer the place again.
+const OfferHold = 48 * time.Hour
 
 // The errors this package returns.
 var (
@@ -180,7 +199,9 @@ func SettledStatuses() []Status {
 // abandoned, and an abandoned or failed order holds nothing. A declined one
 // holds nothing either -- see [Submission.HoldsPlace], which is the rule;
 // this is its half that is about money.
-func (s Status) HoldsPlace() bool { return s.Settled() || s == StatusPending }
+//
+// An offered place holds too: holding it is what an offer is.
+func (s Status) HoldsPlace() bool { return s.Settled() || s == StatusPending || s == StatusOffered }
 
 // PlaceHoldingStatuses is every status [Status.HoldsPlace] reports true for,
 // for a store that counts places in a query -- SettledStatuses's shape.
@@ -237,6 +258,10 @@ type Submission struct {
 	// this surface has no cookie and therefore no other per-browser anchor at
 	// all.
 	RemoteIP string
+
+	// OfferExpiresAt is when a place offered from the waiting list stops
+	// being held, on a form that takes money: zero on every other submission.
+	OfferExpiresAt time.Time
 
 	// PaymentRef is Stripe's identifier for the payment, once there is one.
 	// Empty on a form that sells nothing, and empty until the payment step
@@ -341,6 +366,15 @@ type Storer interface {
 	// Taken counts the places held in each of a form's options, by the
 	// submissions [Submission.HoldsPlace] names, leaving out hidden ones.
 	Taken(ctx context.Context, form types.Slug) (formbus.Taken, error)
+
+	// Lapse moves every offered submission whose hold ended before now to
+	// abandoned, hidden ones included, and reports how many.
+	Lapse(ctx context.Context, now time.Time) (int, error)
+
+	// Hold moves an offered submission's hold to until, if that is later,
+	// on condition that it is still offered and its hold has not already
+	// ended at now -- ErrOfferLapsed otherwise.
+	Hold(ctx context.Context, id types.ID, now, until time.Time) error
 
 	// Promote writes after's status over before's, in one transaction with
 	// the count of the places it takes, on condition that the stored status is
@@ -629,10 +663,11 @@ func (b *Business) Unsettled(ctx context.Context, form types.Slug) ([]Submission
 		return nil, fmt.Errorf("listing the unpaid submissions: %w", err)
 	}
 
-	// Not the waiting list, which is nobody who stopped at a payment page:
-	// it has its own list, and counting it here would call it unpaid.
+	// Not the waiting list, which is nobody who stopped at a payment page,
+	// nor a place offered from it and still held: each has its own list, and
+	// counting either here would call it unpaid.
 	return slices.DeleteFunc(out, func(s Submission) bool {
-		return s.Status.Settled() || s.Status == StatusWaiting
+		return s.Status.Settled() || s.Status == StatusWaiting || s.Status == StatusOffered
 	}), nil
 }
 
@@ -735,7 +770,22 @@ const (
 // Called on a timer. A declined card is included because past the deadline it
 // is in exactly the position of a closed tab: the page that could have taken a
 // second card has gone.
+//
+// It also lets go of every place offered from a waiting list whose hold has
+// run out unpaid, which is the same thing on a longer clock: nothing is left
+// that could take the person's money for it, and the place goes back to the
+// office to offer again. Those are not counted in the alarm below, which is
+// about whether a form's payment page works.
 func (b *Business) Abandon(ctx context.Context, now time.Time, after time.Duration) (int, error) {
+	lapsed, err := b.store.Lapse(ctx, now.UTC())
+	if err != nil {
+		return 0, fmt.Errorf("letting go of the lapsed offers: %w", err)
+	}
+
+	if lapsed > 0 {
+		b.log.Info("offered places lapsed unpaid and were given back", "count", lapsed)
+	}
+
 	forms, err := b.store.Abandon(ctx, now.Add(-after), now.UTC())
 	if err != nil {
 		return 0, fmt.Errorf("marking the expired orders abandoned: %w", err)
@@ -803,6 +853,17 @@ func (b *Business) Settle(ctx context.Context, now time.Time, id types.ID, to St
 	// Stripe will not complete a payment on a page that has expired, so the
 	// first should never happen -- but if a confirmation does arrive, the money
 	// is real and the status follows it. A late failure says nothing new.
+	// An offered place is held until its hold runs out, whatever a card
+	// does: somebody whose card is declined is still on Stripe's page and may
+	// use another. Marking it failed would give their place away while they
+	// are paying for it.
+	if s.Status == StatusOffered && to == StatusFailed {
+		b.log.Info("a card was declined on an offered place, which stays held",
+			"submission_id", id.String())
+
+		return nil
+	}
+
 	if s.Status == StatusAbandoned && to != StatusPaid {
 		b.log.Warn("ignoring a status change to an abandoned submission",
 			"submission_id", id.String(), "to", to)

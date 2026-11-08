@@ -110,6 +110,34 @@ func (m *memStore) claim(form types.Slug, except types.ID, claims []formbus.Clai
 	return nil
 }
 
+func (m *memStore) Lapse(_ context.Context, now time.Time) (int, error) {
+	n := 0
+
+	for id, s := range m.subs {
+		if s.Status == submissionbus.StatusOffered && s.OfferExpiresAt.Before(now) {
+			s.Status = submissionbus.StatusAbandoned
+			m.subs[id] = s
+			n++
+		}
+	}
+
+	return n, nil
+}
+
+func (m *memStore) Hold(_ context.Context, id types.ID, now, until time.Time) error {
+	s, ok := m.subs[id]
+	if !ok || s.Status != submissionbus.StatusOffered || !s.OfferExpiresAt.After(now) {
+		return submissionbus.ErrOfferLapsed
+	}
+
+	if until.After(s.OfferExpiresAt) {
+		s.OfferExpiresAt = until
+		m.subs[id] = s
+	}
+
+	return nil
+}
+
 func (m *memStore) Promote(_ context.Context, before, after submissionbus.Submission, claims []formbus.Claim) error {
 	if m.fail != nil {
 		return m.fail

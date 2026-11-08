@@ -117,6 +117,14 @@ type Order struct {
 	// replaced, because the sweep that marks orders abandoned counts from the
 	// same number and the two must not disagree.
 	ExpiresAt time.Time
+
+	// Attempt tells one payment page for this submission from another, for a
+	// submission that may be handed more than one: a place offered from a
+	// waiting list, whose link works for as long as the place is held, and
+	// whose first page may have been closed. Empty for an ordinary order,
+	// which gets exactly one page, because the grant it arrived on was spent
+	// getting it.
+	Attempt string
 }
 
 // CheckoutWindow is how long somebody has to pay once they have been handed a
