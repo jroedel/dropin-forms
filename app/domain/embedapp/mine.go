@@ -481,8 +481,11 @@ func (a app) renderMine(
 ) {
 	// The places this submission already holds are given back to it, so the
 	// person sees their own time slot as theirs to keep rather than as taken.
+	// Only when it holds them: one on the waiting list, or declined, holds
+	// nothing, and giving back what it never took would show a full form as
+	// having room.
 	taken := a.taken(r, f)
-	if taken != nil {
+	if taken != nil && sub.HoldsPlace() {
 		taken = taken.Without(sub.Answers)
 	}
 

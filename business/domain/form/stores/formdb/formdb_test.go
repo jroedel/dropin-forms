@@ -89,6 +89,7 @@ func full(t *testing.T) formbus.Form {
 		Confirmation: "Thank you.",
 		Notify:       []string{"office@example.org"},
 		DailyCap:     500,
+		Capacity:     120,
 
 		Fields: []formbus.Field{
 			{

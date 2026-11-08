@@ -69,12 +69,14 @@ func (m *memStore) Accept(_ context.Context, s submissionbus.Submission, nonce s
 // into a query, written here as a loop. except is a submission that holds no
 // place against itself.
 func (m *memStore) taken(form types.Slug, except types.ID) formbus.Taken {
-	out := formbus.Taken{}
+	out := formbus.Taken{"": {"": 0}}
 
 	for id, s := range m.subs {
 		if _, hidden := m.hidden[id]; hidden || id == except || s.Form != form || !s.HoldsPlace() {
 			continue
 		}
+
+		out[""][""]++
 
 		for _, a := range s.Answers.Fields {
 			if out[a.Name] == nil {
@@ -94,10 +96,35 @@ func (m *memStore) claim(form types.Slug, except types.ID, claims []formbus.Clai
 	t := m.taken(form, except)
 
 	for _, c := range claims {
-		if t.Full(c.Field, c.Value, c.Limit) {
-			return submissionbus.OptionFull{Field: c.Field, Value: c.Value}
+		if !t.Full(c.Field, c.Value, c.Limit) {
+			continue
 		}
+
+		if c.Field == "" {
+			return submissionbus.ErrFull
+		}
+
+		return submissionbus.OptionFull{Field: c.Field, Value: c.Value}
 	}
+
+	return nil
+}
+
+func (m *memStore) Promote(_ context.Context, before, after submissionbus.Submission, claims []formbus.Claim) error {
+	if m.fail != nil {
+		return m.fail
+	}
+
+	cur, ok := m.subs[before.ID]
+	if _, hidden := m.hidden[before.ID]; !ok || hidden || cur.Status != before.Status {
+		return submissionbus.ErrChangedMeanwhile
+	}
+
+	if err := m.claim(before.Form, before.ID, claims); err != nil {
+		return err
+	}
+
+	m.subs[after.ID] = after
 
 	return nil
 }
@@ -174,6 +201,10 @@ func (m *memStore) ByForm(_ context.Context, form types.Slug) ([]submissionbus.S
 			out = append(out, s)
 		}
 	}
+
+	// Newest first, as the Storer promises -- the waiting list reads it the
+	// other way round and depends on the order.
+	slices.SortFunc(out, func(x, y submissionbus.Submission) int { return y.CreatedAt.Compare(x.CreatedAt) })
 
 	return out, nil
 }

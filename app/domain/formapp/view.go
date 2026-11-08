@@ -310,6 +310,7 @@ func settingsSummary(f formbus.Form) []settingRow {
 		when("Closes", f.ClosesAt),
 		when("Answers can be changed until", f.ChangeableUntil),
 		approval(f.NeedsApproval),
+		places(f.Capacity, f.Waitlist),
 		set("When closed, it says", f.ClosedNote),
 		set("Confirmation", f.Confirmation),
 	}
@@ -410,6 +411,19 @@ func approval(needs bool) settingRow {
 	}
 
 	return settingRow{Label: "Answers", Value: "accepted as they arrive", Unset: true}
+}
+
+// places is the summary's row for how many the form takes and what it does
+// when it is full.
+func places(capacity int, waitlist bool) settingRow {
+	switch {
+	case capacity == 0:
+		return settingRow{Label: "Places", Value: "no limit", Unset: true}
+	case waitlist:
+		return settingRow{Label: "Places", Value: strconv.Itoa(capacity) + ", then a waiting list"}
+	default:
+		return settingRow{Label: "Places", Value: strconv.Itoa(capacity) + ", then it closes"}
+	}
 }
 
 // detailOf is a field's own rules in one phrase, for the list.

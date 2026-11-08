@@ -53,6 +53,11 @@ type definition struct {
 
 	DailyCap int `json:"daily_cap,omitempty"`
 
+	// How many submissions the form takes, and whether a full one keeps a
+	// waiting list. Omitted when unset, for NeedsApproval's reason.
+	Capacity int  `json:"capacity,omitempty"`
+	Waitlist bool `json:"waitlist,omitempty"`
+
 	Confirmation string   `json:"confirmation,omitempty"`
 	Notify       []string `json:"notify,omitempty"`
 
@@ -160,6 +165,8 @@ func encode(f formbus.Form) (string, error) {
 		PaymentNote:     f.PaymentNote,
 		NeedsApproval:   f.NeedsApproval,
 		DailyCap:        f.DailyCap,
+		Capacity:        f.Capacity,
+		Waitlist:        f.Waitlist,
 		Confirmation:    f.Confirmation,
 		Notify:          f.Notify,
 		Retired:         f.Retired,
@@ -267,6 +274,8 @@ func decode(body string) (formbus.Form, error) {
 		PaymentNote:     w.PaymentNote,
 		NeedsApproval:   w.NeedsApproval,
 		DailyCap:        w.DailyCap,
+		Capacity:        w.Capacity,
+		Waitlist:        w.Waitlist,
 		Confirmation:    w.Confirmation,
 		Notify:          w.Notify,
 		Retired:         w.Retired,

@@ -65,6 +65,9 @@ type definitionDoc struct {
 
 	DailyCap int `json:"daily_cap,omitempty"`
 
+	Capacity int  `json:"capacity,omitempty"`
+	Waitlist bool `json:"waitlist,omitempty"`
+
 	Confirmation string   `json:"confirmation,omitempty"`
 	Notify       []string `json:"notify,omitzero"`
 
@@ -216,6 +219,8 @@ func formOf(d definitionDoc) (formbus.Form, []string) {
 		PaymentNote:     d.PaymentNote,
 		NeedsApproval:   d.NeedsApproval,
 		DailyCap:        d.DailyCap,
+		Capacity:        d.Capacity,
+		Waitlist:        d.Waitlist,
 		Confirmation:    d.Confirmation,
 		Notify:          slices.Clone(d.Notify),
 	}
@@ -344,6 +349,8 @@ func definitionOf(f formbus.Form) definitionDoc {
 		PaymentNote:     f.PaymentNote,
 		NeedsApproval:   f.NeedsApproval,
 		DailyCap:        f.DailyCap,
+		Capacity:        f.Capacity,
+		Waitlist:        f.Waitlist,
 		Confirmation:    f.Confirmation,
 		Notify:          slices.Clone(f.Notify),
 

@@ -283,6 +283,16 @@ textarea:user-invalid {
   color: var(--muted);
 }
 
+/* A full form with a waiting list says so above its questions: the same
+   tinted panel as the things for sale, so it reads as part of this form. */
+.waiting {
+  margin: 0 0 1.25rem;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--tint);
+  padding: .9rem 1rem;
+}
+
 /* --- items --------------------------------------------------------------- */
 
 .items {

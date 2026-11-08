@@ -83,6 +83,23 @@ They were changed through the link in the emails sent to whoever answered.</p>
 </table>
 {{end}}
 
+{{if .Waiting}}
+<h2>Waiting list</h2>
+{{if .Full}}
+<p class="notice">No place was offered: every place is held, or the time slot
+it chose has been taken. Nothing was changed.</p>
+{{end}}
+<p>The form was full when this arrived, so it is on the waiting list{{with .Position}}, number {{.}}{{end}}.
+It holds no place and is not counted anywhere until it is offered one.</p>
+{{if .CanOffer}}
+<form method="post" action="/forms/{{.FormID}}/submissions/{{.ID}}/offer">
+  <p class="help">They are emailed to say the place is theirs{{if .Review}}, and
+  it then waits for approval like any other{{end}}.</p>
+  <button type="submit">Offer a place</button>
+</form>
+{{end}}
+{{end}}
+
 {{if .Review}}
 <h2>Approval</h2>
 {{if .Taken}}

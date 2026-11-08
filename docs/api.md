@@ -229,6 +229,8 @@ Every key:
 | `fee`, `fee_label` | a registration fee in cents, and what it is called (default `Registration`). Every submission is charged it once, on a line of its own ahead of any items or donation, with no quantity box. Use it when one submission is one person; a submission's `lines` show it with the item id `dropin_fee` |
 | `payment_required`, `payment_note` | refuse a submission that comes to nothing, and what to say when one does |
 | `daily_cap` | an abuse control, the most submissions in 24 hours. Leave it out unless asked |
+| `capacity` | how many submissions the form takes before it is full, like the beds at a retreat; leave it out for no limit. An order still in checkout holds its place until it is paid or abandoned. A full form shows its `closed_note`, or a sentence saying every place is taken |
+| `waitlist` | with `capacity`: when the form is full, keep taking submissions on a waiting list instead of closing. Somebody who can read the results offers a place from the submission's page when one opens, and the person is emailed. Not yet on a form that sells anything |
 | `confirmation` | shown after somebody submits |
 | `notify` | extra addresses told about each submission |
 | `listing` | `{heading, line, limit, oldest_first, sort}`: earlier submissions shown under the form, one `line` each, like `"{text_1} is bringing {radio_1}"`. This is public, so it may not name an email or phone question. `sort` is a list of `{by, order}` steps, like `[{"by": "select_1"}, {"by": "submitted_at", "order": "asc"}]`: `by` is a question the line shows or `submitted_at`, `order` is `asc` (the default) or `desc`. A choice sorts in the order of its options; unanswered goes last either way; what every step leaves level stays newest first, or oldest first with `oldest_first` |
@@ -282,7 +284,8 @@ also keeps any answer to a question that has since been removed. `status` is
 `received` (nothing to pay) or `paid`. Orders that were started and never paid
 for are left out, as they are from the download and the spreadsheet: somebody
 sent to Stripe who did not finish is not a submission. So are submissions
-somebody has hidden from the lists.
+somebody has hidden from the lists, and anybody still on a waiting list: they
+have no place, and appear here once they are offered one.
 
 `review` appears on a form with `needs_approval`: `awaiting` or `approved`.
 Declined submissions are left out, as hidden ones are. A submission read on
@@ -298,5 +301,6 @@ submission brought back from hidden lands on a slot that filled meanwhile.
 The API does not manage who else may see a form, hide submissions, run the
 will-call table, or manage spreadsheet feed keys. Those are decisions about
 other people's access, or about the record of what was paid, and they stay on
-the pages built for them. Approving and declining a submission is also done on
-its page in the results, for now.
+the pages built for them. Approving and declining a submission, and offering
+somebody on a waiting list a place, are also done on its page in the results,
+for now.

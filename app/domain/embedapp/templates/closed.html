@@ -5,6 +5,8 @@
 <h1>{{.Form.Title}}</h1>
 {{if .Note}}
 <p>{{.Note}}</p>
+{{else if .Full}}
+<p>Every place has been taken, so this form is not accepting any more.</p>
 {{else if .NotYetOpen}}
 <p>This form is not open yet{{with .OpensWhen}}. It opens on {{.}}{{end}}.</p>
 {{else}}

@@ -116,6 +116,7 @@ type Forms interface {
 // allows it; mine.go has the routes.
 type Submissions interface {
 	Accept(ctx context.Context, now time.Time, g formbus.Grant, ns submissionbus.New) (submissionbus.Submission, error)
+	Waiting(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error)
 	Recent(ctx context.Context, form types.Slug, limit int) ([]submissionbus.Submission, error)
 	Taken(ctx context.Context, form types.Slug) (formbus.Taken, error)
 	Mine(ctx context.Context, form types.Slug, id types.ID) (submissionbus.Submission, error)
@@ -455,6 +456,12 @@ type formView struct {
 	// LinkAgain is where somebody who has already answered can ask for their
 	// link, on a form that takes changes, or empty.
 	LinkAgain string
+
+	// WaitingList says every place is held and the form keeps a waiting list,
+	// so sending it now puts somebody on that list. Said at the top and on the
+	// button, because it is the one thing about this submission that differs
+	// from what the rest of the page implies.
+	WaitingList bool
 }
 
 // listingView is the list of earlier answers, each already written out as the
@@ -479,6 +486,15 @@ func (a app) blank(w http.ResponseWriter, r *http.Request) {
 	taken := a.taken(r, f)
 	if f.Exhausted(taken) {
 		a.closed(w, r, f, a.now())
+
+		return
+	}
+
+	// Every place held, and nowhere to wait: the same closed page, saying
+	// why. With a waiting list the form is drawn as usual, with a sentence
+	// at the top saying what sending it now means.
+	if f.Full(taken) && !f.Waitlist {
+		a.full(w, r, http.StatusOK, f)
 
 		return
 	}
@@ -581,7 +597,21 @@ func (a app) submit(w http.ResponseWriter, r *http.Request) {
 
 		// Stored awaiting a decision, on a form that asks for one.
 		NeedsApproval: f.NeedsApproval,
+
+		// And on the waiting list, rather than refused, when the form is
+		// full and keeps one.
+		Waitlist: f.Waitlist,
 	})
+
+	if errors.Is(err, submissionbus.ErrFull) {
+		// The last place went while this person was filling the form in, on
+		// a form with no waiting list. There is nothing they can change and
+		// send again, so this is the closed page, saying why, rather than the
+		// form with their answers in it. A 409, for justTaken's reason.
+		a.full(w, r, http.StatusConflict, f)
+
+		return
+	}
 
 	if full, ok := errors.AsType[submissionbus.OptionFull](err); ok {
 		// Somebody took the last place between this page being drawn and
@@ -659,7 +689,10 @@ func (a app) submit(w http.ResponseWriter, r *http.Request) {
 	// own end. It costs this person the wait -- bounded in notifybus, which
 	// detaches from this request's context so that closing the tab cannot
 	// cancel the message telling the office what they ordered.
-	if sub.Status == submissionbus.StatusReceived && a.cfg.Notify != nil {
+	//
+	// Somebody joining the waiting list owes nothing either, and is told the
+	// same way: they hear that they are on it, and the office hears who is.
+	if (sub.Status == submissionbus.StatusReceived || sub.Status == submissionbus.StatusWaiting) && a.cfg.Notify != nil {
 		a.cfg.Notify.Received(r.Context(), sub.ID)
 	}
 
@@ -677,6 +710,10 @@ func (a app) submit(w http.ResponseWriter, r *http.Request) {
 		Total:        totalOf(sub.Answers, f.Currency),
 		ChangeURL:    a.changeURL(f, sub),
 		ChangeUntil:  untilWords(f.ChangeableUntil),
+	}
+
+	if sub.Status == submissionbus.StatusWaiting {
+		view.Position = a.position(r, f, sub)
 	}
 
 	if view.Owed() {
@@ -885,6 +922,17 @@ type doneView struct {
 	// saving: the answers were replaced, or nothing in them was different.
 	Changed   bool
 	Unchanged bool
+
+	// Position is where a submission on the waiting list stands on it, from
+	// one, or zero when that could not be counted -- the page then says they
+	// are on it without saying where.
+	Position int
+}
+
+// Waiting reports whether the submission went on the waiting list, which is
+// what the page says instead of the form's confirmation.
+func (v doneView) Waiting() bool {
+	return v.Submission.Status == submissionbus.StatusWaiting
 }
 
 // answerView is one posted name and value, on its way back into a hidden
@@ -929,6 +977,11 @@ type closedView struct {
 	// Formatted here rather than in the template, because a template that
 	// formats a time is a template that has to know which zone to use.
 	OpensWhen string
+
+	// Full says every place is held, on a form with no waiting list: a
+	// different sentence from a form past its date, when the author has not
+	// written one of their own.
+	Full bool
 }
 
 // script serves the parent-side snippet.
@@ -1095,6 +1148,7 @@ func (a app) formView(
 		Problems:      problems,
 		Note:          note,
 		Listing:       a.listing(r, f),
+		WaitingList:   f.Waitlist && f.Full(taken),
 		LinkAgain:     a.linkAgain(f),
 	}, true
 }
@@ -1160,6 +1214,34 @@ func (a app) closed(w http.ResponseWriter, r *http.Request, f formbus.Form, now 
 	}
 
 	a.cfg.Render.Render(w, r, http.StatusOK, "closed", view)
+}
+
+// full is the closed page for a form with every place held and no waiting
+// list.
+func (a app) full(w http.ResponseWriter, r *http.Request, status int, f formbus.Form) {
+	a.cfg.Render.Render(w, r, status, "closed", closedView{
+		Form:         f,
+		ParentOrigin: parentOrigin(f, r),
+		Note:         f.ClosedNote,
+		Full:         true,
+	})
+}
+
+// position is where a submission stands on its form's waiting list.
+//
+// A failure is logged and answered with zero, which the page reads as "on
+// the waiting list" without a number. The submission is stored; the number is
+// a courtesy, and losing it is a worse sentence rather than a lost place.
+func (a app) position(r *http.Request, f formbus.Form, sub submissionbus.Submission) int {
+	list, err := a.cfg.Submissions.Waiting(r.Context(), f.ID)
+	if err != nil {
+		a.cfg.Log.Error("the waiting list could not be read",
+			"request_id", web.RequestIDFrom(r.Context()), "form", f.ID.String(), "error", err)
+
+		return 0
+	}
+
+	return submissionbus.Position(list, sub.ID)
 }
 
 func (a app) notFound(w http.ResponseWriter, r *http.Request) {

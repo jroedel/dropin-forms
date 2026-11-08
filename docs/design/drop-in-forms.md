@@ -2285,6 +2285,46 @@ and dropped: hiding a submission does not change it, so a script asking "what
 is new" would never hear that a row should go. At a parish form's size, all of
 it is a few kilobytes.
 
+### Places and a waiting list, as built
+
+A form can say how many it takes — `Capacity`, the beds at a retreat — and,
+with `Waitlist`, keep taking submissions on a waiting list once they are held.
+Capacity is not `DailyCap`, which is an abuse control over a trailing day; it
+is a stock level, and it is counted the way a limited option is. The form's own
+place is one more `formbus.Claim`, with no field and no value, checked first and
+inside the transaction that saves the submission, against the same rows that
+hold an option's place (`heldBy`: received, pending or paid; not declined, not
+hidden). So an order in checkout holds a bed until it is paid or abandoned, and
+two people cannot both take the last one. `formbus.Taken` keeps the count under
+the empty field and value, which no question can be named.
+
+A submission that arrives at a full form with a waiting list is stored with a
+new status, `waiting`. It holds no place, is settled for nothing, and is in no
+list, total, download or feed — only the office's own waiting list. It claims
+nothing on the way in, not even the time slot it chose; that is claimed when it
+is offered a place. Without a waiting list, a full form shows its closed page,
+and somebody who was filling it in as the last place went gets that page too,
+with a 409, rather than their answers back: there is nothing they can change
+and resend.
+
+**The office offers a place; nothing does it automatically.** Who gets a freed
+bed is a judgement — a couple who must come together, a bed kept for a visiting
+priest — and an email sent by a timer at two in the morning is not one anybody
+made. The list is shown oldest first, which is the usual answer, with an
+**Offer a place** button on every row while a place is free, behind the same
+`results` gate as approving: whoever reads the sign-ups knows who should come.
+Offering moves the row to `received` in one conditional update that counts the
+places it takes, so two offers from two tabs cannot both win and an offer into
+a full form is refused with a sentence. The person is emailed that the place is
+theirs. Someone on the waiting list of a form that also asks for approval
+cannot be approved or declined until they are offered a place.
+
+**Not yet on a form that takes money.** Offering a paid place days later needs a
+way to pay then, with the place held meanwhile, and that is the next change;
+until it lands, `Check` refuses a waiting list on a form that sells. Neither
+setting is in the fingerprint: raising the number so one more can come must not
+throw away anybody's half-filled form.
+
 ### The API and the MCP endpoint, as built
 
 Somebody who builds a lot of forms wants to describe one and have Claude make
