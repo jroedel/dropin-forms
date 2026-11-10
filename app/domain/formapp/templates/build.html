@@ -111,14 +111,14 @@ changed {{.Updated}}</p>
     <label for="required">It has to be answered</label>
   </p>
 
-  <div class="field">
-    <label for="help">Smaller text under it (optional)</label>
-    <p class="help">Anything that helps somebody answer. Line breaks are kept,
-    and a blank line starts a new paragraph.</p>
-    <textarea id="help" name="help" rows="2"></textarea>
-  </div>
+  {{/* Said here because the box above is deliberately short -- what it asks,
+       what sort of answer -- and somebody looking for smaller text under the
+       question, or a limit on it, would otherwise conclude there is none. */}}
+  <p class="help">That is all it needs to begin. Once it is added, its own page
+  opens with the rest: smaller text under it, faint text in the box, limits,
+  and when it is shown.</p>
 
-  <button type="submit">Add it</button>
+  <button type="submit">Add it and continue</button>
 </form>
 </details>
 

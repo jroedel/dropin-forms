@@ -10,33 +10,27 @@ import (
 // The smaller text under a question: written when the question is added, and
 // drawn on the public form with the line breaks it was written with.
 
-func TestTextUnderAQuestionCanBeWrittenWhenItIsAdded(t *testing.T) {
+func TestAddingAQuestionSaysTheRestIsOnItsOwnPage(t *testing.T) {
 	a := newAdmin(t, "")
 
 	cookie := sessionFor(t, a, siteBoss(t, a, "site@schoenstatt.test"))
 
 	made(t, a, cookie, "supper-2026", "Parish supper")
 
-	if page := a.get(t, "/forms/supper-2026/edit", cookie).Body.String(); !strings.Contains(page, `name="help"`) {
-		t.Fatalf("Add a question has no box for the text under it:\n%s", page)
+	if page := a.get(t, "/forms/supper-2026/edit", cookie).Body.String(); !strings.Contains(page, "its own page\n  opens with the rest: smaller text under it") {
+		t.Fatalf("Add a question does not say where the rest is:\n%s", page)
 	}
 
 	w := a.post(t, "/forms/supper-2026/edit/fields", url.Values{
 		"label": {"Your name"},
 		"kind":  {"text"},
-		"help":  {"As it should be on your name badge.\r\nFirst names are fine."},
 	}, cookie)
-	if w.Code != http.StatusSeeOther {
-		t.Fatalf("adding a question with text under it = %d:\n%s", w.Code, w.Body)
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/forms/supper-2026/edit/fields/text_1" {
+		t.Fatalf("adding a question = %d to %q, want its own page", w.Code, w.Header().Get("Location"))
 	}
 
-	s, err := a.catalogue.Draft(t.Context(), mustSlug(t, "supper-2026"))
-	if err != nil {
-		t.Fatalf("Draft: %v", err)
-	}
-
-	if len(s.Form.Fields) != 1 || s.Form.Fields[0].Help != "As it should be on your name badge.\r\nFirst names are fine." {
-		t.Errorf("stored %+v, want the text under the question kept as written", s.Form.Fields)
+	if page := a.get(t, "/forms/supper-2026/edit/fields/text_1", cookie).Body.String(); !strings.Contains(page, "Smaller text under it") {
+		t.Errorf("the question's own page has no box for the text under it:\n%s", page)
 	}
 }
 
