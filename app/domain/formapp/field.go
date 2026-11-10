@@ -136,6 +136,7 @@ func (a app) addField(w http.ResponseWriter, r *http.Request) {
 		Label:    value(r, "label"),
 		Kind:     formbus.Kind(value(r, "kind")),
 		Required: checked(r, "required"),
+		Help:     value(r, "help"),
 	}
 
 	// Refused here rather than left to Check, because an unknown kind would
