@@ -83,7 +83,7 @@ func (a app) addItem(w http.ResponseWriter, r *http.Request) {
 	f := s.Form
 	f.Items = append(slices.Clone(f.Items), it)
 
-	problems, ok := a.save(w, r, f, s.Live)
+	problems, ok := a.save(w, r, &f, s.Live)
 	if !ok {
 		if problems == nil {
 			return
@@ -195,7 +195,7 @@ func (a app) saveItem(w http.ResponseWriter, r *http.Request) {
 	f.Items = slices.Clone(f.Items)
 	f.Items[at] = it
 
-	problems, ok = a.save(w, r, f, s.Live)
+	problems, ok = a.save(w, r, &f, s.Live)
 	if !ok {
 		if problems == nil {
 			return
@@ -252,7 +252,7 @@ func (a app) moveItem(w http.ResponseWriter, r *http.Request) {
 	f.Items = slices.Delete(f.Items, at, at+1)
 	f.Items = slices.Insert(f.Items, to, swap)
 
-	problems, ok := a.save(w, r, f, s.Live)
+	problems, ok := a.save(w, r, &f, s.Live)
 	if !ok {
 		if problems == nil {
 			return
@@ -295,7 +295,7 @@ func (a app) removeItem(w http.ResponseWriter, r *http.Request) {
 	f.Retired = slices.Clone(f.Retired)
 	f.Retire(it.ID)
 
-	problems, ok := a.save(w, r, f, s.Live)
+	problems, ok := a.save(w, r, &f, s.Live)
 	if !ok {
 		if problems == nil {
 			return

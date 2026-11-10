@@ -573,6 +573,39 @@ func TestAClosingDateIsReadInTheServersOwnZone(t *testing.T) {
 	}
 }
 
+// Saving a change redraws the builder from the definition just saved, and it
+// must not then report that definition as broken. It did, on every page that
+// changes what the version is worked out from: the page drew its own copy, and
+// only the stored one had been stamped.
+func TestASavedChangeIsNotReportedAsAStaleVersion(t *testing.T) {
+	a := newAdmin(t, "")
+
+	cookie := sessionFor(t, a, siteBoss(t, a, "site@schoenstatt.test"))
+
+	made(t, a, cookie, "supper-2026", "Parish supper")
+
+	w := a.post(t, "/forms/supper-2026/edit/settings", url.Values{
+		"title": {"Parish supper"},
+		"fee":   {"35.00"},
+	}, cookie)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "The settings are saved.") {
+		t.Fatalf("saving the settings = %d:\n%s", w.Code, w.Body)
+	}
+
+	if strings.Contains(w.Body.String(), "no longer matches its content") {
+		t.Errorf("the page after saving reports its own version as stale:\n%s", w.Body)
+	}
+
+	s, err := a.catalogue.Draft(t.Context(), mustSlug(t, "supper-2026"))
+	if err != nil {
+		t.Fatalf("Draft: %v", err)
+	}
+
+	if !strings.Contains(w.Body.String(), s.Form.Version) {
+		t.Errorf("the page does not show the version that was stored, %s", s.Form.Version)
+	}
+}
+
 // Two forms cannot share a name, because the name is in the address somebody
 // has already pasted onto their website.
 func TestTwoFormsCannotShareAName(t *testing.T) {

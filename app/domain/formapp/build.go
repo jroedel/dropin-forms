@@ -233,7 +233,7 @@ func (a app) state(w http.ResponseWriter, r *http.Request) {
 
 	live := r.PostFormValue("state") == "live"
 
-	problems, ok := a.save(w, r, s.Form, live)
+	problems, ok := a.save(w, r, &s.Form, live)
 	if !ok {
 		if problems == nil {
 			return

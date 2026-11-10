@@ -175,7 +175,15 @@ func (a app) load(w http.ResponseWriter, r *http.Request) (formbus.Stored, bool)
 // would leave a live form unusable. That is not an error to log and apologise
 // for, it is the answer -- a list of what is wrong, which the caller puts on
 // the page it re-renders. Anything else is a failure at our end.
-func (a app) save(w http.ResponseWriter, r *http.Request, f formbus.Form, live bool) ([]string, bool) {
+//
+// It stamps f where it lies, before saving, and that is why it takes a
+// pointer. Catalog.Save stamps the copy it stores, and every caller then
+// redraws the builder from its own f; with that one unstamped, the page
+// checked a definition whose version still named the content before the
+// change, and told whoever had just saved it -- under "The settings are
+// saved." -- that its version no longer matched its content. The form stored
+// was right all along; the page was describing a copy nobody kept.
+func (a app) save(w http.ResponseWriter, r *http.Request, f *formbus.Form, live bool) ([]string, bool) {
 	me, ok := mid.UserFrom(r.Context())
 	if !ok {
 		a.oops(w, r, "the builder was reached with no account", nil)
@@ -183,7 +191,9 @@ func (a app) save(w http.ResponseWriter, r *http.Request, f formbus.Form, live b
 		return nil, false
 	}
 
-	err := a.cfg.Catalog.Save(r.Context(), time.Now(), me.ID, f, live)
+	f.Stamp()
+
+	err := a.cfg.Catalog.Save(r.Context(), time.Now(), me.ID, *f, live)
 
 	if bad, is := errors.AsType[formbus.DefinitionError](err); is {
 		return bad.Problems, false
