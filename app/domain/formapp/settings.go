@@ -355,7 +355,7 @@ func (a app) saveSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	problems, ok = a.save(w, r, f, s.Live)
+	problems, ok = a.save(w, r, &f, s.Live)
 	if !ok {
 		if problems == nil {
 			return

@@ -172,7 +172,7 @@ func (a app) addField(w http.ResponseWriter, r *http.Request) {
 	f := s.Form
 	f.Fields = append(slices.Clone(f.Fields), fld)
 
-	problems, ok := a.save(w, r, f, s.Live)
+	problems, ok := a.save(w, r, &f, s.Live)
 	if !ok {
 		if problems == nil {
 			return
@@ -374,7 +374,7 @@ func (a app) saveField(w http.ResponseWriter, r *http.Request) {
 	f.Fields = slices.Clone(f.Fields)
 	f.Fields[at] = fld
 
-	problems, ok = a.save(w, r, f, s.Live)
+	problems, ok = a.save(w, r, &f, s.Live)
 	if !ok {
 		if problems == nil {
 			return
@@ -435,7 +435,7 @@ func (a app) moveField(w http.ResponseWriter, r *http.Request) {
 	f.Fields = slices.Delete(f.Fields, at, at+1)
 	f.Fields = slices.Insert(f.Fields, to, swap)
 
-	problems, ok := a.save(w, r, f, s.Live)
+	problems, ok := a.save(w, r, &f, s.Live)
 	if !ok {
 		if problems == nil {
 			return
@@ -481,7 +481,7 @@ func (a app) removeField(w http.ResponseWriter, r *http.Request) {
 	f.Retired = slices.Clone(f.Retired)
 	f.Retire(fld.Name)
 
-	problems, ok := a.save(w, r, f, s.Live)
+	problems, ok := a.save(w, r, &f, s.Live)
 	if !ok {
 		if problems == nil {
 			return
