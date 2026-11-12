@@ -1142,7 +1142,7 @@ func (f Form) Open(now time.Time) bool {
 
 // Questions is the form's fields without its section headings: everything
 // that can have an answer, in order. Whatever reads answers -- a CSV's
-// columns, a notification, the feed -- walks this rather than Fields, so
+// columns, a notification, the Google Sheet -- walks this rather than Fields, so
 // that a heading never becomes an empty column.
 func (f Form) Questions() []Field {
 	return slices.DeleteFunc(slices.Clone(f.Fields), func(fld Field) bool { return !fld.Kind.Asks() })

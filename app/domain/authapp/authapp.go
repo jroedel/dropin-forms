@@ -144,6 +144,12 @@ func Routes(mux *http.ServeMux, cfg Config, guard func(http.Handler) http.Handle
 	})
 
 	mux.HandleFunc("GET /signin", a.signInForm)
+
+	// What this service keeps and why, in plain words. Public, beside the
+	// sign-in page, because Google's consent screen links to it for anybody
+	// connecting a sheet -- before they have an account here, perhaps -- and
+	// Google checks that it can be read without signing in.
+	mux.HandleFunc("GET /privacy", a.privacy)
 	mux.Handle("POST /signin", tries(http.HandlerFunc(a.requestCode)))
 	mux.Handle("POST /signin/verify", tries(http.HandlerFunc(a.redeemSignInCode)))
 	mux.HandleFunc("GET /signin/code", a.codeForm)
@@ -171,6 +177,10 @@ type signInView struct {
 	Email         string
 	Problem       string
 	HaveBootstrap bool
+}
+
+func (a app) privacy(w http.ResponseWriter, r *http.Request) {
+	a.cfg.Render.Render(w, r, http.StatusOK, "privacy", nil)
 }
 
 func (a app) signInForm(w http.ResponseWriter, r *http.Request) {

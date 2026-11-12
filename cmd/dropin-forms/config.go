@@ -9,6 +9,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/types"
+	"github.com/jroedel/dropin-forms/foundation/seal"
 )
 
 // config is the whole of what this binary reads from disk.
@@ -112,6 +113,28 @@ type config struct {
 		// that never verifies, which is why they are checked apart below.
 		WebhookSecret string `toml:"webhook_secret"`
 	} `toml:"stripe"`
+
+	Google struct {
+		// ClientID and ClientSecret are the OAuth client made in Google
+		// Cloud for "Connect a Google Sheet". Empty, with TokenKey, switches
+		// that off: the page is not mounted and the list does not link to
+		// it. secrets.env.example says how to make the client.
+		ClientID     string `toml:"client_id"`
+		ClientSecret string `toml:"client_secret"`
+
+		// TokenKey seals the refresh token each connection keeps, so that a
+		// copy of the database alone does not hand over anybody's Google
+		// access. 32 random bytes in base64. Changing it makes every
+		// connection ask its owner to connect again, and loses nothing else.
+		TokenKey string `toml:"token_key"`
+		tokenKey []byte
+
+		// TimeZone is the IANA name spreadsheets are made in and dates are
+		// written in. Empty means the zone this server runs in, read from TZ
+		// or /etc/localtime; set it when neither says.
+		TimeZone string `toml:"time_zone"`
+		zone     *time.Location
+	} `toml:"google"`
 
 	Mail struct {
 		Host     string `toml:"host"`
@@ -243,6 +266,43 @@ func loadConfig(path string) (config, error) {
 		return config{}, fmt.Errorf("%s has an auth.bootstrap_secret of %d characters; use at least %d, or leave it empty to switch that route off", path, len(secret), bootstrapMinLen)
 	}
 
+	// The Google settings stand or fall together, for Stripe's reason below:
+	// half of them is a page that offers to connect and then fails.
+	switch g := &cfg.Google; {
+	case g.ClientID == "" && g.ClientSecret == "" && g.TokenKey == "":
+		// Google Sheets off.
+
+	case g.ClientID == "" || g.ClientSecret == "" || g.TokenKey == "":
+		return config{}, fmt.Errorf("%s sets some of google.client_id, google.client_secret and google.token_key but not all three; set all of them to offer Google Sheets, or none to switch it off", path)
+
+	case !strings.HasSuffix(g.ClientID, ".apps.googleusercontent.com"):
+		return config{}, fmt.Errorf("%s has a google.client_id that does not end in .apps.googleusercontent.com; it is the Client ID of the OAuth client in Google Cloud, not the project's number or name", path)
+
+	default:
+		key, err := seal.DecodeKey(g.TokenKey)
+		if err != nil {
+			return config{}, fmt.Errorf("%s has a google.token_key that will not do: %w", path, err)
+		}
+
+		g.tokenKey = key
+
+		name := g.TimeZone
+		if name == "" {
+			name = localZoneName()
+		}
+
+		if name == "" {
+			return config{}, fmt.Errorf("%s does not say which time zone Google Sheets are made in, and this server's own could not be read; set google.time_zone, such as America/Chicago", path)
+		}
+
+		zone, err := time.LoadLocation(name)
+		if err != nil {
+			return config{}, fmt.Errorf("%s has a google.time_zone of %q, which is not a time zone this server knows; use a name like America/Chicago", path, name)
+		}
+
+		g.TimeZone, g.zone = name, zone
+	}
+
 	// The two Stripe settings stand or fall together, and a half-configured
 	// payment path is the one shape worth refusing at startup: a key with no
 	// webhook secret means money collected and no submission ever marked paid,
@@ -318,4 +378,24 @@ func openLog(path string) (*os.File, bool, error) {
 	}
 
 	return f, true, nil
+}
+
+// localZoneName is the IANA name of the zone this server runs in, from TZ or
+// from where /etc/localtime points, or empty when neither says. time.Local's
+// own name is "Local", which Google does not accept.
+func localZoneName() string {
+	if tz := strings.TrimPrefix(os.Getenv("TZ"), ":"); tz != "" && !strings.HasPrefix(tz, "/") {
+		return tz
+	}
+
+	target, err := os.Readlink("/etc/localtime")
+	if err != nil {
+		return ""
+	}
+
+	if _, name, ok := strings.Cut(target, "zoneinfo/"); ok {
+		return name
+	}
+
+	return ""
 }

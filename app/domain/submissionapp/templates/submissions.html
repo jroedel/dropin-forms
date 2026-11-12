@@ -133,8 +133,8 @@ paid or abandoned.</caption>
 <p class="money">Collected <strong>{{.Summary.PaidTotal}}</strong>.
 {{- if .Deposits}} <a href="/forms/{{.FormID}}/deposits">See the deposits to the bank</a>.{{end}}</p>
 
-<p><a class="go" href="/forms/{{.FormID}}/submissions.csv">Download as CSV</a>{{if .Feed}}
-or <a href="/forms/{{.FormID}}/feed">keep a Google Sheet up to date</a>{{end}}</p>
+<p><a class="go" href="/forms/{{.FormID}}/submissions.csv">Download as CSV</a>{{if .Sheet}}
+or <a href="/forms/{{.FormID}}/sheet">keep a Google Sheet up to date</a>{{end}}</p>
 
 {{if .Rows}}
 {{/* The box shows the rows it names. A stylesheet rule hides every

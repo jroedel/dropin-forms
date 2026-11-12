@@ -304,7 +304,7 @@ submission brought back from hidden lands on a slot that filled meanwhile.
 ### What is not here
 
 The API does not manage who else may see a form, hide submissions, run the
-will-call table, or manage spreadsheet feed keys. Those are decisions about
+will-call table, or connect a Google Sheet. Those are decisions about
 other people's access, or about the record of what was paid, and they stay on
 the pages built for them. Approving and declining a submission, and offering
 somebody on a waiting list a place, are also done on its page in the results,

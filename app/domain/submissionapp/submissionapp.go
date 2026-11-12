@@ -163,10 +163,10 @@ type Config struct {
 	// the form is shown the form for it, because only one may use it.
 	CanRefund bool
 
-	// CanFeed says the spreadsheet feed is mounted, for the same reason: the
-	// list links to it only for a reader who may use it and only when it is
-	// there.
-	CanFeed bool
+	// CanSheet says the Google Sheet page is mounted, so the list links to
+	// it. Every reader of the list may use it: a sheet is a download that
+	// keeps itself up to date.
+	CanSheet bool
 
 	// CanEdit and CanWillCall say the builder and the will-call table are
 	// mounted, which decides whether a form's page links to them. The people
@@ -503,9 +503,8 @@ type listView struct {
 	// deadline says something else.
 	Window int
 
-	// Feed is whether to link to the spreadsheet page: mounted, and this
-	// reader administers the form.
-	Feed bool
+	// Sheet is whether to link to the Google Sheet page.
+	Sheet bool
 
 	// The other pages of this form this reader may open, linked under its
 	// title: the same three the forms list offers beneath it, by the same
@@ -748,7 +747,7 @@ func (a app) list(w http.ResponseWriter, r *http.Request) {
 		a.waitingList(r, f, &view)
 	}
 
-	view.Feed = admin && a.cfg.CanFeed
+	view.Sheet = a.cfg.CanSheet
 	view.Edit = admin && a.cfg.CanEdit
 	view.People = admin
 	view.WillCall = a.cfg.CanWillCall && (admin || may(accessbus.RoleDoor))

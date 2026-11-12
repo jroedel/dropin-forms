@@ -26,6 +26,19 @@ func (o office) post(t *testing.T, target, cookie string) *httptest.ResponseReco
 	return w
 }
 
+func (o office) postValues(t *testing.T, target, cookie string, values url.Values) *httptest.ResponseRecorder {
+	t.Helper()
+
+	r := httptest.NewRequest(http.MethodPost, target, strings.NewReader(values.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(&http.Cookie{Name: mid.CookieName, Value: cookie})
+
+	w := httptest.NewRecorder()
+	o.admin.ServeHTTP(w, r)
+
+	return w
+}
+
 // The journey: an administrator hides a test submission from its own page,
 // it leaves the list, the totals and the download, is found again under
 // "show hidden", and is put back.

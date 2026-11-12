@@ -1,0 +1,47 @@
+{{define "title"}}Privacy{{end}}
+{{define "content"}}
+<h1>Privacy</h1>
+
+<p class="lede">This service runs the forms of the Schoenstatt Fathers and the
+people they serve: registrations, sign-ups and orders. This page says what it
+keeps and why.</p>
+
+<h2>Answers to a form</h2>
+<p>What you type into a form is kept so that the people running it can read
+it: the office, and whoever they have given access to that form. If you pay,
+the payment is made on Stripe's own page; card numbers never reach this
+service. Your address is used to send you a receipt and, where the form allows
+it, a link to change your answers. Your IP address is kept with a payment for
+Stripe's fraud checks and is not shown to anyone.</p>
+
+<h2>Accounts</h2>
+<p>People who run forms sign in with a code sent to their email address. The
+service keeps that address, their name, and which forms they may read.</p>
+
+<h2>Google Sheets</h2>
+<p>Somebody who may read a form's answers can connect a Google Sheet, so that
+a spreadsheet of those answers in their own Google Drive is kept up to date.
+When they do:</p>
+<ul>
+  <li>Google asks them to allow this service to create files in their Drive.
+  It can reach only the spreadsheet it makes for them, and nothing else in
+  their Drive, their email or their account.</li>
+  <li>It learns which Google account they connected, to show them.</li>
+  <li>It keeps the permission Google gives, encrypted, and uses it only to
+  update that spreadsheet with the answers they could already read here.</li>
+  <li>Nobody else here is told that the spreadsheet exists.</li>
+  <li>It stops when they disconnect it, when their access to the form ends, or
+  when they remove the permission in their Google account
+  (myaccount.google.com, under Security &rarr; third-party connections).
+  Disconnecting withdraws the permission at Google; the spreadsheet stays
+  theirs.</li>
+</ul>
+<p>Use of information received from Google APIs adheres to the Google API
+Services User Data Policy, including the Limited Use requirements. Nothing
+received from Google is sold, shared, or used for anything but keeping that
+spreadsheet.</p>
+
+<h2>Questions</h2>
+<p>Reply to any email this service has sent you, or write to the office of
+the form you filled in.</p>
+{{end}}

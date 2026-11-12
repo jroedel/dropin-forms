@@ -237,6 +237,32 @@ out=$(render "$partly")
 says "a key with no webhook secret is refused, not rendered" "$out" 'STRIPE_WEBHOOK_SECRET'
 
 echo
+echo "google sheets"
+
+denies "no Google keys, no [google] section" "$(render "$both")" '[google]'
+
+sheets=$(fixture \
+	'STRIPE_SECRET_KEY=sk_live_theconfiguredone' \
+	'STRIPE_WEBHOOK_SECRET=whsec_theconfiguredone' \
+	'GOOGLE_CLIENT_ID=123-abc.apps.googleusercontent.com' \
+	'GOOGLE_CLIENT_SECRET=GOCSPX-thesecret' \
+	'GOOGLE_TOKEN_KEY=q83vEjRWeJCrze8SNFZ4kKvN7xI0VniQq83vEjRWeJA=')
+
+out=$(render "$sheets")
+says "all three Google keys render a [google] section" "$out" '[google]'
+says "with the client id" "$out" 'client_id = "123-abc.apps.googleusercontent.com"'
+says "and the token key" "$out" 'token_key = "q83vEjRWeJCrze8SNFZ4kKvN7xI0VniQq83vEjRWeJA="'
+
+halfgoogle=$(fixture \
+	'STRIPE_SECRET_KEY=sk_live_theconfiguredone' \
+	'STRIPE_WEBHOOK_SECRET=whsec_theconfiguredone' \
+	'GOOGLE_CLIENT_ID=123-abc.apps.googleusercontent.com')
+
+out=$(render "$halfgoogle")
+says "a Google client id alone is refused, naming what is missing" "$out" 'GOOGLE_TOKEN_KEY'
+denies "and nothing was rendered" "$out" '[google]'
+
+echo
 if [ "$fail" -gt 0 ]; then
 	printf '\033[31m%d passed, %d failed\033[0m\n' "$pass" "$fail"
 	exit 1
