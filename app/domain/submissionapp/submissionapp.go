@@ -770,7 +770,7 @@ func (a app) list(w http.ResponseWriter, r *http.Request) {
 			Unpaid: unpaid && !view.ShowingHidden && !view.ShowingCancelled,
 			ID:     s.ID.String(),
 			When:   s.CreatedAt.Local().Format("2 Jan 2006, 15:04"),
-			Status: wordsWithRefund(s, f.Currency),
+			Status: s.WordsWithRefund(f.Currency),
 			Total:  formbus.Show(s.Answers.Total, f.Currency),
 			Cells:  cellsOf(f, s),
 		})
@@ -839,65 +839,6 @@ func firstAnswer(f formbus.Form, s submissionbus.Submission) string {
 	}
 
 	return ""
-}
-
-// wordsWithRefund is wordsFor, and how much has gone back when anything has:
-// "paid, $25.00 refunded".
-func wordsWithRefund(s submissionbus.Submission, currency string) string {
-	words := wordsFor(s)
-
-	if s.Refunded > 0 {
-		words += ", " + formbus.Show(s.Refunded, currency) + " refunded"
-	}
-
-	return words
-}
-
-// statusWords is how a status reads on these pages.
-//
-// Not the stored word, for two of the three that are not settled. "pending"
-// is what the database calls an order whose payment page is open, and people
-// read it as something under way long after it had stopped being anything;
-// "failed" is a declined card, which is not a failure of anything here and is
-// still payable with another card until the page closes. Only these pages ever
-// show either: the CSV and the API carry settled submissions alone, in the
-// stored words a formula or a program matches on.
-func statusWords(s submissionbus.Status) string {
-	switch s {
-	case submissionbus.StatusPending:
-		return "in checkout"
-	case submissionbus.StatusFailed:
-		return "card declined"
-	case submissionbus.StatusWaiting:
-		return "on the waiting list"
-	case submissionbus.StatusOffered:
-		return "offered a place, not paid yet"
-	}
-
-	return s.String()
-}
-
-// wordsFor is how a submission's standing reads on these pages: where it is
-// with the office, on a form that asks for approval, and otherwise where it is
-// with its payment. The two never both have something to say, because a form
-// that asks for approval sells nothing.
-func wordsFor(s submissionbus.Submission) string {
-	// The waiting list first: on a form that also asks for approval, nobody
-	// decides anything about somebody who has no place yet.
-	if s.Status == submissionbus.StatusWaiting {
-		return statusWords(s.Status)
-	}
-
-	switch s.Review {
-	case submissionbus.ReviewAwaiting:
-		return "awaiting approval"
-	case submissionbus.ReviewApproved:
-		return "approved"
-	case submissionbus.ReviewDeclined:
-		return "declined"
-	}
-
-	return statusWords(s.Status)
 }
 
 // oneView is a single submission in full.
@@ -1085,7 +1026,7 @@ func (a app) one(w http.ResponseWriter, r *http.Request) {
 		FormID: f.ID.String(),
 		ID:     s.ID.String(),
 		When:   s.CreatedAt.Local().Format(longWhen),
-		Status: wordsWithRefund(s, f.Currency),
+		Status: s.WordsWithRefund(f.Currency),
 		Email:  s.Email.String(),
 		Total:  formbus.Show(s.Answers.Total, f.Currency),
 		Ref:    s.PaymentRef,
@@ -1369,23 +1310,11 @@ func (a app) export(w http.ResponseWriter, r *http.Request) {
 
 	out := csv.NewWriter(&body)
 
-	header := []string{"submitted_at", "submission_id", "status", "total", "currency"}
-	header = append(header, columnsOf(f)...)
-	header = append(header, "payment_reference")
+	cols := submissionbus.Columns(f)
 
-	// A column only on a form that asks for approval, so every other form's
-	// download keeps the columns a spreadsheet was already built on. A
-	// declined submission is not in the download at all; "awaiting" and
-	// "approved" are what this column can say.
-	if f.NeedsApproval {
-		header = append(header, "review")
-	}
-
-	// Last, and only on a form that takes money, for the review column's
-	// reason: a spreadsheet already built on this download keeps its columns.
-	// In minor-unit decimal like total, and 0.00 for nothing refunded.
-	if f.Sells() {
-		header = append(header, "refunded")
+	header := make([]string, len(cols))
+	for i, c := range cols {
+		header[i] = c.Name
 	}
 
 	if err := out.Write(header); err != nil {
@@ -1395,25 +1324,11 @@ func (a app) export(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, s := range subs {
-		// RFC 3339 in UTC, because a spreadsheet full of local times with no
-		// offset is a spreadsheet nobody can compare against anything.
-		row := []string{
-			s.CreatedAt.UTC().Format(time.RFC3339),
-			s.ID.String(),
-			s.Status.String(),
-			s.Answers.Total.String(),
-			s.Answers.Currency,
-		}
+		cells := submissionbus.Cells(f, s)
 
-		row = append(row, cellsOf(f, s)...)
-		row = append(row, s.PaymentRef)
-
-		if f.NeedsApproval {
-			row = append(row, s.Review.String())
-		}
-
-		if f.Sells() {
-			row = append(row, s.Refunded.String())
+		row := make([]string, len(cells))
+		for i, c := range cells {
+			row[i] = c.String()
 		}
 
 		if err := out.Write(row); err != nil {
@@ -1451,23 +1366,16 @@ func (a app) export(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// columnsOf is the column heading per field, in the definition's order,
-// followed by one per item.
-//
-// From the definition rather than from the submissions, which is the whole
-// reason formbus.Answers keeps its fields as an ordered slice. Derived from
-// the rows instead, a form whose first submission skipped a conditional field
-// would export a spreadsheet missing that column entirely, and two exports of
-// the same form could have different columns.
+// columnsOf is the list page's own columns: the questions and the items,
+// which are the part of submissionbus.Columns this page draws as a table
+// beside its own When, Status and Total.
 func columnsOf(f formbus.Form) []string {
-	out := make([]string, 0, len(f.Fields)+len(f.Items))
+	var out []string
 
-	for _, fld := range f.Questions() {
-		out = append(out, fld.Label)
-	}
-
-	for _, it := range f.Items {
-		out = append(out, it.Label)
+	for _, c := range submissionbus.Columns(f) {
+		if answerColumn(c.Key) {
+			out = append(out, c.Label)
+		}
 	}
 
 	return out
@@ -1475,36 +1383,21 @@ func columnsOf(f formbus.Form) []string {
 
 // cellsOf is one submission's values, lined up with columnsOf.
 func cellsOf(f formbus.Form, s submissionbus.Submission) []string {
-	out := make([]string, 0, len(f.Fields)+len(f.Items))
+	cols := submissionbus.Columns(f)
 
-	for _, fld := range f.Questions() {
-		ans, ok := s.Answers.Field(fld.Name)
-		if !ok {
-			// Not asked, or left blank. Empty either way in a spreadsheet;
-			// the detail page is where the difference is visible.
-			out = append(out, "")
+	var out []string
 
-			continue
+	for i, c := range submissionbus.Cells(f, s) {
+		if answerColumn(cols[i].Key) {
+			out = append(out, c.String())
 		}
-
-		out = append(out, strings.Join(ans.Values, ", "))
-	}
-
-	for _, it := range f.Items {
-		qty := ""
-
-		for _, l := range s.Answers.Lines {
-			if l.ItemID == it.ID {
-				qty = strconv.Itoa(l.Qty)
-
-				break
-			}
-		}
-
-		out = append(out, qty)
 	}
 
 	return out
+}
+
+func answerColumn(key string) bool {
+	return strings.HasPrefix(key, "q:") || strings.HasPrefix(key, "item:")
 }
 
 // summarise counts what somebody came to the page to find out.
