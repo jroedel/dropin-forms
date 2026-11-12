@@ -37,7 +37,8 @@
   <div class="field">
     <label for="help">A sentence under the heading</label>
     <p class="help">Optional: what this part of the form is for, or when to
-    fill it in &mdash; &ldquo;Once you have your tickets.&rdquo;</p>
+    fill it in &mdash; &ldquo;Once you have your tickets.&rdquo; Line breaks
+    are kept, and a blank line starts a new paragraph.</p>
     <textarea id="help" name="help" rows="2">{{.Help}}</textarea>
   </div>
   {{else}}
@@ -48,8 +49,10 @@
   </p>
 
   <div class="field">
-    <label for="help">A sentence under it</label>
-    <textarea id="help" name="help" rows="2">{{.Help}}</textarea>
+    <label for="help">Smaller text under it</label>
+    <p class="help">Optional. Anything that helps somebody answer. Line breaks
+    are kept, and a blank line starts a new paragraph.</p>
+    <textarea id="help" name="help" rows="3">{{.Help}}</textarea>
   </div>
 
   <div class="field">

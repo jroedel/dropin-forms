@@ -181,6 +181,7 @@ func NewRenderer(log *slog.Logger, ch Chrome, own ...fs.FS) (*Renderer, error) {
 
 			return "", fmt.Errorf("there is no shared file called %s", name)
 		},
+		"paragraphs": Paragraphs,
 	}
 
 	base, err := template.New("base").Funcs(funcs).ParseFS(ch.fs, "*.html")

@@ -11,7 +11,7 @@
 Change whatever has changed and save. You can come back with the same link
 until {{.Until}}.</p>
 {{else}}
-{{with .Form.Intro}}<p class="intro">{{.}}</p>{{end}}
+{{range paragraphs .Form.Intro}}<p class="intro">{{range $i, $l := .}}{{if $i}}<br>{{end}}{{$l}}{{end}}</p>{{end}}
 {{end}}
 
 {{if and .WaitingList (not .Mine)}}
@@ -53,7 +53,7 @@ you.</p>
   {{- with .ShowIfField}} data-show-if-field="{{.}}"{{end}}
   {{- with .ShowIfValues}} data-show-if-values="{{.}}"{{end}}>
 <legend>{{.Heading}}</legend>
-{{with .Intro}}<p class="help">{{.}}</p>{{end}}
+{{template "help" .Intro}}
 {{end}}
 {{range $fld := $g.Fields}}
 <div class="field{{if eq $fld.Shape "amount"}} amount-field{{end}}"
@@ -62,7 +62,7 @@ you.</p>
 
 {{if or (eq $fld.Shape "radios") (eq $fld.Shape "checkboxes")}}
   <span class="group-label">{{$fld.Label}}{{if $fld.Required}} <span class="required-mark" title="required">*</span>{{end}}</span>
-  {{with $fld.Help}}<p class="help">{{.}}</p>{{end}}
+  {{template "help" $fld.Help}}
   {{range $opt := $fld.Options}}
   <label class="choice{{if $opt.Taken}} taken{{end}}">
   <input type="{{$fld.BoxType}}" name="{{$fld.Name}}" value="{{$opt.Value}}"{{if $opt.Chosen}} checked{{end}}{{if $opt.Taken}} disabled{{end}}>
@@ -75,11 +75,11 @@ you.</p>
   <input type="checkbox" name="{{$fld.Name}}" value="{{$fld.Value}}"{{if $fld.Values}} checked{{end}}{{if $fld.Required}} required{{end}}>
   <span>{{$fld.Label}}{{if $fld.Required}} <span class="required-mark" title="required">*</span>{{end}}</span>
   </label>
-  {{with $fld.Help}}<p class="help">{{.}}</p>{{end}}
+  {{template "help" $fld.Help}}
 
 {{else if eq $fld.Shape "select"}}
   <label for="f-{{$fld.Name}}">{{$fld.Label}}{{if $fld.Required}} <span class="required-mark" title="required">*</span>{{end}}</label>
-  {{with $fld.Help}}<p class="help">{{.}}</p>{{end}}
+  {{template "help" $fld.Help}}
   <select id="f-{{$fld.Name}}" name="{{$fld.Name}}"{{if $fld.Required}} required{{end}}>
   <option value="">Please choose</option>
   {{range $opt := $fld.Options}}<option value="{{$opt.Value}}"{{if $opt.Chosen}} selected{{end}}{{if $opt.Taken}} disabled{{end}}>{{$opt.Label}}{{if $opt.Taken}} — taken{{end}}</option>
@@ -88,7 +88,7 @@ you.</p>
 
 {{else if eq $fld.Shape "textarea"}}
   <label for="f-{{$fld.Name}}">{{$fld.Label}}{{if $fld.Required}} <span class="required-mark" title="required">*</span>{{end}}</label>
-  {{with $fld.Help}}<p class="help">{{.}}</p>{{end}}
+  {{template "help" $fld.Help}}
   <textarea id="f-{{$fld.Name}}" name="{{$fld.Name}}"
     {{- if $fld.Required}} required{{end}}
     {{- with $fld.Placeholder}} placeholder="{{.}}"{{end}}
@@ -97,7 +97,7 @@ you.</p>
 
 {{else}}
   <label for="f-{{$fld.Name}}">{{$fld.Label}}{{if $fld.Required}} <span class="required-mark" title="required">*</span>{{end}}</label>
-  {{with $fld.Help}}<p class="help">{{.}}</p>{{end}}
+  {{template "help" $fld.Help}}
   {{with $fld.PatternNote}}<p class="help">{{.}}</p>{{end}}
   {{with $fld.RangeNote}}<p class="help">{{.}}</p>{{end}}
   {{if eq $fld.Shape "amount"}}<span class="currency">{{$.Symbol}}</span>{{end}}
@@ -186,3 +186,8 @@ you.</p>
 {{end}}
 </div>
 {{end}}
+
+{{/* Text the form's author wrote under a question or a heading: a paragraph
+     per blank-line-separated block, its line breaks kept. See
+     page.Paragraphs for why this is not white-space: pre-line. */}}
+{{define "help"}}{{range paragraphs .}}<p class="help">{{range $i, $l := .}}{{if $i}}<br>{{end}}{{$l}}{{end}}</p>{{end}}{{end}}
