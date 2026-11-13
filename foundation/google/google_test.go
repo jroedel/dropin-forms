@@ -171,8 +171,8 @@ func TestASpreadsheetIsMadeReadAndWrittenInTheShapesGoogleWants(t *testing.T) {
 			{"developerMetadata":{"metadataKey":"k","metadataValue":"ref","location":{"locationType":"COLUMN","dimensionRange":{"sheetId":0,"dimension":"COLUMNS","startIndex":3,"endIndex":4}}}},
 			{"developerMetadata":{"metadataKey":"k","metadataValue":"form","location":{"locationType":"SHEET","sheetId":0}}}]}`),
 		"POST /sheets/ss1/values:batchGetByDataFilter": reply(200, `{"valueRanges":[
-			{"valueRange":{"values":[["Reference","abc",""]]}},
-			{"valueRange":{}}]}`),
+			{"valueRange":{"range":"Responses!D1:D1000","values":[["Reference","abc",""]]}},
+			{"valueRange":{"range":"Responses!F1:F1000"}}]}`),
 		"POST /sheets/ss1:batchUpdate": reply(200, `{"replies":[{},{"addSheet":{"properties":{"sheetId":7}}}]}`),
 	})
 
@@ -233,6 +233,53 @@ func TestASpreadsheetIsMadeReadAndWrittenInTheShapesGoogleWants(t *testing.T) {
 
 	if strings.Contains(update, "formulaValue") {
 		t.Error("a cell was sent as a formula")
+	}
+}
+
+// Google does not answer a read in the order it was asked. Taking it to, the
+// first version read the Reference column out of another one, found no
+// heading, and added a heading row to a real sheet on every pass.
+func TestColumnsAreReadByWhereGoogleSaysTheyAreNotByTheOrderOfItsAnswer(t *testing.T) {
+	answer := `{"valueRanges":[]}`
+
+	c, _ := newClient(t, map[string]http.HandlerFunc{
+		"POST /sheets/ss1/values:batchGetByDataFilter": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, answer)
+		},
+	})
+
+	// Asked for A, AB and C; answered C, A, AB, under a tab whose name has a
+	// "!" in it, and with one placed only by the filter it echoes.
+	answer = `{"valueRanges":[
+		{"valueRange":{"range":"'Hi! Responses'!C1:C3","values":[["Status","paid"]]}},
+		{"valueRange":{"values":[["Received",46000]]},"dataFilters":[{"gridRange":{"sheetId":0}}]},
+		{"valueRange":{"range":"'Hi! Responses'!AB1:AB9","values":[["Reference","abc"]]}}]}`
+
+	cols, err := c.ReadColumns(t.Context(), "tok", "ss1", 0, []int{0, 27, 2})
+	if err != nil {
+		t.Fatalf("ReadColumns: %v", err)
+	}
+
+	for i, want := range []string{"Received", "Reference", "Status"} {
+		if len(cols[i]) == 0 || cols[i][0] != want {
+			t.Errorf("column %d asked for came back as %v, want the %s column", i, cols[i], want)
+		}
+	}
+
+	// An answer for a column nobody asked for is refused rather than placed
+	// somewhere: a wrong column is a sheet written over.
+	answer = `{"valueRanges":[{"valueRange":{"range":"Responses!E1:E3"}},{"valueRange":{"range":"Responses!A1:A3"}}]}`
+
+	if _, err := c.ReadColumns(t.Context(), "tok", "ss1", 0, []int{0, 2}); err == nil {
+		t.Error("an answer for column E, asked for A and C, was accepted")
+	}
+
+	// And so is the same column twice.
+	answer = `{"valueRanges":[{"valueRange":{"range":"Responses!A1:A3"}},{"valueRange":{"range":"Responses!A1:A3"}}]}`
+
+	if _, err := c.ReadColumns(t.Context(), "tok", "ss1", 0, []int{0, 2}); err == nil {
+		t.Error("two answers for column A, asked for A and C, were accepted")
 	}
 }
 
