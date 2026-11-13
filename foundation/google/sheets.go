@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -143,6 +144,15 @@ func (c *Client) Tagged(ctx context.Context, token, spreadsheet, key string) ([]
 // (numbers, and dates as serial numbers) or a bool for each cell, from the
 // first row, with trailing empty cells left off. One slice per column asked
 // for, in the order asked. spreadsheets.values.batchGetByDataFilter.
+//
+// "In the order asked" is this function's promise, not Google's. The answer
+// does not come back in the order of the filters -- taking it to, as the
+// first version did, read the Reference column out of whichever column
+// Google put in that place, found no heading there, and put a fresh heading
+// row in on every pass. So each range is placed by the column it says it
+// covers (its A1 range, and failing that the filter it echoes back), and an
+// answer that cannot be placed is an error rather than a guess: a wrong
+// column here is a sheet written over.
 func (c *Client) ReadColumns(ctx context.Context, token, spreadsheet string, sheet int64, columns []int) ([][]any, error) {
 	if len(columns) == 0 {
 		return nil, nil
@@ -165,8 +175,15 @@ func (c *Client) ReadColumns(ctx context.Context, token, spreadsheet string, she
 	var r struct {
 		Ranges []struct {
 			ValueRange struct {
+				Range  string  `json:"range"`
 				Values [][]any `json:"values"`
 			} `json:"valueRange"`
+			Filters []struct {
+				Grid *struct {
+					// Zero is left out of Google's JSON, so absent is column A.
+					Start int `json:"startColumnIndex"`
+				} `json:"gridRange"`
+			} `json:"dataFilters"`
 		} `json:"valueRanges"`
 	}
 
@@ -180,14 +197,57 @@ func (c *Client) ReadColumns(ctx context.Context, token, spreadsheet string, she
 		return nil, fmt.Errorf("google answered %d columns for %d asked", len(r.Ranges), len(columns))
 	}
 
+	slot := make(map[int]int, len(columns))
+	for i, col := range columns {
+		slot[col] = i
+	}
+
 	out := make([][]any, len(columns))
-	for i, vr := range r.Ranges {
+	placed := make([]bool, len(columns))
+
+	for _, vr := range r.Ranges {
+		col, ok := columnOfA1(vr.ValueRange.Range)
+		if !ok && len(vr.Filters) == 1 && vr.Filters[0].Grid != nil {
+			col, ok = vr.Filters[0].Grid.Start, true
+		}
+
+		i, asked := slot[col]
+		if !ok || !asked || placed[i] {
+			return nil, fmt.Errorf("google answered a range %q that is not one of the columns asked for", vr.ValueRange.Range)
+		}
+
+		placed[i] = true
+
 		if len(vr.ValueRange.Values) > 0 {
 			out[i] = vr.ValueRange.Values[0]
 		}
 	}
 
 	return out, nil
+}
+
+// columnOfA1 is the zero-based first column of an A1 range such as
+// "'Responses (rebuilt 12 Nov)'!AB1:AB40" or "Responses!C:C". The tab's name
+// can hold a "!" of its own, so the cell part is what follows the last one.
+func columnOfA1(a1 string) (int, bool) {
+	cell := a1[strings.LastIndexByte(a1, '!')+1:]
+
+	col, n := 0, 0
+
+	for _, ch := range cell {
+		if ch < 'A' || ch > 'Z' {
+			break
+		}
+
+		col = col*26 + int(ch-'A'+1)
+		n++
+	}
+
+	if n == 0 {
+		return 0, false
+	}
+
+	return col - 1, true
 }
 
 // File is what Drive says about a spreadsheet.
