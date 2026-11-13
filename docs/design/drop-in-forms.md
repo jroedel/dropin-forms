@@ -2302,6 +2302,17 @@ with `=` stays text and does not run as a formula. The form's columns carry a
 warning-only protection, so Google tells somebody editing one that the form
 fills it in; their edit is put back on the next read.
 
+**The way back.** Each Reference cell links to that submission's page here.
+The link is the cell's format, not a `HYPERLINK` formula, so the value read
+back is still the plain reference and no formula is ever written. The link
+alone grants nothing: the page asks the person to sign in and checks their
+access to the form. A pass writes only cells whose value differs, and the
+values API does not read back a link, so a sheet written before the links had
+no way to get them. Each connection therefore records the `layout` it was
+written with. One that is behind has every linked cell written over once, on
+its next pass, and is then brought up to date. Anything a cell carries beyond
+its value later goes through the same number.
+
 **What they delete stays deleted.** Every row and column written is recorded
 (`sheet_rows`, `sheet_columns`). One written and no longer in the sheet was
 deleted by its owner, and is not put back — not even when that submission

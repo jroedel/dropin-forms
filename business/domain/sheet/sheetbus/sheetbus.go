@@ -133,6 +133,10 @@ type Connection struct {
 	CheckedAt    time.Time
 	NextAt       time.Time
 	FailingSince time.Time
+
+	// Layout is the version of what the sheet's cells carry beyond their
+	// values that it was last written with. See layout.
+	Layout int
 }
 
 // Event is something worth telling the person on their page.
@@ -501,7 +505,7 @@ func (b *Business) makeSpreadsheet(ctx context.Context, now time.Time, c Connect
 		return c, fmt.Errorf("filling the spreadsheet: %w", err)
 	}
 
-	c.Digest, c.CheckedAt, c.SyncedAt = want.digest(), now, now
+	c.Digest, c.CheckedAt, c.SyncedAt, c.Layout = want.digest(), now, now, layout
 
 	if err := b.cfg.Store.Save(ctx, c); err != nil {
 		return c, err
@@ -611,6 +615,15 @@ const interval = 2 * time.Minute
 // of the form's cells -- is noticed within it.
 const recheck = time.Hour
 
+// layout is the version of what the form's cells carry beyond their values.
+// A pass only writes a cell whose value differs, and a link cannot be read
+// back with the values, so a sheet written before a change here would never
+// get it. A connection whose Layout is behind has every such cell written
+// over once instead, on its next pass, and is then brought up to this.
+//
+//	1  the Reference cell links to the submission's page
+const layout = 1
+
 // sync is one pass. Called with the connection's lock held.
 func (b *Business) sync(ctx context.Context, now time.Time, c Connection, refill bool) (Connection, error) {
 	f, err := b.cfg.Forms.ByID(c.Form)
@@ -648,8 +661,9 @@ func (b *Business) sync(ctx context.Context, now time.Time, c Connection, refill
 	}
 
 	digest := want.digest()
+	relink := c.Layout < layout
 
-	if !refill && digest == c.Digest && now.Sub(c.CheckedAt) < recheck {
+	if !refill && !relink && digest == c.Digest && now.Sub(c.CheckedAt) < recheck {
 		c.NextAt = now.Add(interval)
 
 		return c, b.cfg.Store.Save(ctx, c)
@@ -660,11 +674,11 @@ func (b *Business) sync(ctx context.Context, now time.Time, c Connection, refill
 		return b.failed(ctx, now, c, err)
 	}
 
-	if c, err = b.reconcile(ctx, now, c, f, want, token, refill); err != nil {
+	if c, err = b.reconcile(ctx, now, c, f, want, token, refill, relink); err != nil {
 		return b.failed(ctx, now, c, err)
 	}
 
-	c.Digest = digest
+	c.Digest, c.Layout = digest, layout
 	c.CheckedAt, c.SyncedAt, c.NextAt = now, now, now.Add(interval)
 	c.Problem, c.Told, c.FailingSince = "", "", time.Time{}
 
@@ -875,6 +889,10 @@ func (b *Business) rows(ctx context.Context, f formbus.Form, c Connection) (want
 		for i, cell := range cells {
 			row[i] = b.value(cell)
 
+			if w.cols[i].Key == "ref" && b.cfg.AdminBaseURL != "" {
+				row[i].Link = b.cfg.AdminBaseURL + "/forms/" + f.ID.String() + "/submissions/" + s.ID.String()
+			}
+
 			if w.cols[i].Key == "status" {
 				words := s.Words()
 				if hidden[s.ID] {
@@ -925,7 +943,7 @@ func (w wanted) digest() string {
 		fmt.Fprintf(h, "\x01%s", r.id)
 
 		for _, v := range r.cells {
-			fmt.Fprintf(h, "\x00%d:%s:%v:%d", v.Kind, v.Text, v.Number, v.Time.Unix())
+			fmt.Fprintf(h, "\x00%d:%s:%v:%d:%s", v.Kind, v.Text, v.Number, v.Time.Unix(), v.Link)
 		}
 	}
 
