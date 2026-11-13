@@ -436,7 +436,7 @@ type summaryDoc struct {
 }
 
 // submissionsDoc is a form's submissions laid out against its questions --
-// the feed's shape, with what was ordered and paid added, because a program
+// the download's columns, with what was ordered and paid added, because a program
 // reading through somebody's own account may see everything the admin page
 // shows.
 type submissionsDoc struct {
@@ -492,7 +492,7 @@ type submissionDoc struct {
 
 	// Answers has a key for every question the form asks now: a string, a
 	// list of strings for a question that takes several, or null for one not
-	// answered. The feed's rule, for the feed's reason.
+	// answered: a program can tell "not answered" from "not asked".
 	Answers map[string]any `json:"answers"`
 
 	Lines    []lineDoc `json:"lines,omitzero"`

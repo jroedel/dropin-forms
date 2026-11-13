@@ -507,10 +507,6 @@ type Storer interface {
 	// newest first.
 	ByEmail(ctx context.Context, form types.Slug, email types.Email) ([]Submission, error)
 
-	// ChangeCounts is how many times each of a form's submissions has been
-	// changed, absent for none.
-	ChangeCounts(ctx context.Context, form types.Slug) (map[types.ID]int, error)
-
 	// ByPaymentRef reads the submission a Stripe payment reference belongs
 	// to, hidden or not, and ErrNotFound when none does.
 	ByPaymentRef(ctx context.Context, ref string) (Submission, error)
@@ -670,7 +666,7 @@ func (b *Business) ByID(ctx context.Context, id types.ID) (Submission, error) {
 //
 // Settled, which is the same line [Business.Recent] draws and for a wider
 // reason. An order nobody paid for is not a submission anybody needs to read:
-// the list, its totals, the download, the spreadsheet feed and the API all
+// the list, its totals, the download and the API all
 // come through here, and every one of them was being asked what a row of
 // somebody who closed the payment page meant. Leaving them out in one place
 // means a page added next year cannot forget to. [Business.Unsettled] is the

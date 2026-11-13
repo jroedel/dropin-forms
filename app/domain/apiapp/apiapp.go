@@ -50,7 +50,7 @@
 // # What is deliberately not here
 //
 // Managing who may see a form, hiding a submission, the will-call table and
-// the spreadsheet feed's keys. None was asked for, and each is a decision about
+// connecting a Google Sheet. None was asked for, and each is a decision about
 // other people's access or about the record of what was paid that is better
 // made by a person on the page built for it. Nor can a key make or revoke a
 // key: that is the account page, behind a session, so a key that leaks cannot
@@ -591,7 +591,7 @@ func (a app) submissions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Oldest first, as the feed has them, so that a program writing them out
+	// Oldest first, as a spreadsheet adds them, so that a program writing them out
 	// in order keeps each person where they were last time. The store's list
 	// turned over rather than sorted again by time: it is newest first in the
 	// exact order of arrival, ties included, and a sort by time alone would

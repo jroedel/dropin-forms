@@ -163,14 +163,16 @@ decision rather than by oversight. **This is an ordinary web server.**
 - **Key and credential management.** `app/sdk/adminkey`, the credential domain,
   per-credential read/write scopes, and the `RequireWrite` gate that reads
   them. Two narrow exceptions were made on purpose, and neither adds any
-  authority of its own. `feedbus` issues a read-only key per form so that a
-  Google Sheet can follow a form's answers. It reads one form, writes nothing,
-  and is revoked from the page that made it. `apikeybus` lets any account make
+  authority of its own. `sheetbus` keeps a Google refresh token for each
+  person who connects a Google Sheet of a form they may read: scope
+  `drive.file` (only the spreadsheet it made), sealed at rest with
+  `foundation/seal`, private to that person, stopped when their access to the
+  form ends, and revoked from the page that made it. `apikeybus` lets any account make
   personal keys for the API and MCP endpoint, by hand or by connecting
   Claude on claude.ai through OAuth (`foundation/oauth`, `oauthapp`, ported
   from the stewards app). A key *is* its account: no scopes, no roles, the
   same gates as the pages, and it cannot make a key. See
-  "The spreadsheet feed, as built" and "The API and the MCP endpoint, as
+  "The Google Sheet, as built" and "The API and the MCP endpoint, as
   built" in the design doc. Neither is a foothold for scopes, admin-issued
   credentials or the rest.
 - **The operational apparatus around those:** credential-disclosure playbooks,

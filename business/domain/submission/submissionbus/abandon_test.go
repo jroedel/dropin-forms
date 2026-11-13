@@ -107,7 +107,7 @@ func TestAnAbandonedOrderCanStillBePaidAndNothingElse(t *testing.T) {
 	}
 }
 
-// ByForm is what every list, total, download and feed reads, so it is the
+// ByForm is what every list, total and download reads, so it is the
 // settled submissions alone; Unsettled is the rest, for an administrator.
 func TestByFormIsTheSettledAndUnsettledIsTheRest(t *testing.T) {
 	b, _ := newBusiness()

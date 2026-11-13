@@ -87,7 +87,6 @@ import (
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/domain/depositapp"
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
-	"github.com/jroedel/dropin-forms/app/domain/feedapp"
 	"github.com/jroedel/dropin-forms/app/domain/formapp"
 	"github.com/jroedel/dropin-forms/app/domain/hideapp"
 	"github.com/jroedel/dropin-forms/app/domain/mcpapp"
@@ -97,6 +96,7 @@ import (
 	"github.com/jroedel/dropin-forms/app/domain/peopleapp"
 	"github.com/jroedel/dropin-forms/app/domain/refundapp"
 	"github.com/jroedel/dropin-forms/app/domain/reviewapp"
+	"github.com/jroedel/dropin-forms/app/domain/sheetapp"
 	"github.com/jroedel/dropin-forms/app/domain/siteapp"
 	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
 	"github.com/jroedel/dropin-forms/app/domain/willcallapp"
@@ -183,12 +183,10 @@ type Config struct {
 	Refunding refundapp.Submissions
 	Refunds   refundapp.Payments
 
-	// Feeds and FeedRows are the spreadsheet feed: the keys, and the
-	// submissions it reads -- the latter its own field for the reason Hiding
-	// is, a narrower value than the read surface's. Optional, both: without
-	// them the routes are not mounted and no key can be made.
-	Feeds    feedapp.Keys
-	FeedRows feedapp.Submissions
+	// Sheets keeps a Google Sheet of a form's answers for whoever connects
+	// one. Optional: without Google configured the page is not mounted and
+	// the list does not link to it.
+	Sheets sheetapp.Sheets
 
 	// Builder is the write half of the form domain, and the one dependency
 	// here that only one app has. Optional: without it the service serves
@@ -233,8 +231,8 @@ type Config struct {
 	TrustProxy bool
 
 	// AdminBaseURL is the admin surface's own origin, used to build the
-	// addresses it hands out -- an invitation's link to the sign-in page, a
-	// spreadsheet feed's URL.
+	// addresses it hands out -- an invitation's link to the sign-in page,
+	// where Google sends somebody back to after connecting a sheet.
 	// Configured rather than taken from the request: a link built from a Host
 	// header is one an attacker can aim at their own host by sending a single
 	// request, and the person who receives the mail cannot tell.
@@ -470,7 +468,7 @@ func Admin(cfg Config) (http.Handler, error) {
 		CanHide:     cfg.Hiding != nil,
 		CanReview:   cfg.Reviewing != nil,
 		CanRefund:   cfg.Refunding != nil && cfg.Refunds != nil,
-		CanFeed:     cfg.Feeds != nil && cfg.FeedRows != nil,
+		CanSheet:    cfg.Sheets != nil,
 		CanEdit:     cfg.Builder != nil,
 		CanWillCall: cfg.Table != nil,
 		CanDeposits: cfg.Deposits != nil,
@@ -581,19 +579,16 @@ func Admin(cfg Config) (http.Handler, error) {
 		refundapp.Routes(mux, rf, guard, admins)
 	}
 
-	// The spreadsheet feed. Making and revoking a key is behind admin on the
-	// form; the JSON is behind the key alone, and feedapp says why the chain
-	// in front of it refuses nothing a script sends.
-	if cfg.Feeds != nil && cfg.FeedRows != nil {
-		feedapp.Routes(mux, feedapp.Config{
-			Log:         cfg.Log,
-			Forms:       cfg.Forms,
-			Submissions: cfg.FeedRows,
-			Keys:        cfg.Feeds,
-			Render:      cfg.Render,
-			BaseURL:     cfg.AdminBaseURL,
-			TrustProxy:  cfg.TrustProxy,
-		}, guard, admins)
+	// A Google Sheet of a form's answers, behind results like the download
+	// it keeps up to date. Google's answer comes back to a path with no form
+	// in it, behind Require alone; sheetapp says why that is enough.
+	if cfg.Sheets != nil {
+		sheetapp.Routes(mux, sheetapp.Config{
+			Log:    cfg.Log,
+			Forms:  cfg.Forms,
+			Sheets: cfg.Sheets,
+			Render: cfg.Render,
+		}, guard, results)
 	}
 
 	// The will-call table, behind the door role -- the middle of the three,

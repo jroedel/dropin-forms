@@ -134,6 +134,22 @@ secret_key = ""
 webhook_secret = ""
 
 
+[google]
+# Connecting a Google Sheet: an OAuth client made in Google Cloud, and a key
+# that seals the permission each person gives. All three empty switches it off
+# -- the page is not mounted and the submissions list does not offer it. Any one
+# set requires the others. secrets.env.example says how to make the client.
+client_id = ""
+client_secret = ""
+
+# 32 random bytes in base64: openssl rand -base64 32. Changing it asks
+# everybody with a sheet to connect again, and loses nothing else.
+token_key = ""
+
+# The time zone spreadsheets are made in and dates are written in. Empty means
+# this server's own, from TZ or /etc/localtime.
+time_zone = ""
+
 [mail]
 # The relay that sends sign-in codes and receipts.
 #

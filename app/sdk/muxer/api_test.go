@@ -244,10 +244,10 @@ func TestTheAPIRefusesWithoutAWorkingKey(t *testing.T) {
 	key := keyFor(t, a, boss)
 
 	cases := map[string]string{
-		"no key":                    "",
-		"a key that is not ours":    "dfa_" + strings.Repeat("A", 43),
-		"a spreadsheet's feed key":  "dfk_" + strings.Repeat("A", 43),
-		"the key with a typo in it": key[:len(key)-1] + "x",
+		"no key":                      "",
+		"a key that is not ours":      "dfa_" + strings.Repeat("A", 43),
+		"an old spreadsheet feed key": "dfk_" + strings.Repeat("A", 43),
+		"the key with a typo in it":   key[:len(key)-1] + "x",
 	}
 
 	for name, presented := range cases {

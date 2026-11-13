@@ -16,11 +16,11 @@ import (
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
 	"github.com/jroedel/dropin-forms/app/domain/depositapp"
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
-	"github.com/jroedel/dropin-forms/app/domain/feedapp"
 	"github.com/jroedel/dropin-forms/app/domain/formapp"
 	"github.com/jroedel/dropin-forms/app/domain/notifyapp"
 	"github.com/jroedel/dropin-forms/app/domain/oauthapp"
 	"github.com/jroedel/dropin-forms/app/domain/peopleapp"
+	"github.com/jroedel/dropin-forms/app/domain/sheetapp"
 	"github.com/jroedel/dropin-forms/app/domain/siteapp"
 	"github.com/jroedel/dropin-forms/app/domain/submissionapp"
 	"github.com/jroedel/dropin-forms/app/domain/willcallapp"
@@ -31,8 +31,6 @@ import (
 	"github.com/jroedel/dropin-forms/business/domain/apikey/stores/apikeydb"
 	"github.com/jroedel/dropin-forms/business/domain/deposit/depositbus"
 	"github.com/jroedel/dropin-forms/business/domain/deposit/stores/depositdb"
-	"github.com/jroedel/dropin-forms/business/domain/feed/feedbus"
-	"github.com/jroedel/dropin-forms/business/domain/feed/stores/feeddb"
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/domain/form/stores/formdb"
 	"github.com/jroedel/dropin-forms/business/domain/form/stores/formtoml"
@@ -41,6 +39,7 @@ import (
 	"github.com/jroedel/dropin-forms/business/domain/payment/paybus"
 	"github.com/jroedel/dropin-forms/business/domain/payment/stores/paydb"
 	"github.com/jroedel/dropin-forms/business/domain/payment/stores/stripepay"
+	"github.com/jroedel/dropin-forms/business/domain/sheet/stores/sheetdb"
 	"github.com/jroedel/dropin-forms/business/domain/submission/stores/submissiondb"
 	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
 	"github.com/jroedel/dropin-forms/business/domain/user/stores/userdb"
@@ -114,6 +113,7 @@ func run() error {
 		// possible moment, and "test" where they expected "LIVE" is the answer
 		// they need to see without having to look anywhere else.
 		fmt.Printf("  payments       %s\n", stripeMode(cfg))
+		fmt.Printf("  google sheets  %s\n", either(cfg.Google.ClientID != "", "on, in "+cfg.Google.TimeZone, "off"))
 		fmt.Printf("  bootstrap      %s\n", either(cfg.Auth.BootstrapSecret != "", "route mounted", "route not mounted"))
 
 		return nil
@@ -187,10 +187,16 @@ func run() error {
 		return err
 	}
 
-	// The keys a spreadsheet reads one form's answers with; feedbus says why
-	// a service without credentials has these.
-	if err := feeddb.Init(ctx, db); err != nil {
+	// The Google Sheets people keep of forms.
+	if err := sheetdb.Init(ctx, db); err != nil {
 		return err
+	}
+
+	// The spreadsheet feed's keys, from before a sheet was kept by this
+	// service itself. The feed is gone and its keys open nothing; the table
+	// goes with it so that no hash of a key outlives the feature.
+	if _, err := db.ExecContext(ctx, `DROP TABLE IF EXISTS feed_keys`); err != nil {
+		return fmt.Errorf("removing the old spreadsheet feed's keys: %w", err)
 	}
 
 	// The personal keys a program uses the API with, after userdb because a
@@ -211,7 +217,7 @@ func run() error {
 	expected := sqldb.Expected{}
 	for _, part := range []sqldb.Expected{
 		sqldb.Infrastructure, userdb.Expected, accessdb.Expected, submissiondb.Expected,
-		paydb.Expected, depositdb.Expected, notifydb.Expected, formdb.Expected, feeddb.Expected, apikeydb.Expected,
+		paydb.Expected, depositdb.Expected, notifydb.Expected, formdb.Expected, sheetdb.Expected, apikeydb.Expected,
 	} {
 		for table, columns := range part {
 			if _, clash := expected[table]; clash {
@@ -306,7 +312,7 @@ func run() error {
 
 	adminPages, err := page.NewRenderer(log, page.AdminChrome(),
 		authapp.Templates, submissionapp.Templates, notifyapp.Templates, peopleapp.Templates,
-		formapp.Templates, willcallapp.Templates, siteapp.Templates, feedapp.Templates, apiapp.Templates,
+		formapp.Templates, willcallapp.Templates, siteapp.Templates, sheetapp.Templates, apiapp.Templates,
 		oauthapp.Templates, depositapp.Templates)
 	if err != nil {
 		return err
@@ -328,8 +334,6 @@ func run() error {
 		Table:        submissions,
 		Hiding:       submissions,
 		Reviewing:    submissions,
-		Feeds:        feedbus.NewBusiness(log, feeddb.NewStore(db)),
-		FeedRows:     submissions,
 		Forms:        definitions,
 		Builder:      definitions,
 		EmbedBaseURL: cfg.Server.EmbedBaseURL,
@@ -419,6 +423,17 @@ func run() error {
 		"bootstrap_route", cfg.Auth.BootstrapSecret != "",
 	)
 
+	// Assigned only when there is one: a nil *sheetbus.Business in the
+	// interface field would read as configured.
+	sheets, err := newSheets(cfg, log, db, definitions, submissions, access, users, sender)
+	if err != nil {
+		return err
+	}
+
+	if sheets != nil {
+		mc.Sheets = sheets
+	}
+
 	admin, err := muxer.Admin(mc)
 	if err != nil {
 		return err
@@ -448,6 +463,10 @@ func run() error {
 	// accountant reconciles against. Closed at once when Stripe is off.
 	fetched := depositWatch{log: log, deposits: deposits}.start(ctx)
 
+	// And the Google Sheets people keep, brought up to date every couple of
+	// minutes. Closed at once when Google is off.
+	kept := sheetWatch{log: log, sheets: sheets}.start(ctx)
+
 	// Two listeners, not three. The webhook lives on the embed one, mounted
 	// outside its origin gate -- see muxer.Embed for why that is the whole of
 	// what it needs, and why it is not enough for it merely to pass the gate.
@@ -459,6 +478,7 @@ func run() error {
 	<-swept
 	<-abandoned
 	<-fetched
+	<-kept
 
 	return err
 }

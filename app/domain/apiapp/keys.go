@@ -88,8 +88,8 @@ func (k keysApp) page(w http.ResponseWriter, r *http.Request) {
 }
 
 // create makes a key and shows it on the page it answers with, which is the
-// only time it is ever shown -- a page rather than a redirect, for the reason
-// feedapp.create gives.
+// only time it is ever shown -- a page rather than a redirect, so that the
+// secret is never in an address, a history or a log line.
 func (k keysApp) create(w http.ResponseWriter, r *http.Request) {
 	me, ok := mid.UserFrom(r.Context())
 	if !ok {

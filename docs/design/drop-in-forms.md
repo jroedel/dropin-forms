@@ -1581,8 +1581,8 @@ payment on an expired page, but if it does the money is real. A late failure
 changes nothing.
 
 **Out of everybody's view but an administrator's.** `submissionbus.ByForm` is
-the settled submissions alone, and every list, total, download, spreadsheet
-feed and API answer reads it, so a page added next year is right without
+the settled submissions alone, and every list, total, download and API
+answer reads it, so a page added next year is right without
 knowing this. `Unsettled` is the way back, and only the submissions list asks
 it, for somebody holding `admin` on the form: their rows sit behind the "Show
 the N not paid" box, labelled *in checkout* or *abandoned* rather than with the
@@ -2144,7 +2144,7 @@ it means the order of headings and questions is one list rather than two kept
 in step. The price is that a heading is not a question, and everything that
 reads answers must not treat it as one: `Form.Questions()` is the list
 without headings, and the CSV, the admin page, the notifications and the
-feed all walk it. `Check` refuses on a heading everything only a question can
+Google Sheet all walk it. `Check` refuses on a heading everything only a question can
 use — required, choices, bounds, a pattern — and refuses a condition that
 names a heading, because a heading has no answer to test.
 
@@ -2244,47 +2244,91 @@ answered, or the page would be a way to send our mail to anybody. It sits
 behind the submit allowance and a grant. It is synchronous, like sign-in, and
 accepts the same small timing difference sign-in does.
 
-### The spreadsheet feed, as built
+### The Google Sheet, as built
 
 The office keeps its own Google Sheets — rooming, rides, the vesting list —
-and wants them to follow the answers without anybody downloading a CSV. So a
-form's administrator can make a **key** on the form's Spreadsheet page
-(`/forms/{slug}/feed`, linked from the submissions list), and a Google Apps
-Script holding it reads `GET /forms/{slug}/feed.json` on a timer and rewrites a
-tab of its own. The page carries the script, with the address filled in, and
-the five steps to install it.
+and wants them to follow the answers without anybody downloading a CSV. This
+was first a key and an Apps Script the person pasted into their sheet (five
+steps, a script property, a time trigger): a power user's job. It is now one
+button. **Connect a Google Sheet** on `/forms/{slug}/sheet` (linked from the
+submissions list) sends the person to Google's consent screen; the service
+makes a spreadsheet in their Drive, fills it, and keeps it up to date every
+two minutes. The feed, its `dfk_` keys and `feed.json` were removed in the
+same change, and the `feed_keys` table is dropped at startup.
 
-**A key, on a service that left key management behind.** CLAUDE.md says so,
-and this is a deliberate, narrow exception. A sheet's script cannot hold a
-session: it cannot read an emailed sign-in code, and it would have to every
-fourteen days. What keeps it narrow is what a key cannot do. It reads one form
-and is refused on every other. It writes nothing: no route anywhere accepts a
-key for a write. It has no scopes, no roles and no expiry. An administrator
-revokes it from the page that made it, and the page shows when each key was
-last used.
+**It belongs to the person, not the form.** Their Google account, their
+Drive, their spreadsheet. Nobody else is shown that it exists — administrators
+included — and only they are emailed about it. Several people can each keep
+their own sheet of one form. Anybody with `results` may connect, the same gate
+as the download: a sheet is a download that keeps itself up to date. The
+service's own rules still govern what flows: every pass checks that the person
+still has `results`, an enabled account and a form to read, and when that ends
+the sheet stops and they are told why; what is in their Drive stays, as a CSV
+they saved would.
 
-**Shown once, stored as a hash.** A key is `dfk_` and 32 random bytes; the
-prefix makes one pasted somewhere it should not be recognisable. Only its
-SHA-256 is stored, and the lookup is by that hash. A fast hash is right for 256
-bits of randomness: there is nothing to stretch. The page tells the person to
-put the key in the script's properties rather than in the script, so that
-whoever can read the script cannot read the key.
+**`drive.file`, and why that decides several things.** The app asks Google for
+access only to files it creates (plus `openid email`, to show which account
+was connected). Google classes that as non-sensitive, which is what lets a
+public ("External") app with personal Gmail users skip Google's security
+review. It is also why there is no "pick an existing spreadsheet" — that needs
+Google's Picker, which is JavaScript on admin pages — and why reconnecting
+with a different Google account makes a new spreadsheet: the old one is
+unreachable to it. Google's consent screen lets a person untick the Drive
+permission; the callback checks the granted scopes and says so in a sentence
+rather than connecting an account that can do nothing.
 
-**Behind the key alone.** The JSON route sits on the admin listener behind the
-ordinary chain, which refuses nothing a script sends: no Sec-Fetch-Site and
-no Origin pass the same-origin gate, the form-encoding gate looks only at
-writes, and Authenticate never refuses. A session is not a key: an
-administrator's cookie reads nothing there. Every refusal is the same 401, and
-the key is checked before the form is looked up, so a stranger learns nothing
-about which forms exist.
+**A credential this service keeps.** CLAUDE.md lists key management among what
+was left behind, and this is one of its two narrow exceptions. A refresh token
+must be presented to Google later, so it cannot be hashed as API keys are; it
+is sealed with AES-256-GCM (`foundation/seal`) under a key derived from
+`google.token_key`, with the connection's id as associated data so a sealed
+token copied onto another row does not open. A copy of the database alone
+opens nothing; with the key as well, it reaches only spreadsheets this app
+made. Disconnect revokes the token at Google. The OAuth client is hand-written
+over `net/http` (`foundation/google`), with PKCE and a state signed for one
+person and form for fifteen minutes. Connect is a link, not a POST: the
+admin CSP's `form-action 'self'` applies to a form's redirect target too, so a
+POST answered with a redirect to Google would be stopped by the browser.
 
-**Everything, every time.** The feed holds the same rows as the CSV — not
-hidden — oldest first, so a person keeps their row from one pull to the next,
-with a key for every question the form now asks (`null` when unanswered) and
-how many times each has been changed. An incremental `?since=` was designed
-and dropped: hiding a submission does not change it, so a script asking "what
-is new" would never hear that a row should go. At a parish form's size, all of
-it is a few kilobytes.
+**Finding the data in a sheet people have rearranged.** People sort, filter,
+recolour, rename the tab, move columns and add their own. None of that is
+damage. The tab is held by its id, which survives renaming. Each of the form's
+columns carries Google developer metadata — a tag invisible to people that
+Google moves with the column — so a pass reads where each column is now. Rows
+are found by the Reference column, never by position, so a sorted sheet keeps
+the notes typed beside each row. Values are written as typed cells (a number,
+a date, a string), never as text for Google to interpret: an answer beginning
+with `=` stays text and does not run as a formula. The form's columns carry a
+warning-only protection, so Google tells somebody editing one that the form
+fills it in; their edit is put back on the next read.
+
+**What they delete stays deleted.** Every row and column written is recorded
+(`sheet_rows`, `sheet_columns`). One written and no longer in the sheet was
+deleted by its owner, and is not put back — not even when that submission
+changes later. New submissions and new questions still arrive, at the bottom
+and at the end of the form's columns. **Refill everything** brings back what
+was deleted. A row once written is never removed by the service either:
+hidden, declined, cancelled or lapsed, it stays, and its Status cell says so.
+
+**Beyond use is a new tab, not a repair.** When the tab is gone or its
+Reference column is, no row can be matched to a submission. A new tab,
+"Responses (rebuilt 12 Nov)", is added beside it and filled from scratch, and
+the person is emailed. The old tab is left exactly as it was: it may hold
+notes. A deleted heading row is put back at the top without touching data. A
+trashed or deleted spreadsheet, or a revoked permission, pauses the
+connection and emails once; the page offers **Make a new spreadsheet** or
+**Connect again**.
+
+**Cheap when nothing changed.** A pass builds the rows the sheet should hold
+from `submissionbus.Columns`/`Cells` — the download's layout, moved down a
+layer for this — and hashes them. The same hash as last time, and the sheet
+read within the hour, ends the pass without a request to Google. Otherwise it
+reads the form's columns and sends the differences as one batch. Rate limits
+and Google's outages back off per connection, doubling to an hour, and the
+person is emailed once if it has gone on for a day.
+
+**Not here:** several forms in one workbook; choosing an existing spreadsheet;
+a formula guard on the CSV download.
 
 ### Places and a waiting list, as built
 
@@ -2301,7 +2345,8 @@ the empty field and value, which no question can be named.
 
 A submission that arrives at a full form with a waiting list is stored with a
 new status, `waiting`. It holds no place, is settled for nothing, and is in no
-list, total, download or feed — only the office's own waiting list. It claims
+list, total or download — only the office's own waiting list (and a Google
+Sheet, where its Status says so). It claims
 nothing on the way in, not even the time slot it chose; that is claimed when it
 is offered a place. Without a waiting list, a full form shows its closed page,
 and somebody who was filling it in as the last place went gets that page too,
@@ -2361,7 +2406,7 @@ whole remainder, which is the common case, and the help text says when to
 untick it. A template cannot follow somebody's typing, so the default follows
 the amount the page drew. A cancelled row has a new status, `cancelled`, which
 moves forwards only, from paid. It holds no place and is not settled, so it
-drops out of every list, total, download, feed and will-call table by the rules
+drops out of every list, total, download and will-call table by the rules
 those already follow for declined rows, and the bed it held is free for
 **Offer a place**. The submissions page has a "Show the cancelled" toggle
 beside "Show the declined". A cancellation with nothing to give back is allowed,
@@ -2427,7 +2472,7 @@ Claude.
 **Personal keys, and the second exception to "no credentials".** A program
 cannot hold a session, for the reason the spreadsheet feed could not. So any
 account can make a key on `/account/keys` (`dfa_`, shown once, stored as its
-SHA-256, as the feed's are). What keeps this from being the parent project's
+SHA-256, as the feed's were). What keeps this from being the parent project's
 credential domain is that a key adds no authority. It has no scopes and no
 roles: it *is* its account, and every API route sits behind the same
 `RequireFormRole` / `RequireFormCreator` value as the matching page. It
@@ -2504,7 +2549,7 @@ keeping the old one, and putting it back if the public URLs stop answering. Veri
 real binary with Claude Code's own metadata document, fetched from claude.ai.
 
 **Left out on purpose:** access management, hiding, the will-call table and
-feed keys. None was asked for, and each is a decision about other people's
+connecting a Google Sheet. None was asked for, and each is a decision about other people's
 access or about the record of what was paid, better made on its own page.
 
 ### Deposits, as built

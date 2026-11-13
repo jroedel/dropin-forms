@@ -5,9 +5,10 @@
 // # Why there is a second kind of key
 //
 // CLAUDE.md lists credential management among the things deliberately not
-// imported from the project this was seeded from, and feedbus was the first
-// narrow exception: a read-only key on one form, for a spreadsheet. This is the
-// second, made on purpose and for the same underlying reason. Somebody who
+// imported from the project this was seeded from, and a read-only key on one
+// form, for a spreadsheet's script, was the first narrow exception (since
+// replaced by a Google Sheet the service keeps itself). This is the second,
+// made on purpose and for the same underlying reason. Somebody who
 // builds forms wants to have a program build them, and a program cannot hold a
 // session: it cannot read a sign-in code out of a mailbox, and it would have
 // to every fourteen days.
@@ -28,7 +29,7 @@
 //
 // # How a key is kept
 //
-// Exactly as feedbus keeps its keys, and for the same reasons: shown once,
+// As the spreadsheet feed kept its keys before it, and for the same reasons: shown once,
 // stored only as its SHA-256, looked up by that hash. A key is 32 random bytes,
 // so a fast hash is the right one -- there is nothing to stretch.
 package apikeybus
@@ -51,8 +52,8 @@ import (
 
 // keyPrefix starts every key, so that one pasted somewhere it should not be is
 // recognisable as ours -- by a person, and by a secret scanner. Different from
-// the feed's dfk_, so that which kind of key leaked is visible at a glance:
-// one reads a form, the other is somebody's whole account.
+// the old spreadsheet feed's dfk_, so that a key of that kind still lying in
+// somebody's sheet is never mistaken for one of these.
 const keyPrefix = "dfa_"
 
 // labelMax bounds what somebody calls a key. The page's input says the same;
@@ -62,8 +63,7 @@ const labelMax = 80
 // usedEvery is how stale the last-used time may get before a request writes
 // it again.
 //
-// Not every request, which is what feedbus does and is right there: a sheet
-// reads once every few minutes. A program building a form makes a burst of
+// Not every request. A program building a form makes a burst of
 // calls, and on a single-writer SQLite database a write per read is how a
 // listing starts queueing behind a submission -- which is why
 // userbus.Authenticate does not touch a session on every request either. The

@@ -1,7 +1,6 @@
 package muxer_test
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -157,22 +156,9 @@ func TestAHeadingIsNotAColumn(t *testing.T) {
 		t.Fatalf("POST = %d:\n%s", w.Code, short(w.Body.String()))
 	}
 
-	o, cookie := feedOffice(t, rh, accessbus.RoleAdmin)
-	key := feedKeyPattern.FindString(o.postValues(t, "/forms/retreat/feed", cookie, url.Values{}).Body.String())
-
-	var feed feedReply
-	if err := json.Unmarshal(pullFeed(t, o.admin, "retreat", key).Body.Bytes(), &feed); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
-
-	for _, f := range feed.Fields {
-		if f.Name == "section_1" {
-			t.Error("the feed has a column for a section heading")
-		}
-	}
-	if len(feed.Fields) != 4 || feed.Responses[0].Answers["flight"] != "UA 1234" {
-		t.Errorf("feed = %+v", feed)
-	}
+	o := office{admin: adminOf(t, rh.cfg), embed: rh.h, cfg: rh.cfg}
+	who, cookie := o.reader(t, "office@schoenstatt.test")
+	o.grant(t, who, "retreat", accessbus.RoleAdmin)
 
 	if csv := o.read(t, "/forms/retreat/submissions.csv", cookie).Body.String(); strings.Contains(strings.SplitN(csv, "\n", 2)[0], "Travel") {
 		t.Errorf("the CSV has a column for a section heading: %s", strings.SplitN(csv, "\n", 2)[0])

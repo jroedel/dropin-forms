@@ -1,0 +1,78 @@
+{{define "title"}}Google Sheet of {{.Form.Title}}{{end}}
+
+{{define "masthead"}}<a href="/forms">Forms</a>{{end}}
+
+{{define "content"}}
+<h1>Your Google Sheet</h1>
+
+<p class="crumb"><a href="/forms/{{.FormID}}/submissions">{{.Form.Title}}</a></p>
+
+{{with .Said}}<p class="{{if $.Problem}}problem{{else}}notice{{end}}">{{.}}</p>{{end}}
+
+{{if not .Connected}}
+<p>Keep a spreadsheet of these answers in your own Google Drive, filled in
+and kept up to date by itself every few minutes.</p>
+
+<p class="help">It is yours: it is made in the Google account you choose, and
+nobody here is told it exists. You can sort it, colour it, rename the tab and
+add columns of your own beside the form's &mdash; for notes, room numbers,
+anything. Rows or columns you delete stay deleted. The service can reach only
+the spreadsheet it makes for you, nothing else in your Drive.</p>
+
+<p><a class="go" href="/forms/{{.FormID}}/sheet/connect">Connect a Google Sheet</a></p>
+
+<p class="help">Google will ask you to choose an account and to allow this
+service to create the spreadsheet. Leave that box ticked.</p>
+{{else}}
+
+<table class="detail">
+<tbody>
+<tr><th scope="row">Spreadsheet</th><td>{{if .URL}}<a href="{{.URL}}">Open it in Google Sheets</a>{{else}}&mdash;{{end}}</td></tr>
+<tr><th scope="row">Google account</th><td>{{.Account}}</td></tr>
+<tr><th scope="row">Status</th><td>{{.State}}</td></tr>
+<tr><th scope="row">Last updated</th><td>{{if .Synced}}{{.Synced}}{{else}}not yet{{end}}</td></tr>
+</tbody>
+</table>
+
+{{with .Note}}<p class="problem">{{.}}</p>{{end}}
+
+{{if .Reconnect}}
+<p><a class="go" href="/forms/{{.FormID}}/sheet/connect">Connect again</a></p>
+<p class="help">With the same Google account, the same spreadsheet carries on.
+With a different one, a new spreadsheet is made in that account.</p>
+{{else if .Gone}}
+<form method="post" action="/forms/{{.FormID}}/sheet/remake">
+  <button type="submit">Make a new spreadsheet</button>
+</form>
+{{else if not .Stopped}}
+<form method="post" action="/forms/{{.FormID}}/sheet/sync" class="inline">
+  <button type="submit" class="quiet">Update it now</button>
+</form>
+
+<h2>Refill everything</h2>
+<p class="help">Rows and columns you delete from the spreadsheet are not put
+back. If you deleted some by mistake, this brings back every one of them.
+Nothing of your own is touched.</p>
+<form method="post" action="/forms/{{.FormID}}/sheet/refill">
+  <button type="submit" class="quiet">Refill everything</button>
+</form>
+{{end}}
+
+{{if .Events}}
+<h2>What has happened</h2>
+<table class="detail">
+<tbody>
+{{range .Events}}<tr><th scope="row">{{.When}}</th><td>{{.Text}}</td></tr>
+{{end}}
+</tbody>
+</table>
+{{end}}
+
+<h2>Disconnect</h2>
+<p class="help">Stops updating it, and withdraws this service's permission in
+your Google account. The spreadsheet stays in your Drive.</p>
+<form method="post" action="/forms/{{.FormID}}/sheet/disconnect">
+  <button type="submit" class="quiet">Disconnect</button>
+</form>
+{{end}}
+{{end}}
