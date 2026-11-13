@@ -14,7 +14,7 @@ import (
 
 // reconcile reads the sheet as it is now and makes it hold what it should,
 // in one batch. Called with the connection's lock held.
-func (b *Business) reconcile(ctx context.Context, now time.Time, c Connection, f formbus.Form, w wanted, token string, refill bool) (Connection, error) {
+func (b *Business) reconcile(ctx context.Context, now time.Time, c Connection, f formbus.Form, w wanted, token string, refill, relink bool) (Connection, error) {
 	file, err := b.cfg.Google.FileOf(ctx, token, c.Spreadsheet)
 	if err != nil {
 		return c, err
@@ -78,7 +78,7 @@ func (b *Business) reconcile(ctx context.Context, now time.Time, c Connection, f
 		now2[k] = read[i]
 	}
 
-	plan := planEdits(c.Sheet, f, w, at, now2, refill)
+	plan := planEdits(c.Sheet, f, w, at, now2, refill, relink)
 
 	if len(plan.edits) > 0 {
 		if _, err := b.cfg.Google.Apply(ctx, token, c.Spreadsheet, plan.edits); err != nil {
@@ -115,7 +115,12 @@ type plan struct {
 // Order matters, because Google applies a batch in order and every later
 // position is a position after the earlier edits: rows inserted first, then
 // columns, then the values.
-func planEdits(sheet int64, f formbus.Form, w wanted, at map[string]int, cells map[string][]any, refill bool) plan {
+//
+// relink writes every cell that carries a link, whether or not its value has
+// changed: the values API reads a cell's value and not its link, so a cell
+// written before it had one looks right and would never be given it. See
+// layout.
+func planEdits(sheet int64, f formbus.Form, w wanted, at map[string]int, cells map[string][]any, refill, relink bool) plan {
 	var p plan
 
 	// Which rows hold which submission, by the Reference column. A cell
@@ -293,7 +298,7 @@ func planEdits(sheet int64, f formbus.Form, w wanted, at map[string]int, cells m
 					continue
 				}
 
-				if !same(cellAt(col.Key, row), r.cells[i]) {
+				if !same(cellAt(col.Key, row), r.cells[i]) || relink && r.cells[i].Link != "" {
 					set(row, pos, r.cells[i])
 				}
 			}

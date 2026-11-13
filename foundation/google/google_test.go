@@ -207,6 +207,7 @@ func TestASpreadsheetIsMadeReadAndWrittenInTheShapesGoogleWants(t *testing.T) {
 			{Kind: google.Money, Number: 35},
 			{Kind: google.Date, Time: when},
 			{},
+			{Kind: google.Text, Text: "abc", Link: "https://forms.test/forms/x/submissions/abc"},
 		}}},
 		google.AddTab{Title: "Responses (rebuilt 12 Nov)"},
 	})
@@ -225,7 +226,8 @@ func TestASpreadsheetIsMadeReadAndWrittenInTheShapesGoogleWants(t *testing.T) {
 	update := string(sent.Requests[0]["updateCells"])
 
 	// A formula typed into a form is a string here, never a formula.
-	for _, want := range []string{`"stringValue":"=IMPORTXML(1)"`, `"numberValue":35`, `"type":"DATE_TIME"`, `"fields":"userEnteredValue,`} {
+	for _, want := range []string{`"stringValue":"=IMPORTXML(1)"`, `"numberValue":35`, `"type":"DATE_TIME"`, `"fields":"userEnteredValue,`,
+		`"link":{"uri":"https://forms.test/forms/x/submissions/abc"}`, `userEnteredFormat.textFormat.link"`} {
 		if !strings.Contains(update, want) {
 			t.Errorf("updateCells does not contain %s:\n%s", want, update)
 		}

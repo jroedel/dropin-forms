@@ -29,7 +29,7 @@ func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 // Expected is what CheckSchema verifies at startup.
 var Expected = sqldb.Expected{
 	"sheet_connections": {"id", "user_id", "form_slug", "account", "spreadsheet_id", "sheet_id", "url", "token",
-		"state", "problem", "told", "digest", "created_at", "synced_at", "checked_at", "next_at", "failing_since"},
+		"state", "problem", "told", "digest", "created_at", "synced_at", "checked_at", "next_at", "failing_since", "layout"},
 	"sheet_rows":    {"connection_id", "submission_id"},
 	"sheet_columns": {"connection_id", "column_key"},
 	"sheet_events":  {"connection_id", "at", "text"},
@@ -93,6 +93,14 @@ CREATE INDEX IF NOT EXISTS sheet_events_connection ON sheet_events (connection_i
 		return fmt.Errorf("creating the Google Sheet tables: %w", err)
 	}
 
+	// Which version of what a cell carries beyond its value -- today, the
+	// Reference cell's link to the submission's page -- the sheet was last
+	// written with. Zero on the connections made before there was one, which
+	// is what has their cells written over once with the link.
+	if err := sqldb.AddColumn(ctx, db, "sheet_connections", "layout", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -100,18 +108,19 @@ CREATE INDEX IF NOT EXISTS sheet_events_connection ON sheet_events (connection_i
 func (s *Store) Save(ctx context.Context, c sheetbus.Connection) error {
 	const q = `
 INSERT INTO sheet_connections (id, user_id, form_slug, account, spreadsheet_id, sheet_id, url, token,
-    state, problem, told, digest, created_at, synced_at, checked_at, next_at, failing_since)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    state, problem, told, digest, created_at, synced_at, checked_at, next_at, failing_since, layout)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (id) DO UPDATE SET
     account = excluded.account, spreadsheet_id = excluded.spreadsheet_id, sheet_id = excluded.sheet_id,
     url = excluded.url, token = excluded.token, state = excluded.state, problem = excluded.problem,
     told = excluded.told, digest = excluded.digest, synced_at = excluded.synced_at,
-    checked_at = excluded.checked_at, next_at = excluded.next_at, failing_since = excluded.failing_since`
+    checked_at = excluded.checked_at, next_at = excluded.next_at, failing_since = excluded.failing_since,
+    layout = excluded.layout`
 
 	_, err := s.db.ExecContext(ctx, q,
 		c.ID.String(), c.User.String(), c.Form.String(), c.Account, c.Spreadsheet, c.Sheet, c.URL, c.Token,
 		string(c.State), c.Problem, c.Told, c.Digest,
-		msOf(c.CreatedAt), msOf(c.SyncedAt), msOf(c.CheckedAt), msOf(c.NextAt), msOf(c.FailingSince))
+		msOf(c.CreatedAt), msOf(c.SyncedAt), msOf(c.CheckedAt), msOf(c.NextAt), msOf(c.FailingSince), c.Layout)
 	if err != nil {
 		return fmt.Errorf("saving the Google Sheet connection: %w", err)
 	}
@@ -120,7 +129,7 @@ ON CONFLICT (id) DO UPDATE SET
 }
 
 const columns = `SELECT id, user_id, form_slug, account, spreadsheet_id, sheet_id, url, token,
-    state, problem, told, digest, created_at, synced_at, checked_at, next_at, failing_since FROM sheet_connections`
+    state, problem, told, digest, created_at, synced_at, checked_at, next_at, failing_since, layout FROM sheet_connections`
 
 // ByID reads one connection.
 func (s *Store) ByID(ctx context.Context, id types.ID) (sheetbus.Connection, error) {
@@ -361,7 +370,7 @@ func scan(row scanner) (sheetbus.Connection, error) {
 	)
 
 	err := row.Scan(&id, &user, &form, &c.Account, &c.Spreadsheet, &c.Sheet, &c.URL, &c.Token,
-		&state, &c.Problem, &c.Told, &c.Digest, &created, &synced, &checked, &next, &failing)
+		&state, &c.Problem, &c.Told, &c.Digest, &created, &synced, &checked, &next, &failing, &c.Layout)
 	if err != nil {
 		return sheetbus.Connection{}, err
 	}

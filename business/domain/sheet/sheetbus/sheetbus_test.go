@@ -58,6 +58,7 @@ func (a accounts) ByID(_ context.Context, id types.ID) (userbus.User, error) {
 
 type world struct {
 	bus    *sheetbus.Business
+	store  *sheetdb.Store
 	google *fakeGoogle
 	forms  forms
 	subs   *subs
@@ -101,6 +102,7 @@ func newWorld(t *testing.T) *world {
 		subs:   &subs{hidden: map[types.ID]bool{}},
 		access: access{user: true},
 		sent:   &mail.Recorder{},
+		store:  sheetdb.NewStore(db),
 		user:   user,
 		form:   form,
 		now:    time.Date(2026, 11, 12, 9, 0, 0, 0, time.UTC),
@@ -108,7 +110,7 @@ func newWorld(t *testing.T) *world {
 
 	bus, err := sheetbus.NewBusiness(sheetbus.Config{
 		Log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Store:        sheetdb.NewStore(db),
+		Store:        w.store,
 		Google:       w.google,
 		Forms:        w.forms,
 		Subs:         w.subs,
@@ -682,5 +684,79 @@ func TestADeletedHeadingRowIsPutBackWithoutTouchingTheirRows(t *testing.T) {
 
 	if !found {
 		t.Error("their own row was lost")
+	}
+}
+
+// --- the link back ------------------------------------------------------------------
+
+// Each Reference cell links to that submission's page here, so the office can
+// go from a row to the booking in one click.
+func TestEachReferenceLinksToItsSubmissionsPage(t *testing.T) {
+	w := newWorld(t)
+
+	ana := w.submit("Ana", "")
+	w.connect(t)
+
+	ben := w.submit("Ben", "vegetarian")
+	w.pass(t, 3*time.Minute)
+
+	_, tab := w.google.only(t)
+
+	for _, s := range []submissionbus.Submission{ana, ben} {
+		want := "https://forms.test/forms/advent-retreat/submissions/" + s.ID.String()
+		if got := tab.links[s.ID.String()]; got != want {
+			t.Errorf("the Reference %s links to %q, want %q", s.ID, got, want)
+		}
+	}
+
+	if len(tab.links) != 2 {
+		t.Errorf("%d cells link somewhere, want only the two references: %v", len(tab.links), tab.links)
+	}
+}
+
+// A sheet written before the links had none, and a pass writes only cells
+// whose value differs, which a link-less Reference does not. So such a sheet
+// has its references written over once, and then left alone again.
+func TestASheetWrittenBeforeTheLinksGetsThemOnce(t *testing.T) {
+	w := newWorld(t)
+
+	ana := w.submit("Ana", "")
+	ben := w.submit("Ben", "")
+	c := w.connect(t)
+
+	_, tab := w.google.only(t)
+	clear(tab.links)
+
+	c.Layout = 0
+	if err := w.store.Save(t.Context(), c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Sorted since, so the references are not where they were written.
+	tab.sortBelowHeader(tab.column("q:name"))
+
+	before := w.google.linked
+	c = w.pass(t, 3*time.Minute)
+
+	if got := w.google.linked - before; got != 2 {
+		t.Errorf("%d linked cells written, want the two references", got)
+	}
+
+	for _, s := range []submissionbus.Submission{ana, ben} {
+		if tab.links[s.ID.String()] == "" {
+			t.Errorf("the Reference %s has no link after the pass", s.ID)
+		}
+	}
+
+	if c.Layout == 0 {
+		t.Error("the connection still says its sheet was written before the links")
+	}
+
+	// And not again: the next pass, even a full read, writes none.
+	before = w.google.linked
+	w.pass(t, time.Hour)
+
+	if got := w.google.linked - before; got != 0 {
+		t.Errorf("a later pass wrote %d links again", got)
 	}
 }

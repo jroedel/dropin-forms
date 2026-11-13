@@ -26,6 +26,7 @@ type fakeGoogle struct {
 
 	applied int // batch updates sent
 	asked   int // every call that reaches Google
+	linked  int // cells written with a link
 }
 
 type book struct {
@@ -41,6 +42,11 @@ type tab struct {
 	colTags   []map[string]string
 	tabTags   map[string]string
 	protected int
+
+	// links is where each linked cell points, by the text in it. A link is
+	// part of a cell's format, which the values API does not read back, so
+	// the fake keeps them aside the same way.
+	links map[string]string
 }
 
 func newFakeGoogle(email string) *fakeGoogle {
@@ -103,7 +109,7 @@ func (g *fakeGoogle) Create(_ context.Context, token, title, tabTitle, locale, z
 	}
 
 	id := fmt.Sprintf("ss%d", len(g.books)+1)
-	g.books[id] = &book{title: title, tabs: map[int64]*tab{0: {title: tabTitle, tabTags: map[string]string{}}}, nextTab: 1}
+	g.books[id] = &book{title: title, tabs: map[int64]*tab{0: {title: tabTitle, tabTags: map[string]string{}, links: map[string]string{}}}, nextTab: 1}
 
 	return google.Created{SpreadsheetID: id, SheetID: 0, URL: "https://docs.google.test/" + id}, nil
 }
@@ -239,7 +245,7 @@ func (g *fakeGoogle) Apply(_ context.Context, token, id string, edits []google.E
 		case google.AddTab:
 			sid := b.nextTab
 			b.nextTab++
-			b.tabs[sid] = &tab{title: e.Title, tabTags: map[string]string{}}
+			b.tabs[sid] = &tab{title: e.Title, tabTags: map[string]string{}, links: map[string]string{}}
 			tabs = append(tabs, sid)
 
 		case google.TagTab:
@@ -262,6 +268,7 @@ func (g *fakeGoogle) Apply(_ context.Context, token, id string, edits []google.E
 			for r, row := range e.Rows {
 				for c, v := range row {
 					t.set(e.Row+r, e.Column+c, cellValue(v))
+					g.link(t, v)
 				}
 			}
 
@@ -271,6 +278,7 @@ func (g *fakeGoogle) Apply(_ context.Context, token, id string, edits []google.E
 			for r, row := range e.Rows {
 				for c, v := range row {
 					t.set(at+r, c, cellValue(v))
+					g.link(t, v)
 				}
 			}
 
@@ -283,6 +291,13 @@ func (g *fakeGoogle) Apply(_ context.Context, token, id string, edits []google.E
 	}
 
 	return tabs, nil
+}
+
+func (g *fakeGoogle) link(t *tab, v google.Value) {
+	if v.Link != "" {
+		t.links[v.Text] = v.Link
+		g.linked++
+	}
 }
 
 func cellValue(v google.Value) any {

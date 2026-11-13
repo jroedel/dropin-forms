@@ -439,10 +439,11 @@ func (e ProtectColumn) request() map[string]any {
 	}}}
 }
 
-// cellFields is what a write replaces: the value, its number format, and
-// whether it is bold -- so that clearing a cell that held a date leaves no
-// date format behind for whatever is typed there next.
-const cellFields = "userEnteredValue,userEnteredFormat.numberFormat,userEnteredFormat.textFormat.bold"
+// cellFields is what a write replaces: the value, its number format, whether
+// it is bold and where it links -- so that clearing a cell that held a date
+// leaves no date format behind for whatever is typed there next, and a link
+// goes with the value it was on.
+const cellFields = "userEnteredValue,userEnteredFormat.numberFormat,userEnteredFormat.textFormat.bold,userEnteredFormat.textFormat.link"
 
 // ValueKind says what a Value holds.
 type ValueKind int
@@ -466,6 +467,12 @@ type Value struct {
 	Time time.Time
 
 	Bold bool
+
+	// Link makes the whole cell a link to this address. It is a property of
+	// the cell's format rather than a HYPERLINK formula, so the value stays
+	// plain text: what is read back is what was written, and no formula is
+	// ever put in somebody's spreadsheet.
+	Link string
 }
 
 func rowsOf(rows [][]Value) []any {
@@ -504,8 +511,18 @@ func cellOf(v Value) map[string]any {
 		format["numberFormat"] = map[string]any{"type": "DATE_TIME", "pattern": "yyyy-mm-dd hh:mm"}
 	}
 
+	text := map[string]any{}
+
 	if v.Bold {
-		format["textFormat"] = map[string]any{"bold": true}
+		text["bold"] = true
+	}
+
+	if v.Link != "" {
+		text["link"] = map[string]any{"uri": v.Link}
+	}
+
+	if len(text) > 0 {
+		format["textFormat"] = text
 	}
 
 	if len(format) > 0 {
