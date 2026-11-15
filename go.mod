@@ -23,7 +23,7 @@ go 1.26.11
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/stripe/stripe-go/v83 v83.2.1
-	modernc.org/sqlite v1.61.0
+	modernc.org/sqlite v1.61.1
 )
 
 require (
