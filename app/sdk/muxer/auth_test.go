@@ -16,6 +16,7 @@ import (
 
 	"github.com/jroedel/dropin-forms/app/domain/apiapp"
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
+	"github.com/jroedel/dropin-forms/app/domain/carpoolapp"
 	"github.com/jroedel/dropin-forms/app/domain/depositapp"
 	"github.com/jroedel/dropin-forms/app/domain/formapp"
 	"github.com/jroedel/dropin-forms/app/domain/notifyapp"
@@ -31,6 +32,8 @@ import (
 	"github.com/jroedel/dropin-forms/business/domain/access/stores/accessdb"
 	"github.com/jroedel/dropin-forms/business/domain/apikey/apikeybus"
 	"github.com/jroedel/dropin-forms/business/domain/apikey/stores/apikeydb"
+	"github.com/jroedel/dropin-forms/business/domain/carpool/carpoolbus"
+	"github.com/jroedel/dropin-forms/business/domain/carpool/stores/carpooldb"
 	"github.com/jroedel/dropin-forms/business/domain/deposit/depositbus"
 	"github.com/jroedel/dropin-forms/business/domain/deposit/stores/depositdb"
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
@@ -84,6 +87,11 @@ type harness struct {
 	// from ledger, a fake Stripe a test fills before calling Sync.
 	deposits *depositbus.Business
 	ledger   *fakeLedger
+
+	// carpool is the real carpool domain over the same database, texting
+	// through texts, which records rather than sends.
+	carpool *carpoolbus.Business
+	texts   *recordedTexts
 }
 
 func newAdmin(t *testing.T, bootstrap string) harness {
@@ -120,6 +128,9 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 	if err := depositdb.Init(t.Context(), db); err != nil {
 		t.Fatalf("depositdb.Init: %v", err)
 	}
+	if err := carpooldb.Init(t.Context(), db); err != nil {
+		t.Fatalf("carpooldb.Init: %v", err)
+	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	users := userbus.NewBusiness(log, userdb.NewStore(db))
@@ -133,7 +144,7 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 	renderer, err := page.NewRenderer(log, page.AdminChrome(),
 		authapp.Templates, submissionapp.Templates, notifyapp.Templates, peopleapp.Templates,
 		formapp.Templates, willcallapp.Templates, siteapp.Templates, apiapp.Templates, oauthapp.Templates,
-		depositapp.Templates)
+		depositapp.Templates, carpoolapp.Templates)
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
 	}
@@ -188,6 +199,25 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 	for table, columns := range depositdb.Expected {
 		expected[table] = columns
 	}
+	for table, columns := range carpooldb.Expected {
+		expected[table] = columns
+	}
+
+	texts := &recordedTexts{}
+
+	carpool, err := carpoolbus.NewBusiness(carpoolbus.Config{
+		Log:         log,
+		Store:       carpooldb.NewStore(db),
+		Submissions: submissions,
+		Forms:       catalogue,
+		Texter:      texts,
+		Grants:      access,
+		Accounts:    users,
+		Mutes:       notifydb.NewStore(db),
+	})
+	if err != nil {
+		t.Fatalf("carpoolbus.NewBusiness: %v", err)
+	}
 
 	h, err := muxer.Admin(muxer.Config{
 		Log:          log,
@@ -198,6 +228,7 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 		Submissions:  submissions,
 		Table:        submissions,
 		Deposits:     deposits,
+		Carpool:      carpool,
 		Forms:        catalogue,
 		Builder:      catalogue,
 		EmbedBaseURL: "https://f.forms.test",
@@ -217,6 +248,7 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 		h: h, users: users, access: access, sent: sent,
 		notify: notifier, muteKey: muteKey, catalogue: catalogue, orders: submissions,
 		keys: keys, deposits: deposits, ledger: ledger,
+		carpool: carpool, texts: texts,
 	}
 }
 

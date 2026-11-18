@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"github.com/jroedel/dropin-forms/app/domain/apiapp"
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
+	"github.com/jroedel/dropin-forms/app/domain/carpoolapp"
 	"github.com/jroedel/dropin-forms/app/domain/depositapp"
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
 	"github.com/jroedel/dropin-forms/app/domain/formapp"
@@ -29,6 +30,7 @@ import (
 	"github.com/jroedel/dropin-forms/business/domain/access/stores/accessdb"
 	"github.com/jroedel/dropin-forms/business/domain/apikey/apikeybus"
 	"github.com/jroedel/dropin-forms/business/domain/apikey/stores/apikeydb"
+	"github.com/jroedel/dropin-forms/business/domain/carpool/stores/carpooldb"
 	"github.com/jroedel/dropin-forms/business/domain/deposit/depositbus"
 	"github.com/jroedel/dropin-forms/business/domain/deposit/stores/depositdb"
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
@@ -114,6 +116,7 @@ func run() error {
 		// they need to see without having to look anywhere else.
 		fmt.Printf("  payments       %s\n", stripeMode(cfg))
 		fmt.Printf("  google sheets  %s\n", either(cfg.Google.ClientID != "", "on, in "+cfg.Google.TimeZone, "off"))
+		fmt.Printf("  carpool texts  %s\n", either(cfg.Twilio.AccountSID != "", "on, from "+cfg.Twilio.From, "off: cars are arranged and nobody is texted"))
 		fmt.Printf("  bootstrap      %s\n", either(cfg.Auth.BootstrapSecret != "", "route mounted", "route not mounted"))
 
 		return nil
@@ -206,6 +209,12 @@ func run() error {
 		return err
 	}
 
+	// Who is riding in whose car. No ordering constraint: a ride names
+	// submissions by identifier, for the reason carpooldb gives.
+	if err := carpooldb.Init(ctx, db); err != nil {
+		return err
+	}
+
 	// The schema is checked once at startup as well as on every health
 	// request. Failing here means the process never begins serving, which is
 	// what should happen when a binary and a database disagree -- the deploy
@@ -218,6 +227,7 @@ func run() error {
 	for _, part := range []sqldb.Expected{
 		sqldb.Infrastructure, userdb.Expected, accessdb.Expected, submissiondb.Expected,
 		paydb.Expected, depositdb.Expected, notifydb.Expected, formdb.Expected, sheetdb.Expected, apikeydb.Expected,
+		carpooldb.Expected,
 	} {
 		for table, columns := range part {
 			if _, clash := expected[table]; clash {
@@ -313,7 +323,7 @@ func run() error {
 	adminPages, err := page.NewRenderer(log, page.AdminChrome(),
 		authapp.Templates, submissionapp.Templates, notifyapp.Templates, peopleapp.Templates,
 		formapp.Templates, willcallapp.Templates, siteapp.Templates, sheetapp.Templates, apiapp.Templates,
-		oauthapp.Templates, depositapp.Templates)
+		oauthapp.Templates, depositapp.Templates, carpoolapp.Templates)
 	if err != nil {
 		return err
 	}
@@ -434,6 +444,13 @@ func run() error {
 		mc.Sheets = sheets
 	}
 
+	carpool, err := newCarpool(cfg, log, db, definitions, submissions, access, users)
+	if err != nil {
+		return err
+	}
+
+	mc.Carpool = carpool
+
 	admin, err := muxer.Admin(mc)
 	if err != nil {
 		return err
@@ -467,6 +484,10 @@ func run() error {
 	// minutes. Closed at once when Google is off.
 	kept := sheetWatch{log: log, sheets: sheets}.start(ctx)
 
+	// And the carpools, arranged every half minute: riders into cars, and
+	// texts about it when texting is on.
+	arranged := carpoolWatch{log: log, forms: definitions, carpool: carpool}.start(ctx)
+
 	// Two listeners, not three. The webhook lives on the embed one, mounted
 	// outside its origin gate -- see muxer.Embed for why that is the whole of
 	// what it needs, and why it is not enough for it merely to pass the gate.
@@ -479,6 +500,7 @@ func run() error {
 	<-abandoned
 	<-fetched
 	<-kept
+	<-arranged
 
 	return err
 }

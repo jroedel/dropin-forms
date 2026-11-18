@@ -2674,6 +2674,73 @@ What it does not do: mark a deposit reconciled. Asked about and left out --
 the accountant's books are where that is recorded, and a second place to tick
 it off is a second place to disagree.
 
+### The carpool, as built
+
+Student events need rides organised: some people drive and have seats, some
+need a driver, most have their own way there. A form can have one
+**carpool** question that asks which, and the service puts the people who
+need a ride into the cars of the people who drive, and texts them about it.
+
+**One question, kind `carpool`, with three fixed values and the author's
+labels**: `have`, `drive`, `need`. The service places riders by what a value
+means, so the values cannot be renamed; the words a student reads are
+whatever the person running the event would say. A driver also gives seats,
+in a second box submitted as `<name>.seats` and kept with the choice as
+`["drive", "3"]` -- one answer, so the export, the messages and a condition
+naming the question see one question. The seats box is shown under "drive"
+by the same show-if attributes a conditional question uses, so the browser
+needed no new script.
+
+**It texts by two earlier questions**, named on the carpool: `phone`, a tel
+question, and `who`, a text question for the name the others in the car are
+told. Both are required of a driver or rider and of nobody else -- a phone
+number required of everybody, on a form where most come on their own, would
+be asking for numbers nobody will text. The number must parse as one a text
+can go to (`business/types/phone`, copied from eumaeus so one person's number
+reads the same in both). Under the question the form says, in words the
+author cannot remove, that they will be texted and how to stop.
+
+**Rides are worked out, not hooked.** Whether somebody is in a car depends on
+submitting, paying, approval, the waiting list, editing, hiding, refunding
+and declining; hooking each is how one gets missed. `carpoolbus.Arrange`
+reads a form's submissions and its rides as they stand and makes the second
+agree with the first: a rider who no longer counts is forgotten and their
+driver told; a car that has gone, or has fewer seats than riders, gives up
+its latest riders; everybody waiting goes into the earliest car with a seat,
+in sign-up order. It runs every thirty seconds for every form with a carpool
+(`cmd/dropin-forms/carpool.go`), and running it again changes nothing. A
+submission counts once it is settled -- received or paid -- and not
+declined, hidden or awaiting approval: a pending checkout would otherwise
+hold a seat, and a driver would be told about a rider who never pays.
+
+**The seat check is in the store.** `carpooldb.Place` counts a car's riders
+and writes the new one in one transaction, on the one connection the service
+holds, so the last seat goes to one rider. A rider waiting has a row too,
+with no driver, so the organisers are told once that somebody is waiting
+rather than on every pass.
+
+**The texts** go to the driver ("Ana (512) 555-0103 is riding with you. 1 seat
+left."), the rider ("you are riding with Damien ..."), and every account
+administering the form that has given a mobile number on its own account
+page and has not muted the form. Through Twilio, on eumaeus's account and its
+registered A2P 10DLC campaign (`[twilio]` in the configuration; off when
+empty, and then the cars are still arranged and shown). Best effort, like the
+mail: no queue, no retry. What happened is kept on the ride -- sent, or why
+not, including "they replied STOP" for Twilio's error 21610 -- and the office
+page offers to send it again. Twilio handles STOP and HELP itself; there is
+no inbound webhook.
+
+**The office page** is `/forms/{slug}/carpool`: every car, who is in it, who
+is waiting, how many have their own ride, and a CSV. Reading it is behind
+results, like the submissions it is drawn from; moving a rider to another car
+and sending a text again are behind admin, because both text people on the
+form's behalf. An organiser's move is kept unless the car later loses the
+seat.
+
+**What it does not do yet:** pick-up places (everybody is assumed to leave
+from about the same place), separate cars there and back, and a rider
+choosing their driver -- which would put drivers' names on a public page.
+
 ## 10. Dependencies
 
 A dependency needs a comment naming the standard-library answer that was

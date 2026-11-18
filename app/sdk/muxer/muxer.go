@@ -85,6 +85,7 @@ import (
 
 	"github.com/jroedel/dropin-forms/app/domain/apiapp"
 	"github.com/jroedel/dropin-forms/app/domain/authapp"
+	"github.com/jroedel/dropin-forms/app/domain/carpoolapp"
 	"github.com/jroedel/dropin-forms/app/domain/depositapp"
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
 	"github.com/jroedel/dropin-forms/app/domain/formapp"
@@ -187,6 +188,11 @@ type Config struct {
 	// one. Optional: without Google configured the page is not mounted and
 	// the list does not link to it.
 	Sheets sheetapp.Sheets
+
+	// Carpool is the cars of a form with a carpool, which the carpool page
+	// reads and an organiser rearranges. Optional: without it the page is not
+	// mounted and the results page does not link to it.
+	Carpool carpoolapp.Carpool
 
 	// Builder is the write half of the form domain, and the one dependency
 	// here that only one app has. Optional: without it the service serves
@@ -472,6 +478,7 @@ func Admin(cfg Config) (http.Handler, error) {
 		CanEdit:     cfg.Builder != nil,
 		CanWillCall: cfg.Table != nil,
 		CanDeposits: cfg.Deposits != nil,
+		CanCarpool:  cfg.Carpool != nil,
 	}
 
 	if cfg.Notify != nil {
@@ -608,6 +615,19 @@ func Admin(cfg Config) (http.Handler, error) {
 			Accounts: cfg.Users,
 			Render:   cfg.Render,
 		}, guard, door)
+	}
+
+	// The carpool, read behind results like the submissions its cars are
+	// drawn from, and rearranged behind admin, because moving somebody texts
+	// people on the form's behalf. carpoolapp says why those two.
+	if cfg.Carpool != nil {
+		carpoolapp.Routes(mux, carpoolapp.Config{
+			Log:     cfg.Log,
+			Forms:   cfg.Forms,
+			Carpool: cfg.Carpool,
+			Grants:  cfg.Access,
+			Render:  cfg.Render,
+		}, guard, results, admins)
 	}
 
 	// The deposits to the bank, behind results like the submissions it is

@@ -179,6 +179,10 @@ type Config struct {
 	// there and whether the form sells anything.
 	CanDeposits bool
 
+	// CanCarpool says the carpool page is mounted. Behind results, like this
+	// page, so it needs no grant of its own: only the form needs a carpool.
+	CanCarpool bool
+
 	// Notifications is optional. Without it the list simply does not mention
 	// email, which is right for an installation that cannot record the
 	// preference: a column offering a choice that will not stick is worse than
@@ -520,6 +524,9 @@ type listView struct {
 	// about that number -- how much of it has reached the bank.
 	Deposits bool
 
+	// Carpool is whether to link to the carpool page, on a form with one.
+	Carpool bool
+
 	// Capacity is the form's number of places and Held how many are held,
 	// for the line that says how full it is; zero Capacity draws no line.
 	// Held, not confirmed, for placeTally's reason.
@@ -742,6 +749,10 @@ func (a app) list(w http.ResponseWriter, r *http.Request) {
 	// Anybody who can read this page can read that one, so it needs no grant
 	// of its own: only the form has to sell something.
 	view.Deposits = a.cfg.CanDeposits && f.Sells()
+
+	if _, ok := f.CarpoolOf(); ok {
+		view.Carpool = a.cfg.CanCarpool
+	}
 
 	if f.Capacity > 0 {
 		a.waitingList(r, f, &view)
