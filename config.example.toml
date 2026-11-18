@@ -150,6 +150,21 @@ token_key = ""
 # this server's own, from TZ or /etc/localtime.
 time_zone = ""
 
+[twilio]
+# Text messages for the carpool: the driver, the rider and the form's
+# organisers are each texted when somebody is put in a car. All three empty
+# switches texting off -- rides are still arranged and shown on the office
+# page, and nobody is texted. Any one set requires the others.
+#
+# This is eumaeus's Twilio account, whose US sending registration (A2P 10DLC
+# brand and campaign) is already done. Check that the campaign's described use
+# covers carpool notices before turning this on; secrets.env.example says why.
+account_sid = ""
+auth_token = ""
+
+# The sending number, in full with its country code: +15125550100.
+from = ""
+
 [mail]
 # The relay that sends sign-in codes and receipts.
 #
