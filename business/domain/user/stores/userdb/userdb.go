@@ -37,6 +37,7 @@ import (
 
 	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/business/types"
+	"github.com/jroedel/dropin-forms/business/types/phone"
 	"github.com/jroedel/dropin-forms/foundation/sqldb"
 )
 
@@ -61,7 +62,7 @@ func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 // will read. A column missing from the database is a startup failure rather
 // than a 500 in front of somebody trying to sign in.
 var Expected = sqldb.Expected{
-	"users":        {"id", "email", "name", "enabled", "created_at", "updated_at"},
+	"users":        {"id", "email", "name", "enabled", "created_at", "updated_at", "mobile"},
 	"signin_codes": {"token_id", "user_id", "hash", "tries", "created_at", "expires_at", "used_at"},
 	"backup_codes": {"id", "user_id", "hash", "created_at", "used_at"},
 	"sessions":     {"id", "user_id", "hash", "created_at", "expires_at", "last_seen_at"},
@@ -149,6 +150,14 @@ CREATE TABLE IF NOT EXISTS bootstrap (
 		return fmt.Errorf("creating the account tables: %w", err)
 	}
 
+	// The number the carpool texts this person on, as an organiser of a form
+	// with one. Empty, which is most accounts, means they are not texted. Held
+	// in E.164 -- phone.Parse wrote it -- so the same person typed two ways is
+	// one recipient.
+	if err := sqldb.AddColumn(ctx, db, "users", "mobile", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -177,11 +186,11 @@ VALUES (?, ?, ?, ?, ?, ?)`
 // UpdateUser replaces the mutable fields of an account.
 func (s *Store) UpdateUser(ctx context.Context, u userbus.User) error {
 	const q = `
-UPDATE users SET email = ?, name = ?, enabled = ?, updated_at = ?
+UPDATE users SET email = ?, name = ?, enabled = ?, mobile = ?, updated_at = ?
 WHERE id = ?`
 
 	res, err := s.db.ExecContext(ctx, q,
-		u.Email.String(), u.Name, boolOf(u.Enabled), msOf(u.UpdatedAt), u.ID.String())
+		u.Email.String(), u.Name, boolOf(u.Enabled), u.Mobile.String(), msOf(u.UpdatedAt), u.ID.String())
 
 	switch {
 	case isUniqueViolation(err):
@@ -193,7 +202,7 @@ WHERE id = ?`
 	return oneRow(res, "the account")
 }
 
-const userColumns = `id, email, name, enabled, created_at, updated_at`
+const userColumns = `id, email, name, enabled, created_at, updated_at, mobile`
 
 // UserByID finds an account by identifier.
 func (s *Store) UserByID(ctx context.Context, id types.ID) (userbus.User, error) {
@@ -567,9 +576,10 @@ func scanUser(row rowScanner) (userbus.User, error) {
 		enabled int64
 		made    int64
 		updated int64
+		mobile  string
 	)
 
-	err := row.Scan(&rawID, &rawMail, &u.Name, &enabled, &made, &updated)
+	err := row.Scan(&rawID, &rawMail, &u.Name, &enabled, &made, &updated, &mobile)
 
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -588,6 +598,13 @@ func scanUser(row rowScanner) (userbus.User, error) {
 	// in.
 	if u.Email, err = types.ParseEmail(rawMail); err != nil {
 		return userbus.User{}, fmt.Errorf("the stored account has a bad address: %w", err)
+	}
+
+	// Parsed for the address's reason. Empty is no number, which is allowed.
+	if mobile != "" {
+		if u.Mobile, err = phone.Parse(mobile); err != nil {
+			return userbus.User{}, fmt.Errorf("the stored account has a bad mobile number: %w", err)
+		}
 	}
 
 	u.Enabled = enabled != 0

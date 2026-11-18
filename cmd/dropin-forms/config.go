@@ -9,6 +9,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/types"
+	"github.com/jroedel/dropin-forms/business/types/phone"
 	"github.com/jroedel/dropin-forms/foundation/seal"
 )
 
@@ -135,6 +136,21 @@ type config struct {
 		TimeZone string `toml:"time_zone"`
 		zone     *time.Location
 	} `toml:"google"`
+
+	Twilio struct {
+		// AccountSID and AuthToken are the Twilio account the carpool texts
+		// drivers, riders and organisers from -- eumaeus's account, whose US
+		// sending registration (A2P 10DLC) is already done. Empty, with From,
+		// switches texting off: rides are still arranged and shown on the
+		// office page, and nobody is texted about them.
+		AccountSID string `toml:"account_sid"`
+		AuthToken  string `toml:"auth_token"`
+
+		// From is the sending number, in E.164: "+1…". It must be a number
+		// on that account registered for this use; an unregistered number is
+		// accepted by Twilio and then filtered by the carriers, silently.
+		From string `toml:"from"`
+	} `toml:"twilio"`
 
 	Mail struct {
 		Host     string `toml:"host"`
@@ -339,6 +355,32 @@ func loadConfig(path string) (config, error) {
 
 	case !strings.HasPrefix(st.WebhookSecret, "whsec_"):
 		return config{}, fmt.Errorf("%s has a stripe.webhook_secret that does not begin with whsec_; that is the endpoint's signing secret, not the API key", path)
+	}
+
+	// The three Twilio settings stand or fall together. Half of them is a
+	// carpool that says it will text people and then fails on every message,
+	// and the first anybody would hear of it is a driver asking why nobody
+	// told them who they were picking up.
+	switch tw := cfg.Twilio; {
+	case tw.AccountSID == "" && tw.AuthToken == "" && tw.From == "":
+		// Texting off.
+
+	case tw.AccountSID == "" || tw.AuthToken == "" || tw.From == "":
+		return config{}, fmt.Errorf("%s sets some of twilio.account_sid, twilio.auth_token and twilio.from but not all three; set all of them to send texts, or none to switch texting off", path)
+
+	case !strings.HasPrefix(tw.AccountSID, "AC"):
+		// Named because the console shows several SIDs that look alike, and
+		// an API key's SK... in this slot fails authentication on the first
+		// text rather than here.
+		return config{}, fmt.Errorf("%s has a twilio.account_sid that does not begin with AC; it is the Account SID on the front page of the Twilio console, not an API key or a number's SID", path)
+
+	default:
+		n, err := phone.Parse(tw.From)
+		if err != nil || !strings.HasPrefix(tw.From, "+") {
+			return config{}, fmt.Errorf("%s has a twilio.from of %q; write the sending number in full with its country code, such as +15125550100", path, tw.From)
+		}
+
+		cfg.Twilio.From = n.String()
 	}
 
 	if cfg.Mail.Host != "" {

@@ -12,6 +12,7 @@ import (
 	"github.com/jroedel/dropin-forms/business/domain/user/stores/userdb"
 	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/business/types"
+	"github.com/jroedel/dropin-forms/business/types/phone"
 	"github.com/jroedel/dropin-forms/foundation/sqldb"
 )
 
@@ -162,6 +163,37 @@ func TestUserRoundTrip(t *testing.T) {
 
 	if err := s.UpdateUser(t.Context(), absent); !errors.Is(err, userbus.ErrNotFound) {
 		t.Errorf("updating an absent account returned %v, want ErrNotFound", err)
+	}
+}
+
+func TestAMobileNumberRoundTripsAndClears(t *testing.T) {
+	_, s := open(t)
+
+	u := mustUser(t, s, "frjeff@schoenstatt.us")
+
+	if got, err := s.UserByID(t.Context(), u.ID); err != nil || !got.Mobile.IsZero() {
+		t.Fatalf("a new account: Mobile = %q, %v; want none", got.Mobile, err)
+	}
+
+	u.Mobile = phone.MustParse("(512) 555-0100")
+
+	if err := s.UpdateUser(t.Context(), u); err != nil {
+		t.Fatalf("UpdateUser: %v", err)
+	}
+
+	got, err := s.UserByID(t.Context(), u.ID)
+	if err != nil || got.Mobile.String() != "+15125550100" {
+		t.Fatalf("Mobile = %q, %v; want +15125550100", got.Mobile, err)
+	}
+
+	u.Mobile = phone.Number{}
+
+	if err := s.UpdateUser(t.Context(), u); err != nil {
+		t.Fatalf("UpdateUser: %v", err)
+	}
+
+	if got, err := s.UserByID(t.Context(), u.ID); err != nil || !got.Mobile.IsZero() {
+		t.Errorf("after clearing: Mobile = %q, %v; want none", got.Mobile, err)
 	}
 }
 

@@ -263,6 +263,32 @@ says "a Google client id alone is refused, naming what is missing" "$out" 'GOOGL
 denies "and nothing was rendered" "$out" '[google]'
 
 echo
+echo "text messages"
+
+denies "no Twilio keys, no [twilio] section" "$(render "$both")" '[twilio]'
+
+texting=$(fixture \
+	'STRIPE_SECRET_KEY=sk_live_theconfiguredone' \
+	'STRIPE_WEBHOOK_SECRET=whsec_theconfiguredone' \
+	'TWILIO_ACCOUNT_SID=ACtheaccount' \
+	'TWILIO_AUTH_TOKEN=thetoken' \
+	'TWILIO_FROM=+15125550100')
+
+out=$(render "$texting")
+says "all three Twilio keys render a [twilio] section" "$out" '[twilio]'
+says "with the account SID" "$out" 'account_sid = "ACtheaccount"'
+says "and the sending number" "$out" 'from = "+15125550100"'
+
+halftwilio=$(fixture \
+	'STRIPE_SECRET_KEY=sk_live_theconfiguredone' \
+	'STRIPE_WEBHOOK_SECRET=whsec_theconfiguredone' \
+	'TWILIO_ACCOUNT_SID=ACtheaccount')
+
+out=$(render "$halftwilio")
+says "a Twilio account SID alone is refused, naming what is missing" "$out" 'TWILIO_FROM'
+denies "and nothing was rendered" "$out" '[twilio]'
+
+echo
 if [ "$fail" -gt 0 ]; then
 	printf '\033[31m%d passed, %d failed\033[0m\n' "$pass" "$fail"
 	exit 1
