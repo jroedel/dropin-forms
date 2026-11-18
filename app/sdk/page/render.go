@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jroedel/dropin-forms/app/sdk/mid"
 	"github.com/jroedel/dropin-forms/foundation/web"
 )
 
@@ -137,6 +138,14 @@ type shell struct {
 	// ordinary case for the admin surface, which has no scripts at all and a
 	// Content-Security-Policy with no script-src to run one under.
 	Script string
+
+	// AccountLink is whether the masthead links to the reader's account page:
+	// on every page somebody is signed in to, except that one. The account
+	// page is the only place a person sets their own mobile number, and with
+	// no link to it, it was reachable only by somebody told its address.
+	// Decided here rather than by each handler, so that no page can forget it;
+	// the sign-in pages, where nobody is signed in, must not show it.
+	AccountLink bool
 
 	Data any
 }
@@ -393,9 +402,10 @@ func (rn *Renderer) Render(w http.ResponseWriter, r *http.Request, status int, n
 	var buf bytes.Buffer
 
 	if err := set.ExecuteTemplate(&buf, "base", shell{
-		Stylesheet: rn.cssPath,
-		Script:     rn.jsPath,
-		Data:       data,
+		Stylesheet:  rn.cssPath,
+		Script:      rn.jsPath,
+		AccountLink: accountLink(r),
+		Data:        data,
 	}); err != nil {
 		rn.log.Error("a page could not be rendered",
 			"request_id", web.RequestIDFrom(r.Context()), "template", name, "error", err)
@@ -416,6 +426,21 @@ func (rn *Renderer) Render(w http.ResponseWriter, r *http.Request, status int, n
 		rn.log.Warn("a page was cut off while being sent",
 			"request_id", web.RequestIDFrom(r.Context()), "template", name, "error", err)
 	}
+}
+
+// accountPath is the reader's own account page, which the admin masthead
+// links to.
+const accountPath = "/account"
+
+// accountLink reports whether a page should link to the account page.
+//
+// The account page itself is told apart by its path rather than by a template
+// overriding the link with nothing: text/template ignores a definition whose
+// body is empty, so an empty override silently leaves the link in place.
+func accountLink(r *http.Request) bool {
+	_, ok := mid.UserFrom(r.Context())
+
+	return ok && r.URL.Path != accountPath
 }
 
 // Stylesheet serves the embedded stylesheet.
