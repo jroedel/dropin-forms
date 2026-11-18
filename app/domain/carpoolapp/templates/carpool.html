@@ -1,0 +1,87 @@
+{{define "title"}}Carpool: {{.Title}}{{end}}
+
+{{define "masthead"}}<a href="/forms">Forms</a>{{end}}
+
+{{define "content"}}
+<h1>Carpool</h1>
+
+<p class="crumb"><a href="/forms/{{.FormID}}/submissions">{{.Title}}</a></p>
+
+{{if .Done}}<p class="notice">{{.Done}}</p>{{end}}
+{{if .Problem}}<p class="problem">{{.Problem}}</p>{{end}}
+
+<div class="summary-cards">
+<p><strong>{{len .Cars}}</strong> {{if eq (len .Cars) 1}}car{{else}}cars{{end}}</p>
+<p><strong>{{len .Waiting}}</strong> waiting for a car</p>
+<p><strong>{{.OwnWay}}</strong> with their own ride</p>
+</div>
+
+<p class="aside">Everybody who needs a ride is put in the car of the earliest
+driver with a seat free, in the order they signed up, within a minute of their
+sign-up counting &mdash; once it is paid for, or approved, where the form asks
+for either. The driver, the rider and this form's organisers who have given a
+mobile number on their account page are texted.
+{{if not .Texting}}<strong>Texts are off on this service, so nobody is being
+texted</strong>: call or message them yourself.{{end}}</p>
+
+<p><a class="go" href="/forms/{{.FormID}}/carpool.csv">Download the cars as CSV</a></p>
+
+{{if .Waiting}}
+<h2>Waiting for a car</h2>
+<table class="detail">
+<thead><tr><th scope="col">Rider</th><th scope="col">Mobile</th>{{if $.CanMove}}<th scope="col">Put them in</th>{{end}}</tr></thead>
+<tbody>
+{{range .Waiting}}
+<tr>
+<th scope="row">{{.Name}}</th>
+<td>{{.Phone}}</td>
+{{if $.CanMove}}<td>{{template "carpool-move" .}}</td>{{end}}
+</tr>
+{{end}}
+</tbody>
+</table>
+{{end}}
+
+<h2>Cars</h2>
+{{if not .Cars}}<p>Nobody has offered to drive yet.</p>{{end}}
+
+{{range $car := .Cars}}
+<table class="detail">
+<caption><strong>{{$car.Driver}}</strong>, {{$car.Phone}} &middot;
+{{len $car.Riders}} of {{$car.Seats}} {{if eq $car.Seats 1}}seat{{else}}seats{{end}} taken</caption>
+{{if $car.Riders}}
+<thead><tr><th scope="col">Rider</th><th scope="col">Mobile</th><th scope="col">Texts</th>{{if $.CanMove}}<th scope="col">Move to</th>{{end}}</tr></thead>
+<tbody>
+{{range $car.Riders}}
+<tr>
+<th scope="row">{{.Name}}</th>
+<td>{{.Phone}}</td>
+<td>{{if .Problem}}<span class="problem">{{.Problem}}</span>
+  {{if $.CanMove}}<form method="post" action="/forms/{{$.FormID}}/carpool/retext">
+  <input type="hidden" name="rider" value="{{.ID}}">
+  <button type="submit" class="quiet">Text them again</button>
+  </form>{{end}}
+  {{else if .Texted}}Sent{{else if $.Texting}}Not yet{{else}}Texts are off{{end}}</td>
+{{if $.CanMove}}<td>{{template "carpool-move" .}}</td>{{end}}
+</tr>
+{{end}}
+</tbody>
+{{else}}
+<tbody><tr><td>Nobody in this car yet.</td></tr></tbody>
+{{end}}
+</table>
+{{end}}
+{{end}}
+
+{{define "carpool-move"}}
+{{if .MoveTo}}
+<form method="post" action="/forms/{{.FormID}}/carpool/move">
+<input type="hidden" name="rider" value="{{.ID}}">
+<label class="visually-hidden" for="move-{{.ID}}">Move {{.Name}} to</label>
+<select id="move-{{.ID}}" name="driver">
+{{range .MoveTo}}<option value="{{.ID}}">{{.Driver}} ({{.Free}} free)</option>{{end}}
+</select>
+<button type="submit" class="quiet">Move</button>
+</form>
+{{else}}No other car has room.{{end}}
+{{end}}
