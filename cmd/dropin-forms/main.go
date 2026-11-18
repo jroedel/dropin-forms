@@ -116,7 +116,7 @@ func run() error {
 		// they need to see without having to look anywhere else.
 		fmt.Printf("  payments       %s\n", stripeMode(cfg))
 		fmt.Printf("  google sheets  %s\n", either(cfg.Google.ClientID != "", "on, in "+cfg.Google.TimeZone, "off"))
-		fmt.Printf("  carpool texts  %s\n", either(cfg.Twilio.AccountSID != "", "on, from "+cfg.Twilio.From, "off: cars are arranged and nobody is texted"))
+		fmt.Printf("  carpool texts  %s\n", textsMode(cfg))
 		fmt.Printf("  bootstrap      %s\n", either(cfg.Auth.BootstrapSecret != "", "route mounted", "route not mounted"))
 
 		return nil
@@ -420,6 +420,11 @@ func run() error {
 		"mail", howMail,
 		"payments", howPay,
 
+		// Whether the carpool texts anybody, and with which credential. The
+		// question somebody asks after `make secrets-install` is "is it on",
+		// and the log is where they look.
+		"texts", textsMode(cfg),
+
 		// Whether anybody is told about a submission by default. A form's own
 		// notify list and its results holders are the other two ways, so this
 		// being empty is not on its own a silent service -- but it is the one
@@ -628,4 +633,17 @@ func either(cond bool, yes, no string) string {
 	}
 
 	return no
+}
+
+// textsMode says whether the carpool texts, from which number and with which
+// credential. Never the credential itself.
+func textsMode(cfg config) string {
+	switch tw := cfg.Twilio; {
+	case tw.AccountSID == "":
+		return "off: cars are arranged and nobody is texted"
+	case tw.APIKey != "":
+		return "on, from " + tw.From + " with an API key"
+	default:
+		return "on, from " + tw.From + " with the account's auth token"
+	}
 }

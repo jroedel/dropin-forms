@@ -278,7 +278,7 @@ func TestTheCarpoolPageShowsTheCarsAndAnAdminMovesARider(t *testing.T) {
 		t.Fatalf("Arrange: %v", err)
 	}
 
-	if got := a.texts.to("+15125550101"); len(got) != 1 || !strings.Contains(got[0], "Ana ((512) 555-0103) is riding with you") {
+	if got := a.texts.to("+15125550101"); len(got) != 1 || !strings.Contains(got[0], "Ana, (512) 555-0103, is riding with you") {
 		t.Errorf("Damien was texted %q", got)
 	}
 

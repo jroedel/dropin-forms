@@ -46,12 +46,35 @@ func TestTwilioSettingsStandOrFallTogether(t *testing.T) {
 account_sid = "` + sid + `"
 auth_token = "t"
 from = "+15125550100"`, ""},
+		{"an API key", `[twilio]
+account_sid = "` + sid + `"
+api_key = "SK123"
+api_secret = "s"
+from = "+15125550100"`, ""},
 		{"a SID alone", `[twilio]
-account_sid = "` + sid + `"`, "not all three"},
+account_sid = "` + sid + `"`, "twilio.from"},
+		{"no credential", `[twilio]
+account_sid = "` + sid + `"
+from = "+15125550100"`, "no credential"},
+		{"a key and the token", `[twilio]
+account_sid = "` + sid + `"
+api_key = "SK123"
+api_secret = "s"
+auth_token = "t"
+from = "+15125550100"`, "both"},
+		{"a key with no secret", `[twilio]
+account_sid = "` + sid + `"
+api_key = "SK123"
+from = "+15125550100"`, "without the other"},
 		{"an API key in the SID's place", `[twilio]
 account_sid = "SK123"
 auth_token = "t"
 from = "+15125550100"`, "begin with AC"},
+		{"an account SID in the key's place", `[twilio]
+account_sid = "` + sid + `"
+api_key = "` + sid + `"
+api_secret = "s"
+from = "+15125550100"`, "begin with SK"},
 		{"a number with no country code", `[twilio]
 account_sid = "` + sid + `"
 auth_token = "t"

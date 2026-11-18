@@ -102,6 +102,38 @@ func TestASendPostsTheFormTwilioExpects(t *testing.T) {
 	}
 }
 
+func TestAnAPIKeySignsAsItselfAndTheAccountIsStillInThePath(t *testing.T) {
+	var user, pass, path string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, pass, _ = r.BasicAuth()
+		path = r.URL.Path
+
+		reply(w, http.StatusCreated, `{"sid":"SM1","status":"queued"}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	s, err := twilio.New(twilio.Config{
+		AccountSID: accountSID, APIKey: "SK123", APISecret: "a-key-secret", From: fromNumber,
+		HTTP: srv.Client(), BaseURL: srv.URL,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if _, err := s.Send(t.Context(), recipient, "hello"); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	if user != "SK123" || pass != "a-key-secret" {
+		t.Errorf("basic auth = %q/%q, want the key and its secret", user, pass)
+	}
+
+	if !strings.Contains(path, "/Accounts/"+accountSID+"/") {
+		t.Errorf("path = %s, want the account in it", path)
+	}
+}
+
 func TestAnOptedOutRecipientIsARefusalThatSaysSo(t *testing.T) {
 	// The test that caught eumaeus's first version: a 400 carries "status":
 	// 400, a number, and a single reply struct with a string status turned
@@ -212,11 +244,14 @@ func TestAProviderThatNeverAnswersIsAnError(t *testing.T) {
 
 func TestASenderWithAnIncompleteConfigIsRefused(t *testing.T) {
 	cases := map[string]twilio.Config{
-		"no account SID":     {AuthToken: authToken, From: fromNumber},
-		"not an account SID": {AccountSID: "SK123", AuthToken: authToken, From: fromNumber},
-		"no auth token":      {AccountSID: accountSID, From: fromNumber},
-		"no sending number":  {AccountSID: accountSID, AuthToken: authToken},
-		"a number not E.164": {AccountSID: accountSID, AuthToken: authToken, From: "512-555-0100"},
+		"no account SID":       {AuthToken: authToken, From: fromNumber},
+		"not an account SID":   {AccountSID: "SK123", AuthToken: authToken, From: fromNumber},
+		"no auth token":        {AccountSID: accountSID, From: fromNumber},
+		"no sending number":    {AccountSID: accountSID, AuthToken: authToken},
+		"a number not E.164":   {AccountSID: accountSID, AuthToken: authToken, From: "512-555-0100"},
+		"a key and the token":  {AccountSID: accountSID, APIKey: "SK1", APISecret: "s", AuthToken: authToken, From: fromNumber},
+		"a key with no secret": {AccountSID: accountSID, APIKey: "SK1", From: fromNumber},
+		"not an API key":       {AccountSID: accountSID, APIKey: "AC1", APISecret: "s", From: fromNumber},
 	}
 
 	for name, cfg := range cases {
