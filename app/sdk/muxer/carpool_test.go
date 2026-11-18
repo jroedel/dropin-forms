@@ -337,6 +337,43 @@ func TestTheCarpoolPageShowsTheCarsAndAnAdminMovesARider(t *testing.T) {
 	}
 }
 
+// An organiser who would be texted about the carpool but has given no number
+// is told so on its page, and pointed at the only place they can give one.
+func TestTheCarpoolPageTellsAnOrganiserWithNoMobileHowToBeTexted(t *testing.T) {
+	a := newAdmin(t, "")
+	f := carpoolForm(t, a)
+
+	const prompt = "there is no mobile number on your account"
+
+	boss := sessionFor(t, a, siteBoss(t, a, "site@schoenstatt.test"))
+
+	if body := a.get(t, "/forms/youth-retreat/carpool", boss).Body.String(); !strings.Contains(body, prompt) {
+		t.Errorf("an organiser with no mobile is not told:\n%s", short(body))
+	}
+
+	if w := a.post(t, "/account/mobile", url.Values{"mobile": {"5125550100"}}, boss); w.Code != http.StatusOK {
+		t.Fatalf("saving a number = %d", w.Code)
+	}
+
+	if body := a.get(t, "/forms/youth-retreat/carpool", boss).Body.String(); strings.Contains(body, prompt) {
+		t.Error("an organiser who has given a number is still told they have none")
+	}
+
+	// Somebody who only reads results is never texted, so is not told how.
+	u, err := a.users.Create(t.Context(), time.Now(), userbus.NewUser{Email: mustEmail(t, "reader@schoenstatt.test"), Name: "Reader"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := a.access.Grant(t.Context(), time.Now(), types.ID{}, u.ID, f.ID, accessbus.RoleResults); err != nil {
+		t.Fatal(err)
+	}
+
+	if body := a.get(t, "/forms/youth-retreat/carpool", signedIn(t, a, u)).Body.String(); strings.Contains(body, prompt) {
+		t.Error("a reader, who is never texted, is told to give a number")
+	}
+}
+
 func TestAFormWithNoCarpoolHasNoCarpoolPage(t *testing.T) {
 	a := newAdmin(t, "")
 	boss := sessionFor(t, a, siteBoss(t, a, "site@schoenstatt.test"))

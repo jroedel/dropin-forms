@@ -2722,7 +2722,11 @@ rather than on every pass.
 **The texts** go to the driver ("Ana, (512) 555-0103, is riding with you. 1
 seat left."), the rider ("you are riding with Damien, ..."), and every account
 administering the form that has given a mobile number on its own account
-page and has not muted the form. Through Twilio, on eumaeus's account and its
+page and has not muted the form. Nobody can give that number for somebody
+else, since saving it is their agreement to be texted. So the account page is
+linked from every admin page's masthead, and the carpool page tells an
+organiser who would be texted but has no number. The first organiser to test
+it could not find the page: until then nothing linked to it. Through Twilio, on eumaeus's account and its
 registered A2P 10DLC campaign, signed with an API key made for this service
 so it can be revoked without touching eumaeus (`[twilio]` in the
 configuration; off when empty, and then the cars are still arranged and

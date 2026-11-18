@@ -23,7 +23,14 @@
      set apart by more than the width of the logo's "S", the clear space the
      manual keeps around it. */}}
 <a class="wordmark" href="/"><img src="{{asset "img/logo-horizontal.svg"}}" alt="Schoenstatt Fathers" width="150" height="50"><span>Austin forms</span></a>
+<nav class="masthead-links">
 {{block "masthead" .Data}}{{end}}
+{{/* Your account is on every page somebody is signed in to, because it is
+     where they set the mobile number a carpool texts and the backup codes
+     that let them back in, and nothing else linked to it. Not on the account
+     page itself, which has its sign-out button there instead. */}}
+{{if .AccountLink}}<a href="/account">Your account</a>{{end}}
+</nav>
 </header>
 <main>
 {{block "content" .Data}}{{end}}

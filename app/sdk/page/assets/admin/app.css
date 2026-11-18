@@ -120,6 +120,15 @@ main {
 
 .masthead a:hover { color: var(--sf-blue-dk); }
 
+/* The page's own way back and the account link, together at the right. They
+   wrap under the logo on a phone rather than pushing it off the edge. */
+.masthead-links {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+}
+
 .wordmark {
   display: flex;
   align-items: center;
