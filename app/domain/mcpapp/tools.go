@@ -257,6 +257,8 @@ func definitionSchema(creating bool) map[string]any {
 			"description": "text: one line. paragraph: several lines. email, tel. number: a whole number (not money). " +
 				"date (2026-10-17), time (15:30), datetime (2026-10-17T15:30). select: a dropdown. radio: one of several buttons. " +
 				"checkbox: a single agree box. choices: any number of boxes. amount: money the person types, such as a donation. " +
+				"carpool: how somebody is getting there -- options with exactly the values have, drive and need, each with your label; " +
+				"a driver also says how many seats, and the service puts each 'need' in a driver's car and texts them; at most one per form, and it needs phone and who. " +
 				"section: not a question but a heading; questions after it belong to it until the next section, and its show_if hides them all.",
 		},
 		"required":     boolean("Whether it must be answered."),
@@ -265,13 +267,16 @@ func definitionSchema(creating bool) map[string]any {
 		"autocomplete": str("An HTML autocomplete token, like name or email."),
 		"min_length":   integer("text, paragraph, email, tel: fewest characters."),
 		"max_length":   integer("text, paragraph, email, tel: most characters."),
-		"min":          integer("number: the smallest number. amount: the smallest amount, in cents. choices: fewest boxes ticked."),
-		"max":          integer("number: the largest number. amount: the largest amount, in cents. choices: most boxes ticked."),
+		"min":          integer("number: the smallest number. amount: the smallest amount, in cents. choices: fewest boxes ticked. carpool: fewest seats a driver may offer (default 1)."),
+		"max":          integer("number: the largest number. amount: the largest amount, in cents. choices: most boxes ticked. carpool: most seats a driver may offer (default 7)."),
 		"pattern":      str("text, paragraph, email, tel: an RE2 regular expression the whole answer must match. Needs pattern_note."),
 		"pattern_note": str("What to tell somebody whose answer does not match, like: use five digits, like 78745."),
 		"earliest":     str("date, time, datetime: the earliest allowed, in the field's own format."),
 		"latest":       str("date, time, datetime: the latest allowed, in the field's own format."),
-		"options":      list(option, "select, radio, choices: the choices, in order."),
+		"options":      list(option, "select, radio, choices: the choices, in order. carpool: exactly have, drive and need."),
+		"phone":        str("carpool only: the name of an earlier tel question, the mobile number drivers and riders are texted on."),
+		"who":          str("carpool only: the name of an earlier text question, the name the others in a car are told."),
+		"seats_label":  str("carpool only: what a driver is asked about seats. Omit for: How many people can you take?"),
 		"show_if": object(map[string]any{
 			"field": str("The name of an earlier question."),
 			"is":    list(map[string]any{"type": "string"}, "Show this when that question's answer is any of these values."),

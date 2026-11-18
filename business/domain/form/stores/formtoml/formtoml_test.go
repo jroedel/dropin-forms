@@ -574,6 +574,55 @@ latest = "2026-10-13T18:00"
 	}
 }
 
+// A carpool's settings reach the domain type: one that parses and goes
+// nowhere is a carpool that cannot text anybody.
+func TestACarpoolIsRead(t *testing.T) {
+	store, err := formtoml.Load(fstest.MapFS{"alpha.toml": {Data: []byte(minimal("alpha") + `
+[[field]]
+name = "name"
+label = "Your name"
+kind = "text"
+
+[[field]]
+name = "mobile"
+label = "Mobile"
+kind = "tel"
+
+[[field]]
+name = "ride"
+label = "Getting there"
+kind = "carpool"
+phone = "mobile"
+who = "name"
+seats_label = "Seats for others?"
+max = "4"
+[[field.option]]
+value = "have"
+label = "I have a ride"
+[[field.option]]
+value = "drive"
+label = "I can drive"
+[[field.option]]
+value = "need"
+label = "Find me a driver"
+`)}})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	alpha, _ := types.ParseSlug("alpha")
+
+	f, err := store.ByID(alpha)
+	if err != nil {
+		t.Fatalf("ByID: %v", err)
+	}
+
+	fld, _ := f.Field("ride")
+	if fld.Phone != "mobile" || fld.Who != "name" || fld.SeatsLabel != "Seats for others?" || fld.MaxSeats() != 4 {
+		t.Errorf("carpool = %+v", fld)
+	}
+}
+
 // A limit on an option, and approval, reach the domain type, for the reason
 // the daily cap test gives: one that parses and goes nowhere is a time slot
 // anybody can take twice, or a sign-up nobody was asked to approve.

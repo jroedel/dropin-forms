@@ -60,6 +60,13 @@ const (
 	KindTime      Kind = "time"     // a time of day, with no day
 	KindDateTime  Kind = "datetime" // a day and a time of day, on a wall clock
 
+	// KindCarpool is how somebody is getting to the event: they have a ride,
+	// they can drive and take others, or they need a driver. Its three
+	// options have fixed values -- the service places riders in cars by them
+	// -- and author-written labels. A driver also says how many seats. See
+	// carpool.go.
+	KindCarpool Kind = "carpool"
+
 	// KindSection is not a question. It is a heading, with its Help as a
 	// sentence beneath it, and every question after it belongs to it until
 	// the next section. Its ShowIf hides the heading and all of those
@@ -80,7 +87,7 @@ var kinds = []Kind{
 	KindText, KindParagraph, KindEmail, KindTel, KindNumber,
 	KindDate, KindTime, KindDateTime,
 	KindSelect, KindRadio, KindCheckbox, KindChoices, KindAmount,
-	KindSection,
+	KindCarpool, KindSection,
 }
 
 // Kinds returns every field kind this service can validate, for a builder UI
@@ -101,7 +108,7 @@ func (k Kind) Asks() bool { return k != KindSection }
 // possibly submit -- no separate length or pattern rule applies.
 func (k Kind) HasOptions() bool {
 	switch k {
-	case KindSelect, KindRadio, KindChoices:
+	case KindSelect, KindRadio, KindChoices, KindCarpool:
 		return true
 	}
 
@@ -129,7 +136,7 @@ func (k Kind) Textual() bool {
 // mean differs by kind and is documented on [Field.Min].
 func (k Kind) Bounded() bool {
 	switch k {
-	case KindNumber, KindAmount, KindChoices:
+	case KindNumber, KindAmount, KindChoices, KindCarpool:
 		return true
 	}
 
@@ -197,6 +204,7 @@ type Field struct {
 	//	KindNumber   the number itself      -- 1 to 20 tickets
 	//	KindAmount   minor units            -- 500 is a five dollar floor
 	//	KindChoices  how many boxes         -- 1 to 3 selections
+	//	KindCarpool  seats a driver offers  -- 1 to 7 others in the car
 	Min *int64
 	Max *int64
 
@@ -226,6 +234,15 @@ type Field struct {
 	// open at that end. See temporal.go for why these are not Min and Max.
 	Earliest string
 	Latest   string
+
+	// Phone, Who and SeatsLabel belong to a carpool field and to nothing
+	// else. Phone names an earlier telephone field and Who an earlier text
+	// field: the number a driver or rider is texted on, and the name the
+	// others in the car are told. SeatsLabel is the question put to a driver
+	// about seats, empty for the service's own wording. See carpool.go.
+	Phone      string
+	Who        string
+	SeatsLabel string
 
 	// pattern is Pattern compiled, filled in by Check so that no request pays
 	// for a compile and no handler has to deal with a compile failure.
@@ -792,6 +809,7 @@ func (f *Form) checkFields() []string {
 		}
 
 		p = append(p, fld.checkOptions(where)...)
+		p = append(p, f.checkCarpool(fld, where, i)...)
 		p = append(p, fld.checkBounds(where)...)
 		p = append(p, fld.checkPattern(where)...)
 		p = append(p, fld.checkLimits(where)...)
@@ -821,6 +839,7 @@ func (fld Field) checkSection(where string) []string {
 	set("a lowest or highest value", fld.Min != nil || fld.Max != nil)
 	set("a pattern", fld.Pattern != "" || fld.PatternNote != "")
 	set("an earliest or latest date", fld.Earliest != "" || fld.Latest != "")
+	set("a carpool's settings", fld.Phone != "" || fld.Who != "" || fld.SeatsLabel != "")
 
 	return p
 }
@@ -1314,6 +1333,13 @@ func (f Form) Fingerprint() string {
 		// fingerprint it had before ranges existed.
 		if fld.Earliest != "" || fld.Latest != "" {
 			write("range", fld.Earliest, fld.Latest)
+		}
+
+		// Which answers are shared with the others in a car is part of what
+		// somebody agreed to by answering, for the listing's reason below.
+		// The seats wording is not.
+		if fld.Phone != "" || fld.Who != "" {
+			write("carpool", fld.Phone, fld.Who)
 		}
 	}
 

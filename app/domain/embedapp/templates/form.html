@@ -70,6 +70,25 @@ you.</p>
   </label>
   {{end}}
 
+{{else if eq $fld.Shape "carpool"}}
+  <span class="group-label">{{$fld.Label}}{{if $fld.Required}} <span class="required-mark" title="required">*</span>{{end}}</span>
+  {{template "help" $fld.Help}}
+  {{range $opt := $fld.Options}}
+  <label class="choice">
+  <input type="radio" name="{{$fld.Name}}" value="{{$opt.Value}}"{{if $opt.Chosen}} checked{{end}}>
+  <span>{{$opt.Label}}</span>
+  </label>
+  {{end}}
+  {{with $fld.Seats}}
+  <div class="seats" data-show-if-field="{{.ShowIfField}}" data-show-if-values="{{.ShowIfValues}}">
+  <label for="f-{{.Name}}">{{.Question}}</label>
+  <input id="f-{{.Name}}" type="number" name="{{.Name}}" value="{{.Value}}" inputmode="numeric" step="1" min="{{.Min}}" max="{{.Max}}">
+  </div>
+  {{end}}
+  {{/* Fixed, and not the author's to remove: a number given here is texted,
+       and the person giving it is told so, and how to stop it. */}}
+  <p class="help">If you drive or need a ride, we will text you about it. Reply STOP to stop.</p>
+
 {{else if eq $fld.Shape "checkbox"}}
   <label class="choice">
   <input type="checkbox" name="{{$fld.Name}}" value="{{$fld.Value}}"{{if $fld.Values}} checked{{end}}{{if $fld.Required}} required{{end}}>

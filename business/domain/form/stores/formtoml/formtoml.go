@@ -290,6 +290,12 @@ type field struct {
 	Options []option `toml:"option"`
 
 	ShowIf *condition `toml:"show_if"`
+
+	// A carpool's: the earlier questions it texts by, and what a driver is
+	// asked about seats. See formbus.Field.Phone.
+	Phone      string `toml:"phone"`
+	Who        string `toml:"who"`
+	SeatsLabel string `toml:"seats_label"`
 }
 
 type option struct {
@@ -413,6 +419,9 @@ func (w field) toField() (formbus.Field, error) {
 		PatternNote:  w.PatternNote,
 		Earliest:     w.Earliest,
 		Latest:       w.Latest,
+		Phone:        w.Phone,
+		Who:          w.Who,
+		SeatsLabel:   w.SeatsLabel,
 	}
 
 	for _, o := range w.Options {

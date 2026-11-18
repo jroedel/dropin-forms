@@ -107,6 +107,12 @@ type fieldDoc struct {
 	Options []optionDoc `json:"options,omitzero"`
 
 	ShowIf *conditionDoc `json:"show_if,omitempty"`
+
+	// A carpool's: the names of the earlier tel and text questions it texts
+	// by, and what a driver is asked about seats.
+	Phone      string `json:"phone,omitempty"`
+	Who        string `json:"who,omitempty"`
+	SeatsLabel string `json:"seats_label,omitempty"`
 }
 
 type optionDoc struct {
@@ -270,6 +276,9 @@ func formOf(d definitionDoc) (formbus.Form, []string) {
 			PatternNote:  fd.PatternNote,
 			Earliest:     fd.Earliest,
 			Latest:       fd.Latest,
+			Phone:        fd.Phone,
+			Who:          fd.Who,
+			SeatsLabel:   fd.SeatsLabel,
 		}
 
 		// An unknown kind would otherwise be given a generated name built from
@@ -394,6 +403,9 @@ func definitionOf(f formbus.Form) definitionDoc {
 			PatternNote:  fld.PatternNote,
 			Earliest:     fld.Earliest,
 			Latest:       fld.Latest,
+			Phone:        fld.Phone,
+			Who:          fld.Who,
+			SeatsLabel:   fld.SeatsLabel,
 		}
 
 		for _, o := range fld.Options {

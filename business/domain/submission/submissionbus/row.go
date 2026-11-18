@@ -150,6 +150,14 @@ func Cells(f formbus.Form, s Submission) []Cell {
 			continue
 		}
 
+		// A carpool's two values are a choice and a count, and "drive, 3"
+		// in a cell reads as a list; written out, it says what it means.
+		if ans.Kind == formbus.KindCarpool {
+			out = append(out, Cell{Kind: CellText, Text: ans.Readable()})
+
+			continue
+		}
+
 		out = append(out, Cell{Kind: CellText, Text: strings.Join(ans.Values, ", ")})
 	}
 

@@ -134,6 +134,16 @@ func full(t *testing.T) formbus.Form {
 				Earliest: "2026-09-30",
 				Latest:   "2026-10-13T18:00",
 			},
+			{Name: "mobile", Label: "Mobile", Kind: formbus.KindTel},
+			{
+				Name: "ride", Label: "Getting there", Kind: formbus.KindCarpool,
+				Phone: "mobile", Who: "postcode", SeatsLabel: "Seats for others?",
+				Options: []formbus.Option{
+					{Value: formbus.CarpoolHave, Label: "I have a ride"},
+					{Value: formbus.CarpoolDrive, Label: "I can drive"},
+					{Value: formbus.CarpoolNeed, Label: "Find me a driver"},
+				},
+			},
 		},
 
 		Retired: []string{"text_1", "item_1"},
@@ -213,6 +223,11 @@ func TestADefinitionSurvivesTheRoundTrip(t *testing.T) {
 
 		if fld.Earliest != w.Earliest || fld.Latest != w.Latest {
 			t.Errorf("field %d range = %q to %q, want %q to %q", i, fld.Earliest, fld.Latest, w.Earliest, w.Latest)
+		}
+
+		if fld.Phone != w.Phone || fld.Who != w.Who || fld.SeatsLabel != w.SeatsLabel {
+			t.Errorf("field %d carpool = %q/%q/%q, want %q/%q/%q", i,
+				fld.Phone, fld.Who, fld.SeatsLabel, w.Phone, w.Who, w.SeatsLabel)
 		}
 
 		if (fld.Min == nil) != (w.Min == nil) || (fld.Min != nil && *fld.Min != *w.Min) {

@@ -32,6 +32,7 @@ const (
 	shapeCheckbox   shape = "checkbox"   // a single box
 	shapeCheckboxes shape = "checkboxes" // any number of boxes
 	shapeAmount     shape = "amount"     // money the person types
+	shapeCarpool    shape = "carpool"    // buttons, and seats for a driver
 )
 
 // fieldView is one field, ready to render.
@@ -106,6 +107,28 @@ type fieldView struct {
 	Values []string
 
 	Problems []formbus.Violation
+
+	// Seats is a carpool's second box, for a driver; nil on every other
+	// field.
+	Seats *seatsView
+}
+
+// seatsView is the box a driver says how many seats in.
+//
+// Shown under the carpool's own condition on "drive", carried in the same two
+// attributes a question's condition is, so the script that shows and hides
+// questions shows and hides this with no second implementation. Not marked
+// required: without the script it is always on screen, and a required box
+// would stop somebody with their own ride submitting. The server asks for it
+// when it is needed.
+type seatsView struct {
+	Name     string
+	Question string
+	Value    string
+	Min, Max string
+
+	ShowIfField  string
+	ShowIfValues string
 }
 
 // optionView is one choice, with whether it was chosen and whether it can
@@ -295,6 +318,23 @@ func viewFields(f formbus.Form, values formbus.Values, problems formbus.Invalid,
 
 		case formbus.KindCheckbox:
 			v.Shape = shapeCheckbox
+
+		case formbus.KindCarpool:
+			v.Shape, v.BoxType = shapeCarpool, "radio"
+
+			name := formbus.SeatsField(fld.Name)
+			v.Seats = &seatsView{
+				Name:         name,
+				Question:     fld.SeatsQuestion(),
+				Min:          strconv.Itoa(fld.MinSeats()),
+				Max:          strconv.Itoa(fld.MaxSeats()),
+				ShowIfField:  fld.Name,
+				ShowIfValues: formbus.CarpoolDrive,
+			}
+
+			if seats := values[name]; len(seats) > 0 {
+				v.Seats.Value = seats[0]
+			}
 
 		case formbus.KindChoices:
 			// The bounds on this kind count boxes, and HTML has no attribute

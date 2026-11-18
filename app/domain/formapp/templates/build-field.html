@@ -97,6 +97,98 @@
   </div>
   {{end}}
 
+  {{if .Uses.Carpool}}
+  <div class="uses-carpool">
+  <h2>Its choices</h2>
+
+  <p class="help">Everybody chooses one. The service puts each person who
+  needs a driver into the car of somebody who can drive and has a seat free,
+  in the order they answered, and texts the driver, the rider and this form's
+  organisers. Change the wording to suit the event; what each choice means
+  stays the same.</p>
+
+  <div class="field">
+    <label for="carpool_have">Has their own ride</label>
+    <input type="text" id="carpool_have" name="carpool_have" value="{{.CarpoolHave}}"
+           autocomplete="off" required maxlength="200">
+  </div>
+
+  <div class="field">
+    <label for="carpool_drive">Can drive and take others</label>
+    <input type="text" id="carpool_drive" name="carpool_drive" value="{{.CarpoolDrive}}"
+           autocomplete="off" required maxlength="200">
+  </div>
+
+  <div class="field">
+    <label for="carpool_need">Needs a driver</label>
+    <input type="text" id="carpool_need" name="carpool_need" value="{{.CarpoolNeed}}"
+           autocomplete="off" required maxlength="200">
+  </div>
+
+  <h2>Seats</h2>
+
+  <div class="field">
+    <label for="seats_label">What a driver is asked</label>
+    <p class="help">Shown under the driving choice. Leave it empty for
+    &ldquo;How many people can you take?&rdquo;</p>
+    <input type="text" id="seats_label" name="seats_label" value="{{.SeatsLabel}}"
+           autocomplete="off" maxlength="200">
+  </div>
+
+  <div class="field">
+    <label for="min">Fewest seats a driver may offer</label>
+    <p class="help">Empty for one.</p>
+    <input type="text" id="min" name="min" value="{{.Min}}"
+           autocomplete="off" inputmode="numeric" maxlength="3">
+  </div>
+
+  <div class="field">
+    <label for="max">Most seats a driver may offer</label>
+    <p class="help">Empty for seven.</p>
+    <input type="text" id="max" name="max" value="{{.Max}}"
+           autocomplete="off" inputmode="numeric" maxlength="3">
+  </div>
+
+  <h2>Who is texted</h2>
+
+  <p class="help">Drivers and riders are texted at the number they give in
+  one of the questions above this one, and the others in their car are told
+  their name from another. Both are asked of anybody who drives or needs a
+  ride, and of nobody else. The form tells them they will be texted and how to
+  stop it.</p>
+
+  <div class="field">
+    <label for="phone">The question that asks for their mobile number</label>
+    {{if .Phones}}
+    <select id="phone" name="phone" required>
+      <option value="">choose one</option>
+      {{range .Phones}}<option value="{{.Name}}" {{if eq .Name $.Phone}}selected{{end}}>{{.Label}}</option>
+      {{end}}
+    </select>
+    {{else}}
+    <p class="help">There is no telephone question above this one yet. Add
+    one, move it above the carpool, and choose it here.</p>
+    <input type="hidden" name="phone" value="{{.Phone}}">
+    {{end}}
+  </div>
+
+  <div class="field">
+    <label for="who">The question that asks for their name</label>
+    {{if .Names}}
+    <select id="who" name="who" required>
+      <option value="">choose one</option>
+      {{range .Names}}<option value="{{.Name}}" {{if eq .Name $.Who}}selected{{end}}>{{.Label}}</option>
+      {{end}}
+    </select>
+    {{else}}
+    <p class="help">There is no line-of-text question above this one yet.
+    Add one for their name, move it above the carpool, and choose it here.</p>
+    <input type="hidden" name="who" value="{{.Who}}">
+    {{end}}
+  </div>
+  </div>
+  {{end}}
+
   {{if .Uses.Textual}}
   <div class="uses-text">
   <h2>How long the answer may be</h2>

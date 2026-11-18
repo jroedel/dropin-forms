@@ -219,6 +219,15 @@ func (a Answers) Values() Values {
 	out := make(Values, len(a.Fields)+len(a.Lines))
 
 	for _, f := range a.Fields {
+		// A driver's seats went in through a box of their own, and go back
+		// into it.
+		if f.Kind == KindCarpool && len(f.Values) > 1 {
+			out[f.Name] = f.Values[:1:1]
+			out[SeatsField(f.Name)] = slices.Clone(f.Values[1:2])
+
+			continue
+		}
+
 		out[f.Name] = slices.Clone(f.Values)
 	}
 
@@ -327,7 +336,20 @@ func (f Form) judge(in Values) (Answers, error) {
 			continue
 		}
 
-		values, problems := fld.take(in[fld.Name], f.Currency)
+		var (
+			values   []string
+			problems []Violation
+		)
+
+		if fld.Kind == KindCarpool {
+			values, problems = fld.takeCarpool(in[fld.Name], in[SeatsField(fld.Name)])
+			if problems == nil {
+				problems = f.checkCarpoolContact(fld, values, index, taken)
+			}
+		} else {
+			values, problems = fld.take(in[fld.Name], f.Currency)
+		}
+
 		vs = append(vs, problems...)
 		taken[i] = values
 
@@ -515,7 +537,7 @@ func (fld Field) missing() string {
 	switch fld.Kind {
 	case KindCheckbox:
 		return fmt.Sprintf("Please tick %s.", fld.Label)
-	case KindSelect, KindRadio, KindChoices:
+	case KindSelect, KindRadio, KindChoices, KindCarpool:
 		return fmt.Sprintf("Please choose %s.", fld.Label)
 	}
 
