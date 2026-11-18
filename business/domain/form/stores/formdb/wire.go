@@ -103,6 +103,10 @@ type field struct {
 	Options []option `json:"options,omitzero"`
 
 	ShowIf *condition `json:"show_if,omitempty"`
+
+	Phone      string `json:"phone,omitempty"`
+	Who        string `json:"who,omitempty"`
+	SeatsLabel string `json:"seats_label,omitempty"`
 }
 
 type listing struct {
@@ -204,6 +208,9 @@ func encode(f formbus.Form) (string, error) {
 			PatternNote:  fld.PatternNote,
 			Earliest:     fld.Earliest,
 			Latest:       fld.Latest,
+			Phone:        fld.Phone,
+			Who:          fld.Who,
+			SeatsLabel:   fld.SeatsLabel,
 		}
 
 		for _, o := range fld.Options {
@@ -318,6 +325,9 @@ func decode(body string) (formbus.Form, error) {
 			PatternNote:  wf.PatternNote,
 			Earliest:     wf.Earliest,
 			Latest:       wf.Latest,
+			Phone:        wf.Phone,
+			Who:          wf.Who,
+			SeatsLabel:   wf.SeatsLabel,
 		}
 
 		for _, o := range wf.Options {

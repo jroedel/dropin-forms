@@ -440,6 +440,18 @@ func places(capacity int, waitlist bool) settingRow {
 func detailOf(fld formbus.Field, currency string) string {
 	var parts []string
 
+	// A carpool's choices are always the same three, so the count of them
+	// says nothing; its seats and who it texts by are what differ.
+	if fld.Kind == formbus.KindCarpool {
+		parts = append(parts, fmt.Sprintf("%d to %d seats a car", fld.MinSeats(), fld.MaxSeats()))
+
+		if fld.Phone == "" || fld.Who == "" {
+			parts = append(parts, "needs a phone and a name question above it")
+		}
+
+		return strings.Join(parts, ", ")
+	}
+
 	if fld.Kind.HasOptions() {
 		switch n := len(fld.Options); n {
 		case 0:

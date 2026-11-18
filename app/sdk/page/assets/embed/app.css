@@ -277,6 +277,26 @@ textarea:user-invalid {
   flex: none;
 }
 
+/* A carpool's seats box, under "I can drive": indented to the text of the
+   choice it belongs to, and narrow, because it holds one or two digits.
+   [hidden] restated for the reason a section's is. */
+.seats {
+  margin: .35rem 0 .5rem 1.6rem;
+}
+
+.seats[hidden] {
+  display: none;
+}
+
+.seats label {
+  display: block;
+  margin-bottom: .25rem;
+}
+
+.seats input {
+  width: 5rem;
+}
+
 /* An option somebody else has already taken. Still listed, so the person can
    see the slot existed and is gone rather than wonder whether they misread. */
 .choice.taken {

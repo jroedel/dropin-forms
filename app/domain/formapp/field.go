@@ -49,6 +49,18 @@ type fieldView struct {
 
 	Options string
 
+	// The carpool's: what each of its three fixed choices says, what a
+	// driver is asked about seats, and which earlier questions hold the
+	// number and the name it texts with -- with the questions that could.
+	CarpoolHave  string
+	CarpoolDrive string
+	CarpoolNeed  string
+	SeatsLabel   string
+	Phone        string
+	Who          string
+	Phones       []earlierField
+	Names        []earlierField
+
 	// ShowIfField and ShowIfIs are the condition. Empty means always shown.
 	ShowIfField string
 	ShowIfIs    string
@@ -103,6 +115,11 @@ type kindChoice struct {
 	Money      bool
 	Temporal   bool
 
+	// Carpool is the carpool, whose choices and seats have a section of
+	// their own rather than the general list and bounds: its three values
+	// are fixed, so the page asks only for their wording.
+	Carpool bool
+
 	// Section is a heading rather than a question: the page offers a heading,
 	// a sentence and a condition, and nothing an answer would need.
 	Section bool
@@ -151,10 +168,19 @@ func (a app) addField(w http.ResponseWriter, r *http.Request) {
 
 	fld.Name = s.Form.NextFieldName(fld.Kind)
 
-	// Options only for a kind that has them. The box is hidden for the
-	// others but still submitted, and Check refuses options on a text field
-	// -- which would refuse the save over a box nobody could see.
-	if fld.Kind.HasOptions() {
+	// A carpool starts with its three choices in plain words and the
+	// questions it texts by already chosen, when the form has them, so that
+	// adding one is one step and its page is for changing the wording. When
+	// the form has no telephone or name question yet, Check says so, and that
+	// is the next thing to add.
+	if fld.Kind == formbus.KindCarpool {
+		fld.Options = carpoolOptions("", "", "")
+		fld.Phone = firstOf(s.Form.Fields, formbus.KindTel)
+		fld.Who = firstOf(s.Form.Fields, formbus.KindText)
+	} else if fld.Kind.HasOptions() {
+		// Options only for a kind that has them. The box is hidden for the
+		// others but still submitted, and Check refuses options on a text
+		// field -- which would refuse the save over a box nobody could see.
 		var err error
 
 		fld.Options, err = parseOptions(r.PostFormValue("options"))
@@ -234,6 +260,31 @@ func fieldOf(s formbus.Stored, fld formbus.Field, at int) fieldView {
 		Latest:       fld.Latest,
 		Options:      writeOptions(fld.Options),
 		Uses:         kindOf(fld.Kind),
+		SeatsLabel:   fld.SeatsLabel,
+		Phone:        fld.Phone,
+		Who:          fld.Who,
+	}
+
+	if fld.Kind == formbus.KindCarpool {
+		for _, o := range fld.Options {
+			switch o.Value {
+			case formbus.CarpoolHave:
+				v.CarpoolHave = o.Label
+			case formbus.CarpoolDrive:
+				v.CarpoolDrive = o.Label
+			case formbus.CarpoolNeed:
+				v.CarpoolNeed = o.Label
+			}
+		}
+
+		for _, earlier := range s.Form.Fields[:at] {
+			switch earlier.Kind {
+			case formbus.KindTel:
+				v.Phones = append(v.Phones, earlierField{Name: earlier.Name, Label: earlier.Label})
+			case formbus.KindText:
+				v.Names = append(v.Names, earlierField{Name: earlier.Name, Label: earlier.Label})
+			}
+		}
 	}
 
 	if fld.ShowIf != nil {
@@ -321,7 +372,16 @@ func (a app) saveField(w http.ResponseWriter, r *http.Request) {
 	// anyway would refuse the save over a box nobody can see to clear. So
 	// changing a field's kind drops what the new kind cannot use, which is
 	// what the page already showed would happen.
-	if fld.Kind.HasOptions() {
+	switch {
+	case fld.Kind == formbus.KindCarpool:
+		// The values are fixed, so only the wording is read; Check refuses a
+		// carpool whose choices are anything else.
+		fld.Options = carpoolOptions(value(r, "carpool_have"), value(r, "carpool_drive"), value(r, "carpool_need"))
+		fld.SeatsLabel = value(r, "seats_label")
+		fld.Phone = value(r, "phone")
+		fld.Who = value(r, "who")
+
+	case fld.Kind.HasOptions():
 		fld.Options, err = parseOptions(r.PostFormValue("options"))
 		fail(err)
 	}
@@ -572,13 +632,46 @@ func kindOf(k formbus.Kind) kindChoice {
 		Value: string(k),
 		Label: describeKind(k),
 
-		HasOptions: k.HasOptions(),
-		Bounded:    k.Bounded(),
+		// A carpool has both in the domain, and a section of its own on the
+		// page instead of either; see Carpool.
+		HasOptions: k.HasOptions() && k != formbus.KindCarpool,
+		Bounded:    k.Bounded() && k != formbus.KindCarpool,
 		Textual:    k.Textual(),
 		Temporal:   k.Temporal(),
 		Money:      k == formbus.KindAmount,
 		Section:    k == formbus.KindSection,
+		Carpool:    k == formbus.KindCarpool,
 	}
+}
+
+// carpoolOptions is a carpool's three choices with the wording given, and
+// plain words for any left empty. The words are a starting point for the
+// person writing the form, who changes them on the question's page.
+func carpoolOptions(have, drive, need string) []formbus.Option {
+	or := func(s, fallback string) string {
+		if s == "" {
+			return fallback
+		}
+
+		return s
+	}
+
+	return []formbus.Option{
+		{Value: formbus.CarpoolHave, Label: or(have, "I already have a ride")},
+		{Value: formbus.CarpoolDrive, Label: or(drive, "I can drive and take others")},
+		{Value: formbus.CarpoolNeed, Label: or(need, "Please find me a driver")},
+	}
+}
+
+// firstOf is the name of the first field of a kind, or "".
+func firstOf(fields []formbus.Field, k formbus.Kind) string {
+	for _, f := range fields {
+		if f.Kind == k {
+			return f.Name
+		}
+	}
+
+	return ""
 }
 
 // quoted is a question as a sentence names it: its wording in quotation
@@ -624,6 +717,8 @@ func shortKind(k formbus.Kind) string {
 		return "Tick boxes"
 	case formbus.KindAmount:
 		return "Amount"
+	case formbus.KindCarpool:
+		return "Carpool"
 	case formbus.KindSection:
 		return "Section"
 	default:
@@ -662,6 +757,8 @@ func describeKind(k formbus.Kind) string {
 		return "Tick boxes: any number of a list"
 	case formbus.KindAmount:
 		return "An amount of money somebody types"
+	case formbus.KindCarpool:
+		return "A carpool: has a ride, can drive, or needs a driver"
 	case formbus.KindSection:
 		return "A section heading, which can hide the questions under it"
 	default:

@@ -140,6 +140,10 @@ func (fld Field) takeTemporal(s string) (string, []Violation) {
 // For a page or a message, never for a CSV. A spreadsheet wants the stored
 // shape, which sorts, and gets it from Values directly.
 func (a Answer) Readable() string {
+	if a.Kind == KindCarpool {
+		return a.carpoolReadable()
+	}
+
 	t, ok := temporals[a.Kind]
 	if !ok {
 		return strings.Join(a.Values, ", ")
