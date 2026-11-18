@@ -63,10 +63,21 @@ const OptedOut = 21610
 
 // Config is the account and the number messages come from.
 type Config struct {
-	// AccountSID and AuthToken authenticate to Twilio: "AC…" and the token
-	// beside it on the console's front page.
+	// AccountSID is the account, "AC…", on the console's front page. It is
+	// in every request's path whichever credential signs it.
 	AccountSID string
-	AuthToken  string
+
+	// APIKey and APISecret are an API key made for this service alone,
+	// "SK…" and the secret Twilio shows once when it is made. Preferred over
+	// AuthToken: a key can be revoked without touching anything else on the
+	// account, and the auth token is the whole account's -- shared here with
+	// eumaeus, so changing it would stop both at once.
+	APIKey    string
+	APISecret string
+
+	// AuthToken is the account's own token, the alternative to an API key.
+	// One or the other, not both.
+	AuthToken string
 
 	// From is the sending number in E.164, "+1…". It must be a number on this
 	// account that is registered to send to the United States (A2P 10DLC, or
@@ -92,11 +103,19 @@ type Sender struct {
 
 // New makes a Sender, refusing a config it cannot work with.
 func New(cfg Config) (*Sender, error) {
+	key := cfg.APIKey != "" || cfg.APISecret != ""
+
 	switch {
 	case !strings.HasPrefix(cfg.AccountSID, "AC"):
 		return nil, errors.New(`a Twilio account SID begins with "AC"`)
-	case strings.TrimSpace(cfg.AuthToken) == "":
-		return nil, errors.New("a Twilio sender needs the account's auth token")
+	case key && cfg.AuthToken != "":
+		return nil, errors.New("a Twilio sender takes an API key or the auth token, not both")
+	case key && !strings.HasPrefix(cfg.APIKey, "SK"):
+		return nil, errors.New(`a Twilio API key's SID begins with "SK"`)
+	case key && strings.TrimSpace(cfg.APISecret) == "":
+		return nil, errors.New("a Twilio API key needs its secret")
+	case !key && strings.TrimSpace(cfg.AuthToken) == "":
+		return nil, errors.New("a Twilio sender needs an API key and its secret, or the account's auth token")
 	case !strings.HasPrefix(cfg.From, "+"):
 		return nil, errors.New(`a Twilio sending number is written in E.164, beginning with "+"`)
 	}
@@ -176,7 +195,13 @@ func (s *Sender) Send(ctx context.Context, to, body string) (string, error) {
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	req.SetBasicAuth(s.cfg.AccountSID, s.cfg.AuthToken)
+	// An API key signs as itself; the account's token signs as the account.
+	// The path names the account either way.
+	if s.cfg.APIKey != "" {
+		req.SetBasicAuth(s.cfg.APIKey, s.cfg.APISecret)
+	} else {
+		req.SetBasicAuth(s.cfg.AccountSID, s.cfg.AuthToken)
+	}
 
 	resp, err := s.http.Do(req)
 	if err != nil {

@@ -35,7 +35,13 @@ func newCarpool(cfg config, log *slog.Logger, db *sql.DB, forms *formbus.Busines
 	// Assigned only when there is one, so that a nil *twilio.Sender is not
 	// an interface that reads as configured.
 	if tw := cfg.Twilio; tw.AccountSID != "" {
-		sender, err := twilio.New(twilio.Config{AccountSID: tw.AccountSID, AuthToken: tw.AuthToken, From: tw.From})
+		sender, err := twilio.New(twilio.Config{
+			AccountSID: tw.AccountSID,
+			APIKey:     tw.APIKey,
+			APISecret:  tw.APISecret,
+			AuthToken:  tw.AuthToken,
+			From:       tw.From,
+		})
 		if err != nil {
 			return nil, err
 		}

@@ -2719,12 +2719,14 @@ holds, so the last seat goes to one rider. A rider waiting has a row too,
 with no driver, so the organisers are told once that somebody is waiting
 rather than on every pass.
 
-**The texts** go to the driver ("Ana (512) 555-0103 is riding with you. 1 seat
-left."), the rider ("you are riding with Damien ..."), and every account
+**The texts** go to the driver ("Ana, (512) 555-0103, is riding with you. 1
+seat left."), the rider ("you are riding with Damien, ..."), and every account
 administering the form that has given a mobile number on its own account
 page and has not muted the form. Through Twilio, on eumaeus's account and its
-registered A2P 10DLC campaign (`[twilio]` in the configuration; off when
-empty, and then the cars are still arranged and shown). Best effort, like the
+registered A2P 10DLC campaign, signed with an API key made for this service
+so it can be revoked without touching eumaeus (`[twilio]` in the
+configuration; off when empty, and then the cars are still arranged and
+shown). Best effort, like the
 mail: no queue, no retry. What happened is kept on the ride -- sent, or why
 not, including "they replied STOP" for Twilio's error 21610 -- and the office
 page offers to send it again. Twilio handles STOP and HELP itself; there is

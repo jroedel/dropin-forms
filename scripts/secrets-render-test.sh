@@ -271,13 +271,28 @@ texting=$(fixture \
 	'STRIPE_SECRET_KEY=sk_live_theconfiguredone' \
 	'STRIPE_WEBHOOK_SECRET=whsec_theconfiguredone' \
 	'TWILIO_ACCOUNT_SID=ACtheaccount' \
-	'TWILIO_AUTH_TOKEN=thetoken' \
+	'TWILIO_API_KEY=SKthekey' \
+	'TWILIO_API_SECRET=thesecret' \
 	'TWILIO_FROM=+15125550100')
 
 out=$(render "$texting")
-says "all three Twilio keys render a [twilio] section" "$out" '[twilio]'
+says "an API key renders a [twilio] section" "$out" '[twilio]'
 says "with the account SID" "$out" 'account_sid = "ACtheaccount"'
+says "and the key" "$out" 'api_key = "SKthekey"'
+says "and its secret" "$out" 'api_secret = "thesecret"'
+denies "and no auth token line" "$out" 'auth_token'
 says "and the sending number" "$out" 'from = "+15125550100"'
+
+token=$(fixture \
+	'STRIPE_SECRET_KEY=sk_live_theconfiguredone' \
+	'STRIPE_WEBHOOK_SECRET=whsec_theconfiguredone' \
+	'TWILIO_ACCOUNT_SID=ACtheaccount' \
+	'TWILIO_AUTH_TOKEN=thetoken' \
+	'TWILIO_FROM=+15125550100')
+
+out=$(render "$token")
+says "the auth token instead renders too" "$out" 'auth_token = "thetoken"'
+denies "and writes no key lines a binary from before keys would refuse" "$out" 'api_key'
 
 halftwilio=$(fixture \
 	'STRIPE_SECRET_KEY=sk_live_theconfiguredone' \
@@ -287,6 +302,25 @@ halftwilio=$(fixture \
 out=$(render "$halftwilio")
 says "a Twilio account SID alone is refused, naming what is missing" "$out" 'TWILIO_FROM'
 denies "and nothing was rendered" "$out" '[twilio]'
+
+nocred=$(fixture \
+	'STRIPE_SECRET_KEY=sk_live_theconfiguredone' \
+	'STRIPE_WEBHOOK_SECRET=whsec_theconfiguredone' \
+	'TWILIO_ACCOUNT_SID=ACtheaccount' \
+	'TWILIO_FROM=+15125550100')
+
+says "an account and a number with no credential is refused" "$(render "$nocred")" 'no credential'
+
+bothcred=$(fixture \
+	'STRIPE_SECRET_KEY=sk_live_theconfiguredone' \
+	'STRIPE_WEBHOOK_SECRET=whsec_theconfiguredone' \
+	'TWILIO_ACCOUNT_SID=ACtheaccount' \
+	'TWILIO_API_KEY=SKthekey' \
+	'TWILIO_API_SECRET=thesecret' \
+	'TWILIO_AUTH_TOKEN=thetoken' \
+	'TWILIO_FROM=+15125550100')
+
+says "a key and the token together is refused" "$(render "$bothcred")" 'empty TWILIO_AUTH_TOKEN'
 
 echo
 if [ "$fail" -gt 0 ]; then

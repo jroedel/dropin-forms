@@ -108,11 +108,11 @@ func (t *texts) placed(rider, driver person, free int) {
 // pair tells a rider and a driver about each other.
 func (t *texts) pair(rider, driver person, free int) {
 	driverAt, driverProblem := t.send(driver.Phone, fmt.Sprintf(
-		"%s: %s (%s) is riding with you. %s. Reply STOP to stop these texts.",
+		"%s: %s, %s, is riding with you. %s. Reply STOP to stop these texts.",
 		t.f.Title, named(rider), rider.Phone.National(), seatsLeft(free)))
 
 	riderAt, riderProblem := t.send(rider.Phone, fmt.Sprintf(
-		"%s: you are riding with %s (%s). Reply STOP to stop these texts.",
+		"%s: you are riding with %s, %s. Reply STOP to stop these texts.",
 		t.f.Title, named(driver), driver.Phone.National()))
 
 	t.record(rider, riderAt, driverAt, riderProblem, driverProblem)

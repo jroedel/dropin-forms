@@ -278,10 +278,10 @@ func TestRidersFillTheEarliestCarFirst(t *testing.T) {
 		t.Errorf("own way %d, waiting %d", plan.OwnWay, len(plan.Waiting))
 	}
 
-	if got := h.texts.to("5125550101"); len(got) != 1 || !strings.Contains(got[0], "Ana ((512) 555-0103) is riding with you") {
+	if got := h.texts.to("5125550101"); len(got) != 1 || !strings.Contains(got[0], "Ana, (512) 555-0103, is riding with you") {
 		t.Errorf("Damien was texted %q", got)
 	}
-	if got := h.texts.to("5125550103"); len(got) != 1 || !strings.Contains(got[0], "riding with Damien ((512) 555-0101)") {
+	if got := h.texts.to("5125550103"); len(got) != 1 || !strings.Contains(got[0], "riding with Damien, (512) 555-0101.") {
 		t.Errorf("Ana was texted %q", got)
 	}
 	if got := h.texts.to(organiserNumber); len(got) != 2 {

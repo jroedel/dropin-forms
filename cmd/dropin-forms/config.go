@@ -138,13 +138,21 @@ type config struct {
 	} `toml:"google"`
 
 	Twilio struct {
-		// AccountSID and AuthToken are the Twilio account the carpool texts
-		// drivers, riders and organisers from -- eumaeus's account, whose US
-		// sending registration (A2P 10DLC) is already done. Empty, with From,
+		// AccountSID is the Twilio account the carpool texts drivers, riders
+		// and organisers from -- eumaeus's account, whose US sending
+		// registration (A2P 10DLC) is already done. Everything here empty
 		// switches texting off: rides are still arranged and shown on the
 		// office page, and nobody is texted about them.
 		AccountSID string `toml:"account_sid"`
-		AuthToken  string `toml:"auth_token"`
+
+		// APIKey and APISecret are an API key made in that account for this
+		// service alone, SK… and its secret: the credential to use, because
+		// it can be revoked without touching eumaeus. AuthToken is the
+		// account's own token, the alternative -- shared with eumaeus, so
+		// changing it stops both. One or the other, not both.
+		APIKey    string `toml:"api_key"`
+		APISecret string `toml:"api_secret"`
+		AuthToken string `toml:"auth_token"`
 
 		// From is the sending number, in E.164: "+1…". It must be a number
 		// on that account registered for this use; an unregistered number is
@@ -357,16 +365,31 @@ func loadConfig(path string) (config, error) {
 		return config{}, fmt.Errorf("%s has a stripe.webhook_secret that does not begin with whsec_; that is the endpoint's signing secret, not the API key", path)
 	}
 
-	// The three Twilio settings stand or fall together. Half of them is a
-	// carpool that says it will text people and then fails on every message,
-	// and the first anybody would hear of it is a driver asking why nobody
-	// told them who they were picking up.
-	switch tw := cfg.Twilio; {
-	case tw.AccountSID == "" && tw.AuthToken == "" && tw.From == "":
+	// The Twilio settings stand or fall together. Half of them is a carpool
+	// that says it will text people and then fails on every message, and the
+	// first anybody would hear of it is a driver asking why nobody told them
+	// who they were picking up.
+	tw := cfg.Twilio
+	key := tw.APIKey != "" || tw.APISecret != ""
+
+	switch {
+	case tw.AccountSID == "" && tw.From == "" && !key && tw.AuthToken == "":
 		// Texting off.
 
-	case tw.AccountSID == "" || tw.AuthToken == "" || tw.From == "":
-		return config{}, fmt.Errorf("%s sets some of twilio.account_sid, twilio.auth_token and twilio.from but not all three; set all of them to send texts, or none to switch texting off", path)
+	case tw.AccountSID == "" || tw.From == "":
+		return config{}, fmt.Errorf("%s sets some of the twilio settings but not twilio.account_sid and twilio.from; set those with a credential to send texts, or leave every twilio setting empty to switch texting off", path)
+
+	case key && tw.AuthToken != "":
+		return config{}, fmt.Errorf("%s sets both a twilio.api_key and the twilio.auth_token; use the API key and leave auth_token empty", path)
+
+	case !key && tw.AuthToken == "":
+		return config{}, fmt.Errorf("%s has twilio.account_sid and twilio.from but no credential; set twilio.api_key and twilio.api_secret (an API key made for this service in the Twilio console), or twilio.auth_token", path)
+
+	case key && (tw.APISecret == "" || tw.APIKey == ""):
+		return config{}, fmt.Errorf("%s sets one of twilio.api_key and twilio.api_secret without the other; the key is SK... and its secret is shown once when it is made", path)
+
+	case key && !strings.HasPrefix(tw.APIKey, "SK"):
+		return config{}, fmt.Errorf("%s has a twilio.api_key that does not begin with SK; it is the SID of an API key from Account > API keys & tokens in the Twilio console", path)
 
 	case !strings.HasPrefix(tw.AccountSID, "AC"):
 		// Named because the console shows several SIDs that look alike, and
