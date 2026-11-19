@@ -12,12 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/carpool/carpoolbus"
 	"github.com/jroedel/dropin-forms/business/domain/carpool/stores/carpooldb"
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
-	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/business/types"
 	"github.com/jroedel/dropin-forms/business/types/phone"
 	"github.com/jroedel/dropin-forms/foundation/sqldb"
@@ -168,22 +166,11 @@ func (x *texter) to(number string) []string {
 	return out
 }
 
-// staff is one organiser with a mobile number, and one without.
-type staff struct{ organiser, other userbus.User }
+// office records what the organisers were told.
+type office struct{ notices []string }
 
-func (s staff) ForForm(context.Context, types.Slug) ([]accessbus.Grant, error) {
-	return []accessbus.Grant{
-		{UserID: s.organiser.ID, Role: accessbus.RoleAdmin},
-		{UserID: s.other.ID, Role: accessbus.RoleResults},
-	}, nil
-}
-
-func (s staff) ByID(_ context.Context, id types.ID) (userbus.User, error) {
-	if id == s.organiser.ID {
-		return s.organiser, nil
-	}
-
-	return s.other, nil
+func (o *office) Carpool(_ context.Context, _ formbus.Form, subject, says string) {
+	o.notices = append(o.notices, subject+"\n"+says)
 }
 
 type harness struct {
@@ -191,10 +178,9 @@ type harness struct {
 	f       formbus.Form
 	signups *signups
 	texts   *texter
+	office  *office
 	store   *carpooldb.Store
 }
-
-const organiserNumber = "5125550199"
 
 func newHarness(t *testing.T) harness {
 	t.Helper()
@@ -209,12 +195,7 @@ func newHarness(t *testing.T) harness {
 		t.Fatal(err)
 	}
 
-	h := harness{f: event(t), signups: &signups{}, texts: &texter{refuse: map[string]bool{}}, store: carpooldb.NewStore(db)}
-
-	people := staff{
-		organiser: userbus.User{ID: types.NewID(), Enabled: true, Mobile: phone.MustParse(organiserNumber)},
-		other:     userbus.User{ID: types.NewID(), Enabled: true, Mobile: phone.MustParse("5125550198")},
-	}
+	h := harness{f: event(t), signups: &signups{}, texts: &texter{refuse: map[string]bool{}}, office: &office{}, store: carpooldb.NewStore(db)}
 
 	h.b, err = carpoolbus.NewBusiness(carpoolbus.Config{
 		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -222,8 +203,7 @@ func newHarness(t *testing.T) harness {
 		Submissions: h.signups,
 		Forms:       forms{h.f},
 		Texter:      h.texts,
-		Grants:      people,
-		Accounts:    people,
+		Office:      h.office,
 		Now:         func() time.Time { return start },
 	})
 	if err != nil {
@@ -284,11 +264,10 @@ func TestRidersFillTheEarliestCarFirst(t *testing.T) {
 	if got := h.texts.to("5125550103"); len(got) != 1 || !strings.Contains(got[0], "riding with Damien, (512) 555-0101.") {
 		t.Errorf("Ana was texted %q", got)
 	}
-	if got := h.texts.to(organiserNumber); len(got) != 2 {
-		t.Errorf("the organiser was texted %q, want one per placement", got)
-	}
-	if got := h.texts.to("5125550198"); len(got) != 0 {
-		t.Errorf("somebody who only reads results was texted %q", got)
+	// The driver and the rider, and nobody else: a carpool that is working
+	// is not news to the organisers.
+	if len(h.texts.sent) != 4 || len(h.office.notices) != 0 {
+		t.Errorf("%d texts and %d notices to the office, want 4 and none", len(h.texts.sent), len(h.office.notices))
 	}
 
 	// Again: nothing has changed, so nothing is sent.
@@ -311,8 +290,8 @@ func TestARiderWaitsAndIsPlacedWhenADriverSignsUp(t *testing.T) {
 	if len(plan.Waiting) != 1 {
 		t.Fatalf("waiting = %d, want Ana", len(plan.Waiting))
 	}
-	if got := h.texts.to(organiserNumber); len(got) != 1 || !strings.Contains(got[0], "every car is full") {
-		t.Errorf("the organiser was texted %q, want once that Ana is waiting", got)
+	if got := h.office.notices; len(got) != 1 || !strings.Contains(got[0], "Ana needs a ride") || !strings.Contains(got[0], "Ana, (512) 555-0103") {
+		t.Errorf("the office was told %q, want once that Ana is waiting", got)
 	}
 
 	h.signups.add(t, h.f, "Damien", "5125550101", "drive", 2)
@@ -378,6 +357,39 @@ func TestADriverWhoLeavesSendsTheirRidersBackToWaiting(t *testing.T) {
 	}
 	if got := h.texts.to("5125550103"); len(got) != 2 || !strings.Contains(got[1], "can no longer take you") {
 		t.Errorf("Ana was texted %q", got)
+	}
+
+	// Stranded by her driver, with no other car: the office is told, though
+	// her ride is not new.
+	if got := h.office.notices; len(got) != 1 || !strings.Contains(got[0], "Ana needs a ride") {
+		t.Errorf("the office was told %q, want that Ana is stranded", got)
+	}
+
+	// And only once, not on every pass that finds her still waiting.
+	h.arrange(t)
+
+	if len(h.office.notices) != 1 {
+		t.Errorf("the office was told %d times", len(h.office.notices))
+	}
+}
+
+// A driver who drops out strands their whole car at once, and the office
+// hears about all of them in one message.
+func TestTheOfficeIsToldOnceAboutEverybodyStrandedInAPass(t *testing.T) {
+	h := newHarness(t)
+
+	damien := h.signups.add(t, h.f, "Damien", "5125550101", "drive", 2)
+	h.signups.add(t, h.f, "Ana", "5125550103", "need", 0)
+	h.signups.add(t, h.f, "Luis", "5125550104", "need", 0)
+	h.arrange(t)
+
+	h.signups.drop(damien)
+	h.arrange(t)
+
+	got := h.office.notices
+	if len(got) != 1 || !strings.Contains(got[0], "2 people need a ride") ||
+		!strings.Contains(got[0], "Ana") || !strings.Contains(got[0], "Luis") {
+		t.Errorf("the office was told %q, want one message naming Ana and Luis", got)
 	}
 }
 

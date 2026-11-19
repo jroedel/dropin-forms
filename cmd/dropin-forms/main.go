@@ -449,7 +449,7 @@ func run() error {
 		mc.Sheets = sheets
 	}
 
-	carpool, err := newCarpool(cfg, log, db, definitions, submissions, access, users)
+	carpool, err := newCarpool(cfg, log, db, definitions, submissions, notifier)
 	if err != nil {
 		return err
 	}

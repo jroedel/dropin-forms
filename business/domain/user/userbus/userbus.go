@@ -38,7 +38,6 @@ import (
 	"time"
 
 	"github.com/jroedel/dropin-forms/business/types"
-	"github.com/jroedel/dropin-forms/business/types/phone"
 )
 
 // How long each credential lasts.
@@ -80,13 +79,6 @@ type User struct {
 	Enabled   bool
 	CreatedAt time.Time
 	UpdatedAt time.Time
-
-	// Mobile is the number this person is texted on as an organiser of a
-	// form with a carpool, and the zero Number for most accounts, which are
-	// never texted. Set by the person on their own account page and by nobody
-	// else: a number is consent to be texted, and that is not somebody else's
-	// to give.
-	Mobile phone.Number
 }
 
 // Enabled is a positive field rather than a Disabled one, so that the zero
@@ -222,28 +214,6 @@ func (b *Business) ByID(ctx context.Context, id types.ID) (User, error) {
 // [ErrEmailTaken] is.
 func (b *Business) ByEmail(ctx context.Context, email types.Email) (User, error) {
 	return b.store.UserByEmail(ctx, email)
-}
-
-// SetMobile records the number this person is texted on, or clears it with
-// the zero Number.
-//
-// The person's own, and only theirs: the caller passes the signed-in account,
-// never one named in a request. There is deliberately no administrator's
-// version, because the number is the consent.
-func (b *Business) SetMobile(ctx context.Context, now time.Time, id types.ID, n phone.Number) (User, error) {
-	u, err := b.store.UserByID(ctx, id)
-	if err != nil {
-		return User{}, err
-	}
-
-	u.Mobile = n
-	u.UpdatedAt = now
-
-	if err := b.store.UpdateUser(ctx, u); err != nil {
-		return User{}, fmt.Errorf("saving the mobile number: %w", err)
-	}
-
-	return u, nil
 }
 
 // All returns every account, for the administration screen.

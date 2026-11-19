@@ -151,8 +151,9 @@ token_key = ""
 time_zone = ""
 
 [twilio]
-# Text messages for the carpool: the driver, the rider and the form's
-# organisers are each texted when somebody is put in a car. All empty switches
+# Text messages for the carpool: the driver and the rider are each texted
+# when somebody is put in a car. (The organisers are emailed, through [mail],
+# when somebody is left without one.) All empty switches
 # texting off -- rides are still arranged and shown on the office page, and
 # nobody is texted. Otherwise the account, the number, and one credential.
 #

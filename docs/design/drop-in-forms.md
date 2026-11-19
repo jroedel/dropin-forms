@@ -2720,13 +2720,7 @@ with no driver, so the organisers are told once that somebody is waiting
 rather than on every pass.
 
 **The texts** go to the driver ("Ana, (512) 555-0103, is riding with you. 1
-seat left."), the rider ("you are riding with Damien, ..."), and every account
-administering the form that has given a mobile number on its own account
-page and has not muted the form. Nobody can give that number for somebody
-else, since saving it is their agreement to be texted. So the account page is
-linked from every admin page's masthead, and the carpool page tells an
-organiser who would be texted but has no number. The first organiser to test
-it could not find the page: until then nothing linked to it. Through Twilio, on eumaeus's account and its
+seat left.") and the rider ("you are riding with Damien, ..."). Through Twilio, on eumaeus's account and its
 registered A2P 10DLC campaign, signed with an API key made for this service
 so it can be revoked without touching eumaeus (`[twilio]` in the
 configuration; off when empty, and then the cars are still arranged and
@@ -2735,6 +2729,19 @@ mail: no queue, no retry. What happened is kept on the ride -- sent, or why
 not, including "they replied STOP" for Twilio's error 21610 -- and the office
 page offers to send it again. Twilio handles STOP and HELP itself; there is
 no inbound webhook.
+
+**The organisers are emailed, not texted, and only when somebody is
+stuck.** They were texted at first, on every placement, at a mobile number
+each gave on their account page. The first live test showed what that is: a
+stream of "Ana is riding with Damien", which nobody acts on and the carpool
+page says better. The organisers also had to find an account page that nothing
+linked to, to give the number at all. Now `notifybus.Carpool` emails the same
+people who hear about the form's submissions, less anybody who turned the form
+off. It does so once per pass, listing every rider that pass left with no
+car: new and every car full, or taken out of a car with no other seat, which
+is how a driver dropping out strands a whole car. The account page's mobile
+number went with the texts, and the numbers given were cleared on the next
+start, because a number kept with no use is only a liability.
 
 **The office page** is `/forms/{slug}/carpool`: every car, who is in it, who
 is waiting, how many have their own ride, and a CSV. Reading it is behind

@@ -31,14 +31,12 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/jroedel/dropin-forms/app/sdk/mid"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
 	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/business/types"
-	"github.com/jroedel/dropin-forms/business/types/phone"
 	"github.com/jroedel/dropin-forms/foundation/mail"
 	"github.com/jroedel/dropin-forms/foundation/web"
 )
@@ -171,7 +169,6 @@ func Routes(mux *http.ServeMux, cfg Config, guard func(http.Handler) http.Handle
 
 	mux.Handle("GET /account", guard(http.HandlerFunc(a.account)))
 	mux.Handle("POST /account/backup-codes", guard(http.HandlerFunc(a.issueCodes)))
-	mux.Handle("POST /account/mobile", guard(http.HandlerFunc(a.saveMobile)))
 }
 
 // signInView is the data behind the address form.
@@ -529,14 +526,6 @@ type accountView struct {
 	Email string
 	Codes []string
 
-	// Mobile is the number this person is texted on, as they would read it
-	// aloud; MobileSaid is what they typed when it would not parse, put back
-	// so they can correct it; MobileWrong is why; MobileSaved says it took.
-	Mobile      string
-	MobileSaid  string
-	MobileWrong string
-	MobileSaved bool
-
 	KeysPage bool
 }
 
@@ -544,7 +533,6 @@ type accountView struct {
 func (a app) viewOf(u userbus.User) accountView {
 	return accountView{
 		Email:    u.Email.String(),
-		Mobile:   u.Mobile.National(),
 		KeysPage: a.cfg.KeysPage,
 	}
 }
@@ -561,51 +549,6 @@ func (a app) account(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.cfg.Render.Render(w, r, http.StatusOK, "account", a.viewOf(u))
-}
-
-// saveMobile sets or clears the number this person is texted on.
-//
-// Always the signed-in account's own: there is no field naming whose, because
-// a number is consent to be texted and nobody gives that for somebody else.
-func (a app) saveMobile(w http.ResponseWriter, r *http.Request) {
-	u, ok := mid.UserFrom(r.Context())
-	if !ok {
-		http.Redirect(w, r, "/signin", http.StatusSeeOther)
-
-		return
-	}
-
-	typed := strings.TrimSpace(r.PostFormValue("mobile"))
-
-	var n phone.Number
-
-	if typed != "" {
-		var err error
-
-		if n, err = phone.Parse(typed); err != nil {
-			view := a.viewOf(u)
-			view.MobileSaid = typed
-			view.MobileWrong = "That is not a number a text can be sent to. Write it with its area code, such as 512-555-0100, or with + and the country code."
-
-			a.cfg.Render.Render(w, r, http.StatusUnprocessableEntity, "account", view)
-
-			return
-		}
-	}
-
-	saved, err := a.cfg.Users.SetMobile(r.Context(), time.Now(), u.ID, n)
-	if err != nil {
-		a.cfg.Log.Error("a mobile number could not be saved",
-			"request_id", web.RequestIDFrom(r.Context()), "user_id", u.ID.String(), "error", err)
-		http.Error(w, "something went wrong at our end. Please try again shortly.", http.StatusInternalServerError)
-
-		return
-	}
-
-	view := a.viewOf(saved)
-	view.MobileSaved = true
-
-	a.cfg.Render.Render(w, r, http.StatusOK, "account", view)
 }
 
 func (a app) issueCodes(w http.ResponseWriter, r *http.Request) {

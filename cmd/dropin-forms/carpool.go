@@ -6,30 +6,27 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/carpool/carpoolbus"
 	"github.com/jroedel/dropin-forms/business/domain/carpool/stores/carpooldb"
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
-	"github.com/jroedel/dropin-forms/business/domain/notify/stores/notifydb"
+	"github.com/jroedel/dropin-forms/business/domain/notify/notifybus"
 	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
-	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/foundation/twilio"
 )
 
 // newCarpool builds the carpool domain. Always, unlike payments and sheets:
 // a carpool with texting off still arranges its cars and shows them to the
 // organisers, which is most of what it is for. Texting is the part that is
-// switched by the configuration.
+// switched by the configuration. The organisers are told about riders left
+// without a car by email, through the same notifier as submissions.
 func newCarpool(cfg config, log *slog.Logger, db *sql.DB, forms *formbus.Business, subs *submissionbus.Business,
-	access *accessbus.Business, users *userbus.Business) (*carpoolbus.Business, error) {
+	office *notifybus.Business) (*carpoolbus.Business, error) {
 	c := carpoolbus.Config{
 		Log:         log,
 		Store:       carpooldb.NewStore(db),
 		Submissions: subs,
 		Forms:       forms,
-		Grants:      access,
-		Accounts:    users,
-		Mutes:       notifydb.NewStore(db),
+		Office:      office,
 	}
 
 	// Assigned only when there is one, so that a nil *twilio.Sender is not

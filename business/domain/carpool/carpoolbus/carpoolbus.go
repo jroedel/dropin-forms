@@ -28,12 +28,20 @@
 //
 // # The texts
 //
-// Each placement texts the driver, the rider and the form's organisers who
-// have given a mobile number on their account. Best effort, as email is in
+// Each placement texts the driver and the rider. Best effort, as email is in
 // notifybus: a text that does not go is recorded on the ride, shown on the
 // office page, and not retried by itself -- a retried text that did in fact go
 // is a second copy on somebody's phone. The office page offers to send it
 // again.
+//
+// # The organisers are emailed, and only when somebody is stuck
+//
+// They were texted about every placement once, and a carpool that is working
+// is a stream of those: nobody acts on "Ana is riding with Damien", and the
+// carpool page says it better. What an organiser does have to act on is a
+// rider with no car -- every car full, or their driver gone and no other seat
+// -- so that is the one thing they are told, by email to the same people who
+// hear about submissions, once per pass and listing everybody stuck in it.
 package carpoolbus
 
 import (
@@ -46,12 +54,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
-	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/business/types"
-	"github.com/jroedel/dropin-forms/business/types/phone"
 )
 
 // The errors this package returns.
@@ -137,36 +142,24 @@ type Texter interface {
 	Send(ctx context.Context, to, body string) (string, error)
 }
 
-// Grants, Accounts and Mutes find a form's organisers' numbers: who
-// administers it, which of them gave a mobile number, and who turned its
-// messages off. The same three notifybus reads for email, for its reasons.
-type Grants interface {
-	ForForm(ctx context.Context, form types.Slug) ([]accessbus.Grant, error)
+// Office tells a form's organisers something about its carpool, by email.
+// notifybus satisfies it, and decides who they are: the same people who hear
+// about its submissions, less anybody who has turned the form off.
+type Office interface {
+	Carpool(ctx context.Context, f formbus.Form, subject, says string)
 }
 
-// Accounts turns a grant's account into a number.
-type Accounts interface {
-	ByID(ctx context.Context, id types.ID) (userbus.User, error)
-}
-
-// Mutes is who has turned a form's messages off.
-type Mutes interface {
-	MutedForForm(ctx context.Context, form types.Slug) ([]types.ID, error)
-}
-
-// Config is what this package needs. Texter, Grants, Accounts and Mutes are
-// optional; without the first nothing is texted, and without the second or
-// third no organiser is.
+// Config is what this package needs. Texter and Office are optional: without
+// the first nobody is texted, and without the second no organiser is told
+// anything, and in either case the cars are still arranged and shown.
 type Config struct {
 	Log         *slog.Logger
 	Store       Storer
 	Submissions Submissions
 	Forms       Forms
 
-	Texter   Texter
-	Grants   Grants
-	Accounts Accounts
-	Mutes    Mutes
+	Texter Texter
+	Office Office
 
 	// Now is the clock. Nil means time.Now.
 	Now func() time.Time
@@ -358,6 +351,11 @@ func (b *Business) arrange(ctx context.Context, f formbus.Form) error {
 	ride := make(map[types.ID]Ride, len(rides))
 	inCar := make(map[types.ID][]Ride)
 
+	// dropped is the riders taken out of a car on this pass. One who finds no
+	// other seat is stuck just as a new rider with no car is, though their
+	// row is not new.
+	dropped := make(map[types.ID]bool)
+
 	// Undo what no longer holds. A rider who has gone, or no longer needs a
 	// ride, is forgotten and their driver told; a rider whose car has gone
 	// back to waiting, and is told.
@@ -383,6 +381,7 @@ func (b *Business) arrange(ctx context.Context, f formbus.Form) error {
 				}
 
 				t.dropped(rider, everyone[r.Driver])
+				dropped[r.Rider] = true
 
 				r.Driver = types.ID{}
 			}
@@ -414,6 +413,7 @@ func (b *Business) arrange(ctx context.Context, f formbus.Form) error {
 			}
 
 			t.dropped(everyone[r.Rider], everyone[driver])
+			dropped[r.Rider] = true
 
 			r.Driver = types.ID{}
 			ride[r.Rider] = r
@@ -462,10 +462,12 @@ func (b *Business) arrange(ctx context.Context, f formbus.Form) error {
 			return fmt.Errorf("recording a rider as waiting: %w", err)
 		}
 
-		if fresh {
+		if fresh || dropped[rider.sub.ID] {
 			t.waiting(rider)
 		}
 	}
+
+	t.tellOffice()
 
 	return nil
 }
@@ -576,55 +578,4 @@ func nameOf(r Ride, p person, here bool) string {
 	}
 
 	return "A rider"
-}
-
-// organisers is the numbers of the people who administer this form and asked
-// to be texted: a mobile number on their account, enabled, not muted.
-func (b *Business) organisers(ctx context.Context, form types.Slug) []phone.Number {
-	if b.cfg.Grants == nil || b.cfg.Accounts == nil {
-		return nil
-	}
-
-	grants, err := b.cfg.Grants.ForForm(ctx, form)
-	if err != nil {
-		b.cfg.Log.Error("the organisers of a carpool could not be read, so they were not texted",
-			"form", form.String(), "error", err)
-
-		return nil
-	}
-
-	quiet := map[types.ID]bool{}
-
-	if b.cfg.Mutes != nil {
-		muted, err := b.cfg.Mutes.MutedForForm(ctx, form)
-		if err != nil {
-			// Not texting somebody who asked for silence matters more than
-			// texting everybody else, so a failure here texts nobody.
-			b.cfg.Log.Error("who has turned a form's messages off could not be read, so no organiser was texted",
-				"form", form.String(), "error", err)
-
-			return nil
-		}
-
-		for _, id := range muted {
-			quiet[id] = true
-		}
-	}
-
-	var out []phone.Number
-
-	for _, g := range grants {
-		if !g.Role.Includes(accessbus.RoleAdmin) || quiet[g.UserID] {
-			continue
-		}
-
-		u, err := b.cfg.Accounts.ByID(ctx, g.UserID)
-		if err != nil || !u.Enabled || u.Mobile.IsZero() || slices.Contains(out, u.Mobile) {
-			continue
-		}
-
-		out = append(out, u.Mobile)
-	}
-
-	return out
 }
