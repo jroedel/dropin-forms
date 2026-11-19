@@ -67,6 +67,40 @@ func (s *signups) ByForm(context.Context, types.Slug) ([]submissionbus.Submissio
 	return slices.Clone(s.subs), nil
 }
 
+func (s *signups) ByID(_ context.Context, id types.ID) (submissionbus.Submission, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, x := range s.subs {
+		if x.ID == id {
+			return x, nil
+		}
+	}
+
+	return submissionbus.Submission{}, submissionbus.ErrNotFound
+}
+
+// answer changes somebody's carpool answer at a given time, as the link to
+// change one's answers would.
+func (s *signups) answer(id types.ID, choice string, at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := range s.subs {
+		if s.subs[i].ID != id {
+			continue
+		}
+
+		for j := range s.subs[i].Answers.Fields {
+			if s.subs[i].Answers.Fields[j].Name == "ride" {
+				s.subs[i].Answers.Fields[j].Values = []string{choice}
+			}
+		}
+
+		s.subs[i].UpdatedAt = at
+	}
+}
+
 // add signs somebody up, a minute after the one before.
 func (s *signups) add(t *testing.T, f formbus.Form, name, number, choice string, seats int) types.ID {
 	t.Helper()
@@ -88,6 +122,7 @@ func (s *signups) add(t *testing.T, f formbus.Form, name, number, choice string,
 		ID: types.NewID(), Form: f.ID, Status: submissionbus.StatusReceived, Answers: ans,
 		CreatedAt: start.Add(time.Duration(len(s.subs)) * time.Minute),
 	}
+	sub.UpdatedAt = sub.CreatedAt
 	s.subs = append(s.subs, sub)
 
 	return sub.ID
@@ -122,6 +157,14 @@ func (s *signups) seats(t *testing.T, f formbus.Form, id types.ID, n int) {
 type forms struct{ f formbus.Form }
 
 func (x forms) All() []formbus.Form { return []formbus.Form{x.f} }
+
+func (x forms) ByID(slug types.Slug) (formbus.Form, error) {
+	if slug != x.f.ID {
+		return formbus.Form{}, formbus.ErrNotFound
+	}
+
+	return x.f, nil
+}
 
 // texter records what would have been sent. A number in refuse is answered
 // as Twilio answers somebody who replied STOP.
@@ -204,6 +247,8 @@ func newHarness(t *testing.T) harness {
 		Forms:       forms{h.f},
 		Texter:      h.texts,
 		Office:      h.office,
+		RideKey:     rideKey(t),
+		BaseURL:     "https://f.schoenstatt.test",
 		Now:         func() time.Time { return start },
 	})
 	if err != nil {

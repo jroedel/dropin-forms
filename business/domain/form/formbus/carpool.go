@@ -81,6 +81,14 @@ func (f Form) CarpoolOf() (Field, bool) {
 	return f.Fields[i], true
 }
 
+// HasCarpool reports whether the form has a carpool, for a template, which
+// cannot take CarpoolOf's two results.
+func (f Form) HasCarpool() bool {
+	_, ok := f.CarpoolOf()
+
+	return ok
+}
+
 // checkCarpool is the rules of a carpool field, and the refusal of a
 // carpool's settings on any other kind.
 func (f *Form) checkCarpool(fld *Field, where string, at int) []string {

@@ -187,6 +187,10 @@ type Config struct {
 	// says: no link is offered, and any presented is refused.
 	AnswerKey submissionbus.AnswerKey
 
+	// Rides is the carpool, for each driver's and rider's own ride page and
+	// the link to it. Optional: without it there are no ride pages.
+	Rides Rides
+
 	// Now is the clock, injectable so that the open and close windows can be
 	// tested without waiting for a date to pass -- and so that the tests
 	// against the real feast definition do not start failing the day after
@@ -384,6 +388,13 @@ func Routes(mux *http.ServeMux, cfg Config, writes func(http.Handler) http.Handl
 	// able to start a payment. The POST holds the place for the length of a
 	// payment page and makes one, so it is held to the submit allowance, the
 	// one that makes card testing expensive.
+	// Somebody's own ride page, through the link in their texts. The GET
+	// only shows it. The POST changes their ride and may text a driver, so
+	// it is held to the submit allowance, which also makes guessing at
+	// tokens slow.
+	mux.Handle("GET /r/{token}", reads(http.HandlerFunc(a.ride)))
+	mux.Handle("POST /r/{token}", submits(writes(http.HandlerFunc(a.changeRide))))
+
 	mux.Handle("GET /f/{slug}/pay", reads(http.HandlerFunc(a.payPage)))
 	mux.Handle("POST /f/{slug}/pay", submits(writes(http.HandlerFunc(a.pay))))
 
@@ -721,6 +732,7 @@ func (a app) submit(w http.ResponseWriter, r *http.Request) {
 		Total:        totalOf(sub.Answers, f.Currency),
 		ChangeURL:    a.changeURL(f, sub),
 		ChangeUntil:  untilWords(f.ChangeableUntil),
+		RideURL:      a.rideURL(f, sub),
 	}
 
 	if sub.Status == submissionbus.StatusWaiting {
@@ -928,6 +940,11 @@ type doneView struct {
 	// certainly looking, and a mail can go to a spam folder.
 	ChangeURL   string
 	ChangeUntil string
+
+	// RideURL is the link to their ride page, on a form with a carpool, for
+	// every choice -- somebody with their own ride may still need to say
+	// they are not coming.
+	RideURL string
 
 	// Changed and Unchanged are the outcome of following that link and
 	// saving: the answers were replaced, or nothing in them was different.

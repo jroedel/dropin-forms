@@ -48,6 +48,17 @@ Every email we send you has this link, or keep it from here:</p>
 </div>
 {{end}}
 
+{{with .RideURL}}
+{{/* The ride page, for everybody on a form with a carpool: a driver or rider
+     is texted the link too, but somebody with their own way there is not,
+     and this is where they would tell us they can't come. */}}
+<div class="change-link">
+<p>Your ride page shows your car once you're in one, lets you change your
+ride, and is where to tell us if you can't come. Keep it:</p>
+<p><a href="{{.}}" target="_top">My ride</a></p>
+</div>
+{{end}}
+
 {{if .Lines}}
 <table class="receipt">
 <tbody>

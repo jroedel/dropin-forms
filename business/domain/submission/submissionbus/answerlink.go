@@ -92,6 +92,25 @@ func ParseAnswerKey(secret string) (AnswerKey, error) {
 // carries a link and nobody can change an answer.
 func (k AnswerKey) Zero() bool { return len(k.k) == 0 }
 
+// Derive is a key for another kind of link to one submission, under a label
+// of its own, for a package that signs one: carpoolbus's ride link. The pay
+// link derives its key the same way, inside this package. Nil for the zero
+// key, so a deployment with no secret has no such links either.
+//
+// Derived from this key rather than configured, for the reason the pay link
+// gives: anything that can send somebody a link to their answers can send
+// them a link to their ride, and a second secret would be one more thing to
+// set up and rotate together.
+func (k AnswerKey) Derive(label string) []byte {
+	if k.Zero() {
+		return nil
+	}
+
+	sum := sha256.Sum256(append([]byte(label+"\x00"), k.k...))
+
+	return sum[:]
+}
+
 // MintAnswerLink issues the token for one submission on one form.
 //
 // Deterministic: the same submission always gets the same token, so every

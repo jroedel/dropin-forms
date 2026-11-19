@@ -11,6 +11,7 @@ import (
 
 	"github.com/jroedel/dropin-forms/app/domain/embedapp"
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
+	"github.com/jroedel/dropin-forms/business/domain/carpool/carpoolbus"
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
 	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
@@ -334,6 +335,54 @@ func TestTheCarpoolPageShowsTheCarsAndAnAdminMovesARider(t *testing.T) {
 	// The results page links to it.
 	if !strings.Contains(a.get(t, "/forms/youth-retreat/submissions", readerCookie).Body.String(), "/forms/youth-retreat/carpool") {
 		t.Error("the results page does not link to the carpool")
+	}
+}
+
+// The results page shows the cars beneath the answers, with phone numbers,
+// to anybody who can read results; counts who is coming without those who
+// said they are not; and marks them in the list.
+func TestTheResultsShowTheCarpoolBeneathTheAnswers(t *testing.T) {
+	a := newAdmin(t, "")
+	f := carpoolForm(t, a)
+
+	rideSignUp(t, a, f, "Damien", "5125550101", "drive", "2")
+	rideSignUp(t, a, f, "Ana", "5125550103", "need", "")
+	luis := rideSignUp(t, a, f, "Luis", "5125550104", "need", "")
+	rideSignUp(t, a, f, "Rosa", "5125550105", "have", "")
+
+	if err := a.carpool.Arrange(t.Context(), f); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.carpool.Say(t.Context(), f, luis.ID, carpoolbus.Out, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	u, err := a.users.Create(t.Context(), time.Now(), userbus.NewUser{Email: mustEmail(t, "reader@schoenstatt.test"), Name: "Reader"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := a.access.Grant(t.Context(), time.Now(), types.ID{}, u.ID, f.ID, accessbus.RoleResults); err != nil {
+		t.Fatal(err)
+	}
+
+	page := a.get(t, "/forms/youth-retreat/submissions", signedIn(t, a, u)).Body.String()
+
+	for _, want := range []string{
+		`<h2 id="carpool">Carpool</h2>`,
+		"<strong>3 coming</strong> &middot; 1 driving &middot;\n1 riding &middot; 1 own way &middot;\n1 not coming",
+		"<strong>Damien</strong>, (512) 555-0101",
+		"<th scope=\"row\">Ana</th><td class=\"nowrap\">(512) 555-0103</td>",
+		"<strong>Not coming</strong> (said on their ride page)",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the results page does not show %q:\n%s", want, short(page))
+		}
+	}
+
+	if strings.Contains(page, "/carpool/move") {
+		t.Error("the results page offers to move somebody")
 	}
 }
 

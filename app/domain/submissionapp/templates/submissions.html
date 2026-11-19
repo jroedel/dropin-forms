@@ -185,7 +185,7 @@ the totals above, the download, or the spreadsheet.</p>
      or the table would be as wide as the longest comment anybody left. */}}
 {{range .Cells}}<td{{if lt (len .) 25}} class="nowrap"{{end}}>{{.}}</td>{{end}}
 <td class="figure">{{.Total}}</td>
-<td>{{.Status}}</td>
+<td>{{.Status}}{{if .NotComing}}<br><strong>Not coming</strong> (said on their ride page){{end}}</td>
 </tr>
 {{end}}
 </tbody>
@@ -195,5 +195,40 @@ the totals above, the download, or the spreadsheet.</p>
 <p>Nothing is hidden.</p>
 {{else}}
 <p>Nothing has been submitted yet.</p>
+{{end}}
+
+{{with .Rides}}
+{{/* The cars, beneath the answers, for whoever is counting heads and
+     phoning drivers on the day. Moving somebody is on the carpool page. */}}
+<h2 id="carpool">Carpool</h2>
+<p><strong>{{.Coming}} coming</strong> &middot; {{.Driving}} driving &middot;
+{{.Riding}} riding &middot; {{.OwnWay}} own way{{if .NotComing}} &middot;
+{{.NotComing}} not coming{{end}}</p>
+
+{{range .Cars}}
+<table class="listing">
+<caption><strong>{{.Driver.Name}}</strong>{{with .Driver.Phone}}, {{.}}{{end}} &middot;
+{{len .Riders}} of {{.Seats}} {{if eq .Seats 1}}seat{{else}}seats{{end}} taken</caption>
+{{if .Riders}}
+<tbody>
+{{range .Riders}}<tr><th scope="row">{{.Name}}</th><td class="nowrap">{{.Phone}}</td></tr>
+{{end}}
+</tbody>
+{{end}}
+</table>
+{{else}}
+<p>Nobody has offered to drive yet.</p>
+{{end}}
+
+{{if .Waiting}}
+<h3>Waiting for a car</h3>
+<table class="listing">
+<tbody>
+{{range .Waiting}}<tr><th scope="row">{{.Name}}</th><td class="nowrap">{{.Phone}}</td></tr>
+{{end}}
+</tbody>
+</table>
+{{end}}
+{{if $.Carpool}}<p><a href="/forms/{{$.FormID}}/carpool">Move somebody, or download the cars</a></p>{{end}}
 {{end}}
 {{end}}

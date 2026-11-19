@@ -485,6 +485,10 @@ func Admin(cfg Config) (http.Handler, error) {
 		sc.Notifications = cfg.Notify
 	}
 
+	if cfg.Carpool != nil {
+		sc.Carpool = cfg.Carpool
+	}
+
 	// The drafts an account administers, listed on the page it lands on after
 	// signing in. Only where the builder is mounted, because that is the only
 	// thing that makes a draft: an installation serving forms from TOML alone

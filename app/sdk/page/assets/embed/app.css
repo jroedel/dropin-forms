@@ -595,3 +595,76 @@ a.button:hover { background: var(--accent-deep); }
   padding: 1.25rem;
   max-width: 40rem;
 }
+
+/* --- the ride page -------------------------------------------------------- */
+
+/* A page of its own, opened from a text, never inside somebody's website.
+   Each change is a small form of its own, so they are spaced as separate
+   things to do rather than one long form. */
+.ride h2 {
+  margin: 1.25rem 0 .5rem;
+  font-size: 1.15rem;
+}
+
+.ride h3 {
+  margin: 1rem 0 .4rem;
+  font-size: 1rem;
+}
+
+.ride-action {
+  margin: .9rem 0 0;
+}
+
+.riders,
+.room {
+  margin: .5rem 0;
+  padding: 0;
+  list-style: none;
+}
+
+.riders li,
+.room li {
+  padding: .5rem 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.room form {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  flex-wrap: wrap;
+}
+
+.reach {
+  margin-left: .35rem;
+  white-space: nowrap;
+}
+
+.outcome-line {
+  margin: 0 0 1rem;
+  padding: .6rem .9rem;
+  border: 1px solid var(--right);
+  border-left-width: 4px;
+  border-radius: 4px;
+  background: var(--right-tint);
+  color: var(--right);
+}
+
+.outcome-line p { margin: 0; }
+
+.not-coming {
+  margin: 1.5rem 0 0;
+  padding: .75rem 0 0;
+  border-top: 1px solid var(--rule);
+}
+
+.not-coming summary {
+  cursor: pointer;
+  color: var(--wrong);
+  font-weight: 600;
+}
+
+.not-coming p {
+  margin: .5rem 0;
+}

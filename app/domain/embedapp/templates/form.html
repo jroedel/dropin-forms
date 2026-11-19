@@ -186,7 +186,7 @@ you.</p>
      second answer, and this is the way to their first one. _top, because it
      is a page of its own rather than something for the frame. */}}
 {{if and .LinkAgain (not .Mine)}}
-<p class="note">Already answered? <a href="{{.LinkAgain}}" target="_top">Get the link to change your answers</a>.</p>
+<p class="note">Already answered? <a href="{{.LinkAgain}}" target="_top">Get your link{{if .Form.HasCarpool}} to your ride page{{else}} to change your answers{{end}}</a>.</p>
 {{end}}
 
 {{/* Inside #dropin-root, so the height the script posts to the parent

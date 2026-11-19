@@ -14,6 +14,7 @@
 <p><strong>{{len .Cars}}</strong> {{if eq (len .Cars) 1}}car{{else}}cars{{end}}</p>
 <p><strong>{{len .Waiting}}</strong> waiting for a car</p>
 <p><strong>{{.OwnWay}}</strong> with their own ride</p>
+{{if .NotComing}}<p><strong>{{.NotComing}}</strong> not coming</p>{{end}}
 </div>
 
 <p class="aside">Everybody who needs a ride is put in the car of the earliest
@@ -49,13 +50,14 @@ texted</strong>: call or message them yourself.{{end}}</p>
 {{range $car := .Cars}}
 <table class="detail">
 <caption><strong>{{$car.Driver}}</strong>, {{$car.Phone}} &middot;
-{{len $car.Riders}} of {{$car.Seats}} {{if eq $car.Seats 1}}seat{{else}}seats{{end}} taken</caption>
+{{len $car.Riders}} of {{$car.Seats}} {{if eq $car.Seats 1}}seat{{else}}seats{{end}} taken
+{{- if $car.Said}} <span class="aside">(seats changed on their ride page)</span>{{end}}</caption>
 {{if $car.Riders}}
 <thead><tr><th scope="col">Rider</th><th scope="col">Mobile</th><th scope="col">Texts</th>{{if $.CanMove}}<th scope="col">Move to</th>{{end}}</tr></thead>
 <tbody>
 {{range $car.Riders}}
 <tr>
-<th scope="row">{{.Name}}</th>
+<th scope="row">{{.Name}}{{if .Said}} <span class="aside">(chose on their ride page)</span>{{end}}</th>
 <td>{{.Phone}}</td>
 <td>{{if .Problem}}<span class="problem">{{.Problem}}</span>
   {{if $.CanMove}}<form method="post" action="/forms/{{$.FormID}}/carpool/retext">

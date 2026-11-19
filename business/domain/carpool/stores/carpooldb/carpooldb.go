@@ -33,6 +33,7 @@ func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 var Expected = sqldb.Expected{
 	"rides": {"rider_id", "form_slug", "driver_id", "name", "since", "placed_at", "placed_by",
 		"rider_texted_at", "driver_texted_at", "problem"},
+	"carpool_choices": {"sub_id", "form_slug", "choice", "seats", "at"},
 }
 
 // Init creates this domain's table. Idempotent, and run at every startup.
@@ -56,6 +57,19 @@ CREATE TABLE IF NOT EXISTS rides (
 
 CREATE INDEX IF NOT EXISTS rides_form ON rides (form_slug);
 CREATE INDEX IF NOT EXISTS rides_driver ON rides (driver_id);
+
+-- What somebody said on their own ride page, which takes the place of their
+-- carpool answer until they change their answers again. One row per
+-- submission: the latest word is the only one that counts.
+CREATE TABLE IF NOT EXISTS carpool_choices (
+    sub_id     TEXT    PRIMARY KEY,
+    form_slug  TEXT    NOT NULL,
+    choice     TEXT    NOT NULL,
+    seats      INTEGER NOT NULL DEFAULT 0,
+    at         INTEGER NOT NULL
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS carpool_choices_form ON carpool_choices (form_slug);
 `
 
 	if _, err := db.ExecContext(ctx, schema); err != nil {
@@ -238,4 +252,55 @@ func timeOf(ms int64) time.Time {
 	}
 
 	return time.UnixMilli(ms).UTC()
+}
+
+// Choices lists what the people on a form said on their ride pages.
+func (s *Store) Choices(ctx context.Context, form types.Slug) ([]carpoolbus.Choice, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT sub_id, choice, seats, at FROM carpool_choices WHERE form_slug = ?`, form.String())
+	if err != nil {
+		return nil, fmt.Errorf("reading the carpool choices: %w", err)
+	}
+	defer rows.Close()
+
+	var out []carpoolbus.Choice
+
+	for rows.Next() {
+		var (
+			c   carpoolbus.Choice
+			sub string
+			at  int64
+		)
+
+		if err := rows.Scan(&sub, &c.Choice, &c.Seats, &at); err != nil {
+			return nil, fmt.Errorf("reading a carpool choice: %w", err)
+		}
+
+		if c.Sub, err = types.ParseID(sub); err != nil {
+			return nil, fmt.Errorf("a stored carpool choice has a bad submission: %w", err)
+		}
+
+		c.Form, c.At = form, timeOf(at)
+		out = append(out, c)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading the carpool choices: %w", err)
+	}
+
+	return out, nil
+}
+
+// SetChoice records what somebody said on their ride page, in place of
+// anything they said there before.
+func (s *Store) SetChoice(ctx context.Context, c carpoolbus.Choice) error {
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO carpool_choices (sub_id, form_slug, choice, seats, at) VALUES (?, ?, ?, ?, ?)
+ON CONFLICT (sub_id) DO UPDATE SET choice = excluded.choice, seats = excluded.seats, at = excluded.at`,
+		c.Sub.String(), c.Form.String(), c.Choice, c.Seats, msOf(c.At))
+	if err != nil {
+		return fmt.Errorf("recording a carpool choice: %w", err)
+	}
+
+	return nil
 }

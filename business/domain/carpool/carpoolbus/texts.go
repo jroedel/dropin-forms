@@ -100,6 +100,16 @@ func (t *texts) pair(rider, driver person, free int) {
 	t.record(rider, riderAt, driverAt, riderProblem, driverProblem)
 }
 
+// joined is a rider who chose this driver's car on their ride page. Only the
+// driver is texted: the rider is looking at the page that did it.
+func (t *texts) joined(rider, driver person, free int) {
+	driverAt, problem := t.send(driver.Phone, fmt.Sprintf(
+		"%s: %s, %s, is riding with you. %s. Reply STOP to stop these texts.",
+		t.f.Title, named(rider), rider.Phone.National(), seatsLeft(free)))
+
+	t.record(rider, time.Time{}, driverAt, problem)
+}
+
 // left is a rider who no longer needs the seat they had.
 func (t *texts) left(driver person, rider string) {
 	t.send(driver.Phone, fmt.Sprintf("%s: %s is no longer riding with you.", t.f.Title, rider))

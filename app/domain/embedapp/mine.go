@@ -4,11 +4,13 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/domain/submission/submissionbus"
 	"github.com/jroedel/dropin-forms/business/types"
+	"github.com/jroedel/dropin-forms/business/types/phone"
 	"github.com/jroedel/dropin-forms/foundation/web"
 )
 
@@ -308,18 +310,25 @@ type linkView struct {
 	Form  formbus.Form
 	Grant string
 
-	// Email is what was typed, back in the box; Problem is what was wrong
-	// with it, or with the page.
+	// ByEmail and ByPhone are the ways this form can send it: the link to
+	// change one's answers by email, on a form that takes changes, and the
+	// ride page by text, on a form with a carpool. Either or both.
+	ByEmail bool
+	ByPhone bool
+
+	// Email and Phone are what was typed, back in the boxes; Problem is what
+	// was wrong with it, or with the page.
 	Email   string
+	Phone   string
 	Problem string
 
 	// Sent is the outcome, which reads the same whether anything was sent.
 	Sent bool
 }
 
-// lostLink asks for an address to send the link to.
+// lostLink asks for an address, or a mobile number, to send the link to.
 func (a app) lostLink(w http.ResponseWriter, r *http.Request) {
-	f, ok := a.changeable(w, r)
+	f, ok := a.linkable(w, r)
 	if !ok {
 		return
 	}
@@ -327,21 +336,21 @@ func (a app) lostLink(w http.ResponseWriter, r *http.Request) {
 	a.renderLink(w, r, http.StatusOK, f, linkView{})
 }
 
-// sendLink mails the links for an address, if it has any, and says the same
-// thing either way.
+// sendLink sends the links for an address or a number, if it has any, and
+// says the same thing either way.
 //
-// The same thing, because the page takes any address anybody types: "we have
-// no answers from that address" would tell a stranger who has and has not
+// The same thing, because the page takes anything anybody types: "we have no
+// answers from that address" would tell a stranger who has and has not
 // answered, which for this form is who is coming to an ordination. The mail
-// goes only to the address typed, so asking for somebody else's link sends it
-// to them and not to whoever asked.
+// goes only to the address typed, and the text only to the number, so asking
+// for somebody else's link sends it to them and not to whoever asked.
 //
 // The grant is checked and not spent. Spending it would need a write per
 // request, and what it would prevent -- the same address asked for twice --
 // costs one more message to somebody who has answered, which the submit
-// allowance already bounds.
+// allowance already bounds, and carpoolbus bounds texts to one number further.
 func (a app) sendLink(w http.ResponseWriter, r *http.Request) {
-	f, ok := a.changeable(w, r)
+	f, ok := a.linkable(w, r)
 	if !ok {
 		return
 	}
@@ -354,43 +363,88 @@ func (a app) sendLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	typed := r.PostFormValue("email")
+	typed := linkView{
+		Email: strings.TrimSpace(r.PostFormValue("email")),
+		Phone: strings.TrimSpace(r.PostFormValue("phone")),
+	}
 
 	if _, err := formbus.Redeem(a.cfg.GrantKey, r.PostFormValue(grantField), f, a.now()); err != nil {
-		a.renderLink(w, r, http.StatusOK, f, linkView{
-			Email:   typed,
-			Problem: "This page had been open a while, so we have refreshed it. Please send it again.",
-		})
+		typed.Problem = "This page had been open a while, so we have refreshed it. Please send it again."
+		a.renderLink(w, r, http.StatusOK, f, typed)
 
 		return
 	}
 
-	email, err := types.ParseEmail(typed)
-	if err != nil {
-		a.renderLink(w, r, http.StatusUnprocessableEntity, f, linkView{
-			Email:   typed,
-			Problem: "That does not look like an email address. Please check it and try again.",
-		})
+	var (
+		email  types.Email
+		number phone.Number
+		err    error
+	)
+
+	if typed.Email != "" && a.byEmail(f) {
+		if email, err = types.ParseEmail(typed.Email); err != nil {
+			typed.Problem = "That does not look like an email address. Please check it and try again."
+			a.renderLink(w, r, http.StatusUnprocessableEntity, f, typed)
+
+			return
+		}
+	}
+
+	if typed.Phone != "" && a.byPhone(f) {
+		if number, err = phone.Parse(typed.Phone); err != nil {
+			typed.Problem = "That does not look like a mobile number. Write it with its area code, such as 512-555-0100."
+			a.renderLink(w, r, http.StatusUnprocessableEntity, f, typed)
+
+			return
+		}
+	}
+
+	if email.String() == "" && number.IsZero() {
+		typed.Problem = "Please fill in where to send it."
+		a.renderLink(w, r, http.StatusUnprocessableEntity, f, typed)
 
 		return
 	}
 
-	if a.cfg.Notify != nil {
+	if email.String() != "" && a.cfg.Notify != nil {
 		a.cfg.Notify.SendLinks(r.Context(), f.ID, email)
 	}
 
-	a.renderLink(w, r, http.StatusOK, f, linkView{Email: email.String(), Sent: true})
+	if !number.IsZero() {
+		a.cfg.Rides.SendLinks(r.Context(), f, number)
+	}
+
+	// Echoed as understood rather than as typed, so the page is the same
+	// for every way of writing the same address or number.
+	a.renderLink(w, r, http.StatusOK, f, linkView{Email: email.String(), Phone: number.National(), Sent: true})
 }
 
-// changeable resolves the form and answers the page itself when it does not
-// take changes now.
-func (a app) changeable(w http.ResponseWriter, r *http.Request) (formbus.Form, bool) {
+// byEmail reports whether this form sends the link to change one's answers,
+// by email.
+func (a app) byEmail(f formbus.Form) bool {
+	return f.Changeable(a.now()) && !a.cfg.AnswerKey.Zero()
+}
+
+// byPhone reports whether this form texts the link to one's ride page.
+func (a app) byPhone(f formbus.Form) bool {
+	if a.cfg.Rides == nil || !a.cfg.Rides.TextsLinks() {
+		return false
+	}
+
+	_, ok := f.CarpoolOf()
+
+	return ok
+}
+
+// linkable resolves the form and answers the page itself when it has no link
+// of either kind to send.
+func (a app) linkable(w http.ResponseWriter, r *http.Request) (formbus.Form, bool) {
 	f, ok := a.lookup(w, r)
 	if !ok {
 		return formbus.Form{}, false
 	}
 
-	if !f.Changeable(a.now()) || a.cfg.AnswerKey.Zero() {
+	if !a.byEmail(f) && !a.byPhone(f) {
 		a.unreachable(w, r, http.StatusOK, f, true)
 
 		return formbus.Form{}, false
@@ -411,6 +465,8 @@ func (a app) renderLink(w http.ResponseWriter, r *http.Request, status int, f fo
 
 	v.Form = f
 	v.Grant = grant
+	v.ByEmail = a.byEmail(f)
+	v.ByPhone = a.byPhone(f)
 
 	a.cfg.Render.Render(w, r, status, "link", v)
 }
@@ -517,7 +573,7 @@ func (a app) unreachable(w http.ResponseWriter, r *http.Request, status int, f f
 // linkAgain is the page that sends somebody their link again, or empty on a
 // form where there is no link to send.
 func (a app) linkAgain(f formbus.Form) string {
-	if !f.Changeable(a.now()) || a.cfg.AnswerKey.Zero() {
+	if !a.byEmail(f) && !a.byPhone(f) {
 		return ""
 	}
 

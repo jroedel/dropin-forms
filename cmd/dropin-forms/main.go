@@ -449,12 +449,13 @@ func run() error {
 		mc.Sheets = sheets
 	}
 
-	carpool, err := newCarpool(cfg, log, db, definitions, submissions, notifier)
+	carpool, err := newCarpool(cfg, log, db, definitions, submissions, notifier, answerKey)
 	if err != nil {
 		return err
 	}
 
 	mc.Carpool = carpool
+	mc.Embed.Rides = carpool
 
 	admin, err := muxer.Admin(mc)
 	if err != nil {

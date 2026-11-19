@@ -54,6 +54,7 @@ import (
 	"github.com/jroedel/dropin-forms/app/sdk/mid"
 	"github.com/jroedel/dropin-forms/app/sdk/page"
 	"github.com/jroedel/dropin-forms/business/domain/access/accessbus"
+	"github.com/jroedel/dropin-forms/business/domain/carpool/carpoolbus"
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
 	"github.com/jroedel/dropin-forms/business/domain/form/stores/formtoml"
 	"github.com/jroedel/dropin-forms/business/domain/payment/paybus"
@@ -141,6 +142,11 @@ type Notifications interface {
 	MutedForms(ctx context.Context, userID types.ID) ([]types.Slug, error)
 }
 
+// Carpool reads a form's carpool as it stands.
+type Carpool interface {
+	PlanOf(ctx context.Context, f formbus.Form) (carpoolbus.Plan, error)
+}
+
 // Config is what this app needs.
 type Config struct {
 	Log         *slog.Logger
@@ -182,6 +188,11 @@ type Config struct {
 	// CanCarpool says the carpool page is mounted. Behind results, like this
 	// page, so it needs no grant of its own: only the form needs a carpool.
 	CanCarpool bool
+
+	// Carpool is the cars, for the summary beneath the results and for
+	// marking who said they are not coming. Optional: without it the list is
+	// as it was before there was a carpool.
+	Carpool Carpool
 
 	// Notifications is optional. Without it the list simply does not mention
 	// email, which is right for an installation that cannot record the
@@ -524,8 +535,10 @@ type listView struct {
 	// about that number -- how much of it has reached the bank.
 	Deposits bool
 
-	// Carpool is whether to link to the carpool page, on a form with one.
+	// Carpool is whether to link to the carpool page, on a form with one,
+	// and Rides is the carpool shown beneath the results, or nil.
 	Carpool bool
+	Rides   *ridesView
 
 	// Capacity is the form's number of places and Held how many are held,
 	// for the line that says how full it is; zero Capacity draws no line.
@@ -571,6 +584,69 @@ type rowView struct {
 
 	// Unpaid marks a row the list hides until asked; see listView.Unpaid.
 	Unpaid bool
+
+	// NotComing is somebody who said on their carpool ride page that they
+	// are not coming. Their sign-up is untouched -- hiding or refunding it is
+	// the office's decision -- so the row says so where the office will see
+	// it.
+	NotComing bool
+}
+
+// ridesView is the carpool beneath the results: who is coming, every car
+// with its driver and riders and their numbers, and who is waiting. Read-only:
+// moving somebody is on the carpool page, behind admin.
+type ridesView struct {
+	Coming    int
+	Driving   int
+	Riding    int
+	OwnWay    int
+	NotComing int
+
+	Cars    []rideCarView
+	Waiting []ridePersonView
+}
+
+type rideCarView struct {
+	Driver ridePersonView
+	Seats  int
+	Riders []ridePersonView
+}
+
+type ridePersonView struct {
+	Name  string
+	Phone string
+}
+
+func ridesOf(plan carpoolbus.Plan) *ridesView {
+	v := &ridesView{
+		Coming:    plan.Coming,
+		Driving:   len(plan.Cars),
+		OwnWay:    plan.OwnWay,
+		NotComing: len(plan.NotComing),
+	}
+
+	person := func(c formbus.Carpooler) ridePersonView {
+		return ridePersonView{Name: c.Name, Phone: c.Phone.National()}
+	}
+
+	for _, c := range plan.Cars {
+		car := rideCarView{Driver: person(c.Driver), Seats: c.Driver.Seats}
+
+		for _, s := range c.Riders {
+			car.Riders = append(car.Riders, person(s.Rider))
+		}
+
+		v.Riding += len(c.Riders)
+		v.Cars = append(v.Cars, car)
+	}
+
+	for _, s := range plan.Waiting {
+		v.Waiting = append(v.Waiting, person(s.Rider))
+	}
+
+	v.Riding += len(v.Waiting)
+
+	return v
 }
 
 // summaryView is the headline: how many, and how much was collected. Only
@@ -750,8 +826,23 @@ func (a app) list(w http.ResponseWriter, r *http.Request) {
 	// of its own: only the form has to sell something.
 	view.Deposits = a.cfg.CanDeposits && f.Sells()
 
+	var notComing map[types.ID]bool
+
 	if _, ok := f.CarpoolOf(); ok {
 		view.Carpool = a.cfg.CanCarpool
+
+		if a.cfg.Carpool != nil {
+			plan, err := a.cfg.Carpool.PlanOf(r.Context(), f)
+			if err != nil {
+				// Costs the summary, not the page: the answers are what
+				// somebody came here for.
+				a.cfg.Log.Error("the carpool could not be read for the results",
+					"request_id", web.RequestIDFrom(r.Context()), "form", f.ID.String(), "error", err)
+			} else {
+				view.Rides = ridesOf(plan)
+				notComing = plan.NotComing
+			}
+		}
 	}
 
 	if f.Capacity > 0 {
@@ -777,12 +868,13 @@ func (a app) list(w http.ResponseWriter, r *http.Request) {
 		}
 
 		view.Rows = append(view.Rows, rowView{
-			Unpaid: unpaid && !view.ShowingHidden && !view.ShowingCancelled,
-			ID:     s.ID.String(),
-			When:   s.CreatedAt.Local().Format("2 Jan 2006, 15:04"),
-			Status: s.WordsWithRefund(f.Currency),
-			Total:  formbus.Show(s.Answers.Total, f.Currency),
-			Cells:  cellsOf(f, s),
+			Unpaid:    unpaid && !view.ShowingHidden && !view.ShowingCancelled,
+			ID:        s.ID.String(),
+			When:      s.CreatedAt.Local().Format("2 Jan 2006, 15:04"),
+			Status:    s.WordsWithRefund(f.Currency),
+			Total:     formbus.Show(s.Answers.Total, f.Currency),
+			Cells:     cellsOf(f, s),
+			NotComing: notComing[s.ID],
 		})
 	}
 
