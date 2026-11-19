@@ -83,6 +83,7 @@ func TestARiderChoosesAnotherCarWithRoom(t *testing.T) {
 	}
 
 	anaTexts := len(h.texts.to("5125550103"))
+	h.later(time.Minute)
 
 	if err := h.b.Choose(t.Context(), h.f, ana, maria); err != nil {
 		t.Fatalf("Choose: %v", err)
@@ -92,11 +93,19 @@ func TestARiderChoosesAnotherCarWithRoom(t *testing.T) {
 		t.Errorf("Ana is in %v, want Maria's car", m.Car)
 	}
 
-	if got := h.texts.to("5125550102"); len(got) != 1 || !strings.Contains(got[0], "Ana, (512) 555-0103, is riding with you") {
+	// Nobody is texted at once. Both drivers hear in their next summary.
+	if got := len(h.texts.to("5125550102")) + len(h.texts.to("5125550101")); got != 2 {
+		t.Errorf("the drivers were texted %d times, want only their two welcomes", got)
+	}
+
+	h.later(10 * time.Minute)
+	h.arrange(t)
+
+	if got := h.texts.to("5125550102"); len(got) != 2 || !strings.Contains(got[1], "your car now: Ana, (512) 555-0103. 1 seat left.") {
 		t.Errorf("Maria was texted %q", got)
 	}
 
-	if got := h.texts.to("5125550101"); len(got) != 2 || !strings.Contains(got[1], "Ana is no longer riding with you") {
+	if got := h.texts.to("5125550101"); len(got) != 2 || !strings.Contains(got[1], "nobody is riding with you right now") {
 		t.Errorf("Damien was texted %q", got)
 	}
 
@@ -134,6 +143,7 @@ func TestARiderWhoIsNotComingLeavesTheCarAndTheOfficeIsTold(t *testing.T) {
 	ana := h.signups.add(t, h.f, "Ana", "5125550103", "need", 0)
 	h.signups.add(t, h.f, "Luis", "5125550104", "need", 0)
 	h.arrange(t)
+	h.later(time.Minute)
 
 	if err := h.b.Say(t.Context(), h.f, ana, carpoolbus.Out, 0); err != nil {
 		t.Fatalf("Say: %v", err)
@@ -155,7 +165,10 @@ func TestARiderWhoIsNotComingLeavesTheCarAndTheOfficeIsTold(t *testing.T) {
 		t.Errorf("the office was told:\n%s", notices)
 	}
 
-	if got := h.texts.to("5125550101"); !strings.Contains(strings.Join(got, "|"), "Ana is no longer riding with you") {
+	h.later(10 * time.Minute)
+	h.arrange(t)
+
+	if got := h.texts.to("5125550101"); !strings.Contains(strings.Join(got, "|"), "your car now: Luis") {
 		t.Errorf("Damien was texted %q", got)
 	}
 

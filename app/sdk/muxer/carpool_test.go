@@ -279,7 +279,7 @@ func TestTheCarpoolPageShowsTheCarsAndAnAdminMovesARider(t *testing.T) {
 		t.Fatalf("Arrange: %v", err)
 	}
 
-	if got := a.texts.to("+15125550101"); len(got) != 1 || !strings.Contains(got[0], "Ana, (512) 555-0103, is riding with you") {
+	if got := a.texts.to("+15125550101"); len(got) != 1 || !strings.Contains(got[0], "Riding with you: Ana, (512) 555-0103") {
 		t.Errorf("Damien was texted %q", got)
 	}
 
@@ -324,8 +324,14 @@ func TestTheCarpoolPageShowsTheCarsAndAnAdminMovesARider(t *testing.T) {
 		t.Fatalf("an admin moving a rider = %d:\n%s", w.Code, short(w.Body.String()))
 	}
 
-	if got := a.texts.to("+15125550102"); len(got) != 1 || !strings.Contains(got[0], "Ana") {
-		t.Errorf("Maria was texted %q", got)
+	// Ana is told at once, since somebody else moved her. Maria hears in
+	// her next summary, which the page says is coming.
+	if got := a.texts.to("+15125550103"); len(got) != 2 || !strings.Contains(got[1], "riding with Maria") {
+		t.Errorf("Ana was texted %q", got)
+	}
+
+	if page := a.get(t, "/forms/youth-retreat/carpool", boss).Body.String(); !strings.Contains(page, "the car has changed since") {
+		t.Errorf("the page does not say Maria's summary is coming:\n%s", short(page))
 	}
 
 	if csv := a.get(t, "/forms/youth-retreat/carpool.csv", readerCookie).Body.String(); !strings.Contains(csv, "Maria,(512) 555-0102,2,Ana") {

@@ -50,6 +50,7 @@ type Carpool interface {
 	PlanOf(ctx context.Context, f formbus.Form) (carpoolbus.Plan, error)
 	Move(ctx context.Context, f formbus.Form, rider, driver, by types.ID) error
 	Retext(ctx context.Context, f formbus.Form, rider types.ID) error
+	RetextDriver(ctx context.Context, f formbus.Form, driver types.ID) error
 	Texting() bool
 }
 
@@ -111,6 +112,14 @@ type carView struct {
 	// Said is a driver whose seats came from their ride page rather than
 	// their answers, which is why the two may disagree.
 	Said bool
+
+	// Texted is when the driver was last told who is in their car, in words,
+	// or empty when they have not been yet; Due says the car has changed
+	// since, and a summary is on its way once it has been quiet; Problem is
+	// why the last one did not go.
+	Texted  string
+	Due     bool
+	Problem string
 }
 
 type riderView struct {
@@ -166,6 +175,10 @@ func (a app) page(w http.ResponseWriter, r *http.Request, status int, done, prob
 			Seats:  c.Driver.Seats,
 			Free:   c.Free(),
 			Said:   c.Said,
+
+			Texted:  whenWords(c.Texts.SummarisedAt),
+			Due:     c.Texts.Due(),
+			Problem: c.Texts.Problem,
 		})
 	}
 
@@ -243,6 +256,12 @@ func (a app) retext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if raw := r.PostFormValue("driver"); raw != "" {
+		a.retextDriver(w, r, f, raw)
+
+		return
+	}
+
 	rider, err := types.ParseID(r.PostFormValue("rider"))
 	if err != nil {
 		a.page(w, r, http.StatusBadRequest, "", "We could not tell who to text. Please try again.")
@@ -260,6 +279,37 @@ func (a app) retext(w http.ResponseWriter, r *http.Request) {
 	default:
 		a.page(w, r, http.StatusOK, "Sent again. If it did not go this time either, the reason is beside them.", "")
 	}
+}
+
+// retextDriver tells a driver who is in their car again, after a summary
+// that did not go.
+func (a app) retextDriver(w http.ResponseWriter, r *http.Request, f formbus.Form, raw string) {
+	driver, err := types.ParseID(raw)
+	if err != nil {
+		a.page(w, r, http.StatusBadRequest, "", "We could not tell who to text. Please try again.")
+
+		return
+	}
+
+	err = a.cfg.Carpool.RetextDriver(r.Context(), f, driver)
+
+	switch {
+	case errors.Is(err, carpoolbus.ErrNotFound):
+		a.page(w, r, http.StatusConflict, "", "They are no longer driving. The page below is as it stands now.")
+	case err != nil:
+		a.oops(w, r, "a driver's summary could not be sent again", err)
+	default:
+		a.page(w, r, http.StatusOK, "Sent again. If it did not go this time either, the reason is beside them.", "")
+	}
+}
+
+// whenWords is a time as the office reads it, or empty for none.
+func whenWords(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+
+	return t.Local().Format("Mon 2 Jan, 3:04pm")
 }
 
 // export is the cars as a spreadsheet: one row per person in a car, and the

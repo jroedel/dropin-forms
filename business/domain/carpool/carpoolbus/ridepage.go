@@ -281,8 +281,8 @@ func (b *Business) whatTheyWere(ctx context.Context, f formbus.Form, everyone ma
 // driving, is [ErrNotFound].
 //
 // The rider is not texted -- they are looking at the page that did it. The
-// driver they joined is, and the one they left, and the seat they left is
-// offered to whoever is waiting.
+// driver they joined and the one they left hear in their next summary, and
+// the seat they left is offered to whoever is waiting.
 func (b *Business) Choose(ctx context.Context, f formbus.Form, rider, driver types.ID) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -319,23 +319,19 @@ func (b *Business) Choose(ctx context.Context, f formbus.Form, rider, driver typ
 		return nil
 	}
 
-	if err := b.cfg.Store.Place(ctx, f.ID, rider, driver, r.Name, d.Seats, b.cfg.Now(), rider); err != nil {
+	now := b.cfg.Now()
+
+	if err := b.cfg.Store.Place(ctx, f.ID, rider, driver, r.Name, d.Seats, now, rider); err != nil {
 		return err
 	}
 
-	in := 1
-	for _, x := range rides {
-		if x.Driver == driver && x.Rider != rider {
-			in++
-		}
-	}
-
+	// Nobody is texted now: the rider is looking at the page, and both
+	// drivers hear in their next summary -- which is what keeps a rider who
+	// tries every car in turn from sending a driver a text for each.
 	t := b.texts(ctx, f)
-	t.joined(r, d, d.Seats-in)
-
-	if old, ok := everyone[was]; ok && !was.Zero() {
-		t.left(old, named(r))
-	}
+	t.changed(driver)
+	t.changed(was)
+	t.finish(now)
 
 	return b.arrange(ctx, f)
 }

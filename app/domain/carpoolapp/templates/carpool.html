@@ -20,9 +20,11 @@
 <p class="aside">Everybody who needs a ride is put in the car of the earliest
 driver with a seat free, in the order they signed up, within a minute of their
 sign-up counting &mdash; once it is paid for, or approved, where the form asks
-for either. The driver and the rider are texted. This form's organisers are
-emailed when somebody is left without a car, as they are about its
-submissions.
+for either. A rider is texted when they are put in a car. A driver is
+texted when they first offer to drive, and after that a summary of who is in
+their car once it has been quiet for ten minutes. Every text links to the
+person's own ride page. This form's organisers are emailed when somebody is
+left without a car, as they are about its submissions.
 {{if not .Texting}}<strong>Texts are off on this service, so nobody is being
 texted</strong>: call or message them yourself.{{end}}</p>
 
@@ -51,7 +53,16 @@ texted</strong>: call or message them yourself.{{end}}</p>
 <table class="detail">
 <caption><strong>{{$car.Driver}}</strong>, {{$car.Phone}} &middot;
 {{len $car.Riders}} of {{$car.Seats}} {{if eq $car.Seats 1}}seat{{else}}seats{{end}} taken
-{{- if $car.Said}} <span class="aside">(seats changed on their ride page)</span>{{end}}</caption>
+{{- if $car.Said}} <span class="aside">(seats changed on their ride page)</span>{{end}}
+{{- if $.Texting}}<br><span class="aside">
+{{- if $car.Problem}}<span class="problem">Their last text did not go: {{$car.Problem}}</span>
+{{- else if $car.Texted}}Texted who is in the car {{$car.Texted}}{{if $car.Due}}; the car has changed since, and they will be told once it has been quiet for ten minutes{{end}}
+{{- else}}Not texted yet{{end}}</span>
+{{- if and $.CanMove (or $car.Problem $car.Texted)}}
+<form method="post" action="/forms/{{$.FormID}}/carpool/retext" class="inline">
+<input type="hidden" name="driver" value="{{$car.ID}}">
+<button type="submit" class="quiet">Text them again</button>
+</form>{{end}}{{end}}</caption>
 {{if $car.Riders}}
 <thead><tr><th scope="col">Rider</th><th scope="col">Mobile</th><th scope="col">Texts</th>{{if $.CanMove}}<th scope="col">Move to</th>{{end}}</tr></thead>
 <tbody>

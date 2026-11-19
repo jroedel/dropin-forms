@@ -34,6 +34,7 @@ var Expected = sqldb.Expected{
 	"rides": {"rider_id", "form_slug", "driver_id", "name", "since", "placed_at", "placed_by",
 		"rider_texted_at", "driver_texted_at", "problem"},
 	"carpool_choices": {"sub_id", "form_slug", "choice", "seats", "at"},
+	"cars":            {"driver_id", "form_slug", "changed_at", "summarised_at", "problem"},
 }
 
 // Init creates this domain's table. Idempotent, and run at every startup.
@@ -70,6 +71,19 @@ CREATE TABLE IF NOT EXISTS carpool_choices (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS carpool_choices_form ON carpool_choices (form_slug);
+
+-- One row per driver once they have been welcomed: when their car's riders
+-- last changed, and when they were last told who is in it. A summary is due
+-- when the first is later than the second and the car has been quiet a while.
+CREATE TABLE IF NOT EXISTS cars (
+    driver_id      TEXT    PRIMARY KEY,
+    form_slug      TEXT    NOT NULL,
+    changed_at     INTEGER NOT NULL DEFAULT 0,
+    summarised_at  INTEGER NOT NULL DEFAULT 0,
+    problem        TEXT    NOT NULL DEFAULT ''
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS cars_form ON cars (form_slug);
 `
 
 	if _, err := db.ExecContext(ctx, schema); err != nil {
@@ -300,6 +314,68 @@ ON CONFLICT (sub_id) DO UPDATE SET choice = excluded.choice, seats = excluded.se
 		c.Sub.String(), c.Form.String(), c.Choice, c.Seats, msOf(c.At))
 	if err != nil {
 		return fmt.Errorf("recording a carpool choice: %w", err)
+	}
+
+	return nil
+}
+
+// Cars lists what has been texted to a form's drivers.
+func (s *Store) Cars(ctx context.Context, form types.Slug) ([]carpoolbus.CarTexts, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT driver_id, changed_at, summarised_at, problem FROM cars WHERE form_slug = ?`, form.String())
+	if err != nil {
+		return nil, fmt.Errorf("reading the cars: %w", err)
+	}
+	defer rows.Close()
+
+	var out []carpoolbus.CarTexts
+
+	for rows.Next() {
+		var (
+			c                   carpoolbus.CarTexts
+			driver              string
+			changed, summarised int64
+		)
+
+		if err := rows.Scan(&driver, &changed, &summarised, &c.Problem); err != nil {
+			return nil, fmt.Errorf("reading a car: %w", err)
+		}
+
+		if c.Driver, err = types.ParseID(driver); err != nil {
+			return nil, fmt.Errorf("a stored car has a bad driver: %w", err)
+		}
+
+		c.Form, c.ChangedAt, c.SummarisedAt = form, timeOf(changed), timeOf(summarised)
+		out = append(out, c)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading the cars: %w", err)
+	}
+
+	return out, nil
+}
+
+// Changed records that a driver's riders changed. A driver not yet welcomed
+// has no row and nothing to record: their welcome says who is in the car.
+func (s *Store) Changed(ctx context.Context, driver types.ID, at time.Time) error {
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE cars SET changed_at = ? WHERE driver_id = ?`, msOf(at), driver.String()); err != nil {
+		return fmt.Errorf("recording that a car changed: %w", err)
+	}
+
+	return nil
+}
+
+// Summarised records that a driver was told who is in their car, or why the
+// text did not go. The first time, it is the welcome, and the row is made.
+func (s *Store) Summarised(ctx context.Context, form types.Slug, driver types.ID, at time.Time, problem string) error {
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO cars (driver_id, form_slug, changed_at, summarised_at, problem) VALUES (?, ?, ?, ?, ?)
+ON CONFLICT (driver_id) DO UPDATE SET summarised_at = excluded.summarised_at, problem = excluded.problem`,
+		driver.String(), form.String(), msOf(at), msOf(at), problem)
+	if err != nil {
+		return fmt.Errorf("recording a driver's text: %w", err)
 	}
 
 	return nil

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
+	"github.com/jroedel/dropin-forms/business/types"
 	"github.com/jroedel/dropin-forms/business/types/phone"
 )
 
@@ -18,9 +19,19 @@ const sendBudget = 10 * time.Second
 
 // texts is the messages one pass sends, for one form.
 //
-// Each is short and says no more than its reader needs: whose car, and a
-// number to call. Twilio and the carrier keep every body, so the rest of a
-// submission stays out of them.
+// Each is short and says no more than its reader needs: whose car, a number
+// to call, and the link to their own ride page. Twilio and the carrier keep
+// every body, so the rest of a submission stays out of them.
+//
+// # A rider at once, a driver in a summary
+//
+// A rider's car is the one fact they are waiting for, so they are texted the
+// moment it changes. A driver's car changes every time somebody joins,
+// switches or drops out, and in a carpool of young people that is a stream:
+// fifteen texts, each about one rider, and no way to tell which is current.
+// So a driver is texted once when they first offer to drive, and after that
+// one summary of who is in the car now, once it has been quiet for
+// [summaryQuiet]. The ride page shows the same thing at any moment.
 type texts struct {
 	b   *Business
 	ctx context.Context
@@ -29,6 +40,9 @@ type texts struct {
 	// stuck is the riders this pass left with no car, for the one email to
 	// the organisers at its end.
 	stuck []person
+
+	// cars is the drivers whose riders changed, for their next summary.
+	cars map[types.ID]bool
 }
 
 func (b *Business) texts(ctx context.Context, f formbus.Form) *texts {
@@ -82,37 +96,56 @@ func (t *texts) record(rider person, riderAt, driverAt time.Time, problems ...st
 	}
 }
 
-// placed is a rider put in a car: the two of them.
-func (t *texts) placed(rider, driver person, free int) {
-	t.pair(rider, driver, free)
+// placed is a rider put in a car. The rider is texted at once; the driver
+// hears in their next summary.
+func (t *texts) placed(rider, driver person) {
+	t.riderText(rider, driver)
+	t.changed(driver.sub.ID)
 }
 
-// pair tells a rider and a driver about each other.
-func (t *texts) pair(rider, driver person, free int) {
-	driverAt, driverProblem := t.send(driver.Phone, fmt.Sprintf(
-		"%s: %s, %s, is riding with you. %s. Reply STOP to stop these texts.",
-		t.f.Title, named(rider), rider.Phone.National(), seatsLeft(free)))
+// riderText tells a rider whose car they are in, and records how it went.
+func (t *texts) riderText(rider, driver person) {
+	at, problem := t.send(rider.Phone, fmt.Sprintf(
+		"%s: you're riding with %s, %s.%s Reply STOP to stop these texts.",
+		t.f.Title, named(driver), driver.Phone.National(), t.link(" See or change your ride: ", rider)))
 
-	riderAt, riderProblem := t.send(rider.Phone, fmt.Sprintf(
-		"%s: you are riding with %s, %s. Reply STOP to stop these texts.",
-		t.f.Title, named(driver), driver.Phone.National()))
-
-	t.record(rider, riderAt, driverAt, riderProblem, driverProblem)
+	t.record(rider, at, time.Time{}, problem)
 }
 
-// joined is a rider who chose this driver's car on their ride page. Only the
-// driver is texted: the rider is looking at the page that did it.
-func (t *texts) joined(rider, driver person, free int) {
-	driverAt, problem := t.send(driver.Phone, fmt.Sprintf(
-		"%s: %s, %s, is riding with you. %s. Reply STOP to stop these texts.",
-		t.f.Title, named(rider), rider.Phone.National(), seatsLeft(free)))
+// changed marks a driver's car as having changed, for their next summary.
+// The zero ID is nobody's car, and is ignored.
+func (t *texts) changed(driver types.ID) {
+	if driver.Zero() {
+		return
+	}
 
-	t.record(rider, time.Time{}, driverAt, problem)
+	if t.cars == nil {
+		t.cars = map[types.ID]bool{}
+	}
+
+	t.cars[driver] = true
 }
 
-// left is a rider who no longer needs the seat they had.
-func (t *texts) left(driver person, rider string) {
-	t.send(driver.Phone, fmt.Sprintf("%s: %s is no longer riding with you.", t.f.Title, rider))
+// finish records the cars this pass changed, and tells the office about
+// anybody it left with no car.
+func (t *texts) finish(now time.Time) {
+	for driver := range t.cars {
+		if err := t.b.cfg.Store.Changed(t.ctx, driver, now); err != nil {
+			t.b.cfg.Log.Error("that a car changed could not be recorded",
+				"form", t.f.ID.String(), "error", err)
+		}
+	}
+
+	t.cars = nil
+
+	t.tellOffice()
+	t.stuck = nil
+}
+
+// left is a rider who no longer needs the seat they had: their driver hears
+// in their next summary.
+func (t *texts) left(driver person) {
+	t.changed(driver.sub.ID)
 }
 
 // dropped is a rider whose car has gone, or has fewer seats than before.
@@ -123,7 +156,65 @@ func (t *texts) dropped(rider, driver person) {
 	}
 
 	t.send(rider.Phone, fmt.Sprintf(
-		"%s: %s can no longer take you. We will text you when you have another car.", t.f.Title, who))
+		"%s: %s can no longer take you. We'll text you when you have another car.%s",
+		t.f.Title, who, t.link(" Your ride: ", rider)))
+
+	t.changed(driver.sub.ID)
+}
+
+// waitingText tells a rider every car is full, the first time they are.
+func (t *texts) waitingText(rider person) {
+	t.send(rider.Phone, fmt.Sprintf(
+		"%s: every car is full right now. We'll text you when there's a seat for you.%s Reply STOP to stop these texts.",
+		t.f.Title, t.link(" Your ride: ", rider)))
+}
+
+// summary tells a driver who is in their car now: the first time, as a
+// welcome. It records that they were told, or why that did not go.
+func (t *texts) summary(driver person, riders []person, welcome bool, now time.Time) {
+	var who strings.Builder
+
+	for i, r := range riders {
+		if i > 0 {
+			who.WriteString("; ")
+		}
+
+		fmt.Fprintf(&who, "%s, %s", named(r), r.Phone.National())
+	}
+
+	free := seatsLeft(driver.Seats - len(riders))
+
+	var body string
+
+	switch {
+	case welcome && len(riders) == 0:
+		body = fmt.Sprintf("%s: thanks for driving! We'll text you when riders join.%s Reply STOP to stop these texts.",
+			t.f.Title, t.link(" Your car: ", driver))
+	case welcome:
+		body = fmt.Sprintf("%s: thanks for driving! Riding with you: %s. %s.%s Reply STOP to stop these texts.",
+			t.f.Title, who.String(), free, t.link(" Your car: ", driver))
+	case len(riders) == 0:
+		body = fmt.Sprintf("%s: nobody is riding with you right now.%s", t.f.Title, t.link(" Your car: ", driver))
+	default:
+		body = fmt.Sprintf("%s: your car now: %s. %s.%s", t.f.Title, who.String(), free, t.link(" Your car: ", driver))
+	}
+
+	_, problem := t.send(driver.Phone, body)
+
+	if err := t.b.cfg.Store.Summarised(t.ctx, t.f.ID, driver.sub.ID, now, problem); err != nil {
+		t.b.cfg.Log.Error("a driver's text could not be recorded", "form", t.f.ID.String(), "error", err)
+	}
+}
+
+// link is a person's ride link with words before it, or nothing when there
+// are no links.
+func (t *texts) link(lead string, p person) string {
+	link := t.b.fullLink(p.sub.ID)
+	if link == "" {
+		return ""
+	}
+
+	return lead + link
 }
 
 // waiting is a rider for whom every car is full: new to the carpool, or just

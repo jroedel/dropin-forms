@@ -152,7 +152,9 @@ func TestARiderChoosesACarOnTheirRidePage(t *testing.T) {
 		t.Fatalf("choosing Maria's car = %d:\n%s", w.Code, short(w.Body.String()))
 	}
 
-	if got := rh.texts.to("+15125550102"); len(got) != 1 || !strings.Contains(got[0], "Ana, (512) 555-0103, is riding with you") {
+	// Maria has only her welcome: she hears about Ana in her next summary,
+	// once her car has been quiet for ten minutes.
+	if got := rh.texts.to("+15125550102"); len(got) != 1 || !strings.Contains(got[0], "thanks for driving") {
 		t.Errorf("Maria was texted %q", got)
 	}
 }
