@@ -16,11 +16,13 @@ Stripe's fraud checks and is not shown to anyone.</p>
 
 <h2>Accounts</h2>
 <p>People who run forms sign in with a code sent to their email address. The
-service keeps that address, their name, and which forms they may read. Someone
-who organises a form with a carpool may also give a mobile number, to be texted
-about rides; they can remove it on their account page, or reply STOP to any
-text. Texts are sent through Twilio, which receives the number and the text and
-nothing else.</p>
+service keeps that address, their name, and which forms they may read.</p>
+
+<h2>Carpool texts</h2>
+<p>On a form with a carpool, somebody who offers to drive or needs a ride is
+texted about their ride, at the mobile number they gave on the form. Texts are
+sent through Twilio, which receives the number and the text and nothing else.
+Replying STOP to any of them stops them.</p>
 
 <h2>Google Sheets</h2>
 <p>Somebody who may read a form's answers can connect a Google Sheet, so that

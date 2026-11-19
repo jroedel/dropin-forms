@@ -12,7 +12,6 @@ import (
 	"github.com/jroedel/dropin-forms/business/domain/user/stores/userdb"
 	"github.com/jroedel/dropin-forms/business/domain/user/userbus"
 	"github.com/jroedel/dropin-forms/business/types"
-	"github.com/jroedel/dropin-forms/business/types/phone"
 	"github.com/jroedel/dropin-forms/foundation/sqldb"
 )
 
@@ -166,34 +165,28 @@ func TestUserRoundTrip(t *testing.T) {
 	}
 }
 
-func TestAMobileNumberRoundTripsAndClears(t *testing.T) {
-	_, s := open(t)
+// A number given for organiser texts, which stopped when organisers were
+// emailed instead, is not kept: the next start clears it.
+func TestAnOrganisersOldMobileNumberIsClearedOnStart(t *testing.T) {
+	db, s := open(t)
 
 	u := mustUser(t, s, "frjeff@schoenstatt.us")
 
-	if got, err := s.UserByID(t.Context(), u.ID); err != nil || !got.Mobile.IsZero() {
-		t.Fatalf("a new account: Mobile = %q, %v; want none", got.Mobile, err)
+	if _, err := db.ExecContext(t.Context(), `UPDATE users SET mobile = '+15125550100' WHERE id = ?`, u.ID.String()); err != nil {
+		t.Fatal(err)
 	}
 
-	u.Mobile = phone.MustParse("(512) 555-0100")
-
-	if err := s.UpdateUser(t.Context(), u); err != nil {
-		t.Fatalf("UpdateUser: %v", err)
+	if err := userdb.Init(t.Context(), db); err != nil {
+		t.Fatalf("Init: %v", err)
 	}
 
-	got, err := s.UserByID(t.Context(), u.ID)
-	if err != nil || got.Mobile.String() != "+15125550100" {
-		t.Fatalf("Mobile = %q, %v; want +15125550100", got.Mobile, err)
+	var mobile string
+	if err := db.QueryRowContext(t.Context(), `SELECT mobile FROM users WHERE id = ?`, u.ID.String()).Scan(&mobile); err != nil || mobile != "" {
+		t.Errorf("mobile = %q, %v; want it cleared", mobile, err)
 	}
 
-	u.Mobile = phone.Number{}
-
-	if err := s.UpdateUser(t.Context(), u); err != nil {
-		t.Fatalf("UpdateUser: %v", err)
-	}
-
-	if got, err := s.UserByID(t.Context(), u.ID); err != nil || !got.Mobile.IsZero() {
-		t.Errorf("after clearing: Mobile = %q, %v; want none", got.Mobile, err)
+	if _, err := s.UserByID(t.Context(), u.ID); err != nil {
+		t.Errorf("the account no longer reads: %v", err)
 	}
 }
 

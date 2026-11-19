@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jroedel/dropin-forms/business/domain/form/formbus"
@@ -25,10 +26,9 @@ type texts struct {
 	ctx context.Context
 	f   formbus.Form
 
-	// admins is looked up on the first text that needs it, so a pass that
-	// changes nothing reads no grants.
-	admins []phone.Number
-	looked bool
+	// stuck is the riders this pass left with no car, for the one email to
+	// the organisers at its end.
+	stuck []person
 }
 
 func (b *Business) texts(ctx context.Context, f formbus.Form) *texts {
@@ -61,21 +61,6 @@ func (t *texts) send(to phone.Number, body string) (time.Time, string) {
 	return t.b.cfg.Now(), ""
 }
 
-// organisers texts each organiser who asked to be.
-func (t *texts) organisers(body string) {
-	if t.b.cfg.Texter == nil {
-		return
-	}
-
-	if !t.looked {
-		t.admins, t.looked = t.b.organisers(t.ctx, t.f.ID), true
-	}
-
-	for _, n := range t.admins {
-		t.send(n, body)
-	}
-}
-
 // record keeps what happened to a rider's and driver's texts on the ride.
 func (t *texts) record(rider person, riderAt, driverAt time.Time, problems ...string) {
 	if t.b.cfg.Texter == nil {
@@ -97,12 +82,9 @@ func (t *texts) record(rider person, riderAt, driverAt time.Time, problems ...st
 	}
 }
 
-// placed is a rider put in a car: the two of them, and the organisers.
+// placed is a rider put in a car: the two of them.
 func (t *texts) placed(rider, driver person, free int) {
 	t.pair(rider, driver, free)
-
-	t.organisers(fmt.Sprintf("%s carpool: %s is riding with %s. %s.",
-		t.f.Title, named(rider), named(driver), seatsLeft(free)))
 }
 
 // pair tells a rider and a driver about each other.
@@ -121,7 +103,6 @@ func (t *texts) pair(rider, driver person, free int) {
 // left is a rider who no longer needs the seat they had.
 func (t *texts) left(driver person, rider string) {
 	t.send(driver.Phone, fmt.Sprintf("%s: %s is no longer riding with you.", t.f.Title, rider))
-	t.organisers(fmt.Sprintf("%s carpool: %s is no longer riding with %s.", t.f.Title, rider, named(driver)))
 }
 
 // dropped is a rider whose car has gone, or has fewer seats than before.
@@ -135,9 +116,44 @@ func (t *texts) dropped(rider, driver person) {
 		"%s: %s can no longer take you. We will text you when you have another car.", t.f.Title, who))
 }
 
-// waiting is a rider for whom every car is full, said to the organisers once.
+// waiting is a rider for whom every car is full: new to the carpool, or just
+// taken out of a car. Kept for [texts.tellOffice].
 func (t *texts) waiting(rider person) {
-	t.organisers(fmt.Sprintf("%s carpool: %s needs a ride and every car is full.", t.f.Title, named(rider)))
+	t.stuck = append(t.stuck, rider)
+}
+
+// tellOffice emails the organisers once about everybody this pass left with
+// no car. One message per pass rather than per rider, because a driver who
+// drops out strands their whole car at once, and three emails saying the same
+// thing about three people is how the fourth stops being read.
+func (t *texts) tellOffice() {
+	if len(t.stuck) == 0 || t.b.cfg.Office == nil {
+		return
+	}
+
+	var body strings.Builder
+
+	who := "these people are"
+	if len(t.stuck) == 1 {
+		who = "this person is"
+	}
+
+	fmt.Fprintf(&body, "Every car in the carpool for %s is full, so %s waiting for a ride:\n\n", t.f.Title, who)
+
+	for _, p := range t.stuck {
+		fmt.Fprintf(&body, "  %s, %s\n", named(p), p.Phone.National())
+	}
+
+	body.WriteString("\nEach of them is put in a car by themselves as soon as a seat comes free, " +
+		"and texted. To find them one sooner, ask somebody else to drive, or move them " +
+		"into a car on the carpool page.")
+
+	subject := named(t.stuck[0]) + " needs a ride"
+	if len(t.stuck) > 1 {
+		subject = fmt.Sprintf("%d people need a ride", len(t.stuck))
+	}
+
+	t.b.cfg.Office.Carpool(t.ctx, t.f, subject, body.String())
 }
 
 // named is a person's name for a text, or a word when they gave none.

@@ -211,9 +211,7 @@ func newAdmin(t *testing.T, bootstrap string) harness {
 		Submissions: submissions,
 		Forms:       catalogue,
 		Texter:      texts,
-		Grants:      access,
-		Accounts:    users,
-		Mutes:       notifydb.NewStore(db),
+		Office:      notifier,
 	})
 	if err != nil {
 		t.Fatalf("carpoolbus.NewBusiness: %v", err)

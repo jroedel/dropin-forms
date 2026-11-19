@@ -8,9 +8,6 @@
 <p class="crumb"><a href="/forms/{{.FormID}}/submissions">{{.Title}}</a></p>
 
 {{if .Done}}<p class="notice">{{.Done}}</p>{{end}}
-{{if .NoMobile}}<p class="notice">You are not being texted about this carpool,
-because there is no mobile number on your account. <a href="/account">Add one on
-your account page</a>.</p>{{end}}
 {{if .Problem}}<p class="problem">{{.Problem}}</p>{{end}}
 
 <div class="summary-cards">
@@ -22,8 +19,9 @@ your account page</a>.</p>{{end}}
 <p class="aside">Everybody who needs a ride is put in the car of the earliest
 driver with a seat free, in the order they signed up, within a minute of their
 sign-up counting &mdash; once it is paid for, or approved, where the form asks
-for either. The driver, the rider and this form's organisers who have given a
-mobile number on their <a href="/account">account page</a> are texted.
+for either. The driver and the rider are texted. This form's organisers are
+emailed when somebody is left without a car, as they are about its
+submissions.
 {{if not .Texting}}<strong>Texts are off on this service, so nobody is being
 texted</strong>: call or message them yourself.{{end}}</p>
 

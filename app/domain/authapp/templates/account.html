@@ -32,24 +32,6 @@ replaces any codes you already have.</p>
 </form>
 {{end}}
 
-<h2>Text messages</h2>
-
-<p>When a form you organise has a carpool, you can be texted each time somebody
-is put in a car, or is waiting for one. Give your mobile number to receive
-those texts. Leave it empty to stop them. Replying STOP to any text stops them
-too.</p>
-
-{{if .MobileSaved}}<p class="notice">{{if .Mobile}}Saved. Texts will go to {{.Mobile}}.{{else}}Saved. You will not be texted.{{end}}</p>{{end}}
-
-<form method="post" action="/account/mobile">
-  <label for="mobile">Mobile number</label>
-  {{if .MobileWrong}}<p class="problem" id="mobile-error">{{.MobileWrong}}</p>{{end}}
-  <input type="tel" id="mobile" name="mobile" inputmode="tel" autocomplete="tel"
-    value="{{if .MobileWrong}}{{.MobileSaid}}{{else}}{{.Mobile}}{{end}}"
-    {{if .MobileWrong}}aria-invalid="true" aria-describedby="mobile-error"{{end}}>
-  <button type="submit">Save</button>
-</form>
-
 {{if .KeysPage}}
 <h2>API keys</h2>
 

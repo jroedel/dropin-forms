@@ -91,12 +91,6 @@ type view struct {
 	Texting bool
 	CanMove bool
 
-	// NoMobile is an organiser who would be texted about this carpool but has
-	// given no number to text. Nobody else can give it for them -- saving it
-	// is their agreement to be texted -- so the page that shows the carpool
-	// is the place to say so, to the one person who can do something about it.
-	NoMobile bool
-
 	Cars    []carView
 	Waiting []riderView
 	OwnWay  int
@@ -151,10 +145,6 @@ func (a app) page(w http.ResponseWriter, r *http.Request, status int, done, prob
 		OwnWay:  plan.OwnWay,
 		Done:    done,
 		Problem: problem,
-	}
-
-	if me, ok := mid.UserFrom(r.Context()); ok {
-		v.NoMobile = v.Texting && v.CanMove && me.Mobile.IsZero()
 	}
 
 	for _, c := range plan.Cars {
