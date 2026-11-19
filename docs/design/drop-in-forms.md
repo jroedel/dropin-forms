@@ -2719,8 +2719,27 @@ holds, so the last seat goes to one rider. A rider waiting has a row too,
 with no driver, so the organisers are told once that somebody is waiting
 rather than on every pass.
 
-**The texts** go to the driver ("Ana, (512) 555-0103, is riding with you. 1
-seat left.") and the rider ("you are riding with Damien, ..."). Through Twilio, on eumaeus's account and its
+**The texts carry each person's ride link, and a driver gets summaries, not a
+stream.**
+- **A rider** is texted the moment their car changes: placed ("you're riding
+  with Damien, ..."), the first time every car is full, and when their driver
+  can no longer take them.
+- **A driver** is welcomed once, when they first offer to drive, with whoever
+  is already in the car. After that they get one summary of who is in it now
+  ("your car now: Ana, ...; Luis, .... 1 seat left."), once the car has gone
+  ten quiet minutes without a change.
+
+The first version texted a driver about every rider who joined or left. With
+riders free to switch cars from their ride page, that would be a text for
+every switch, and fifteen texts about one car do not say which of them is
+current. A `cars` row per driver keeps when their riders last changed and when
+they were last told. Each 30-second pass sends the summaries that are due, so
+a burst of changes is one text. A rider who chooses a car on their own page is
+not texted, since they are looking at the result. An organiser's move texts
+the rider at once, since somebody else did it. The carpool page shows each
+driver's last summary, or why it did not go, with "Text them again".
+
+The texts go through Twilio, on eumaeus's account and its
 registered A2P 10DLC campaign, signed with an API key made for this service
 so it can be revoked without touching eumaeus (`[twilio]` in the
 configuration; off when empty, and then the cars are still arranged and

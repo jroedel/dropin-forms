@@ -102,6 +102,23 @@ type Ride struct {
 // Waiting reports whether the rider has no car yet.
 func (r Ride) Waiting() bool { return r.Driver.Zero() }
 
+// CarTexts is what a driver has been told about their car. There is a row
+// once they have been welcomed.
+type CarTexts struct {
+	Driver types.ID
+	Form   types.Slug
+
+	// ChangedAt is when the car's riders last changed, and SummarisedAt when
+	// the driver was last texted who is in it -- or texting them was tried,
+	// with Problem saying why it did not go.
+	ChangedAt    time.Time
+	SummarisedAt time.Time
+	Problem      string
+}
+
+// Due reports whether the driver has not been told about the car as it is.
+func (c CarTexts) Due() bool { return c.ChangedAt.After(c.SummarisedAt) }
+
 // Out is the choice of somebody who said on their ride page that they are not
 // coming. It is not one of the form's options: nobody signs up to not come.
 const Out = "out"
@@ -148,6 +165,13 @@ type Storer interface {
 	// SetChoice records what one of them said, in place of anything before.
 	Choices(ctx context.Context, form types.Slug) ([]Choice, error)
 	SetChoice(ctx context.Context, c Choice) error
+
+	// Cars lists what a form's drivers have been told; Changed records that
+	// a driver's riders changed; Summarised records that the driver was told,
+	// or why that did not go, and is how a driver is first welcomed.
+	Cars(ctx context.Context, form types.Slug) ([]CarTexts, error)
+	Changed(ctx context.Context, driver types.ID, at time.Time) error
+	Summarised(ctx context.Context, form types.Slug, driver types.ID, at time.Time, problem string) error
 }
 
 // Submissions is what this package reads about the people in a carpool: a
@@ -326,6 +350,10 @@ type Car struct {
 	// Said is whether the driver's seats came from their ride page rather
 	// than their answers.
 	Said bool
+
+	// Texts is what the driver has been told, and the zero value for one who
+	// has not been welcomed yet.
+	Texts CarTexts
 }
 
 // Free is how many seats are left.
@@ -373,10 +401,20 @@ func (b *Business) PlanOf(ctx context.Context, f formbus.Form) (Plan, error) {
 
 	plan := Plan{NotComing: map[types.ID]bool{}}
 
+	told, err := b.cfg.Store.Cars(ctx, f.ID)
+	if err != nil {
+		return Plan{}, err
+	}
+
+	texts := make(map[types.ID]CarTexts, len(told))
+	for _, c := range told {
+		texts[c.Driver] = c
+	}
+
 	at := make(map[types.ID]int, len(drivers))
 	for i, d := range drivers {
 		at[d.sub.ID] = i
-		plan.Cars = append(plan.Cars, Car{Driver: d.Carpooler, ID: d.sub.ID, Said: d.Said})
+		plan.Cars = append(plan.Cars, Car{Driver: d.Carpooler, ID: d.sub.ID, Said: d.Said, Texts: texts[d.sub.ID]})
 	}
 
 	for _, r := range rides {
@@ -463,7 +501,7 @@ func (b *Business) arrange(ctx context.Context, f formbus.Form) error {
 			}
 
 			if driver, ok := everyone[r.Driver]; ok && !r.Waiting() {
-				t.left(driver, nameOf(r, rider, here))
+				t.left(driver)
 			}
 
 			continue
@@ -541,7 +579,7 @@ func (b *Business) arrange(ctx context.Context, f formbus.Form) error {
 			}
 
 			inCar[d.sub.ID] = append(inCar[d.sub.ID], Ride{Rider: rider.sub.ID, Driver: d.sub.ID})
-			t.placed(rider, d, d.Seats-len(inCar[d.sub.ID]))
+			t.placed(rider, d)
 			placed = true
 
 			break
@@ -556,14 +594,20 @@ func (b *Business) arrange(ctx context.Context, f formbus.Form) error {
 			return fmt.Errorf("recording a rider as waiting: %w", err)
 		}
 
+		// Told they are waiting the first time; one just taken out of a car
+		// was told that already, in the same breath.
+		if fresh {
+			t.waitingText(rider)
+		}
+
 		if fresh || dropped[rider.sub.ID] {
 			t.waiting(rider)
 		}
 	}
 
-	t.tellOffice()
+	t.finish(now)
 
-	return nil
+	return b.summarise(ctx, f, t, everyone, drivers, now)
 }
 
 // Move puts a rider in a particular car, for an organiser. It refuses a full
@@ -598,24 +642,26 @@ func (b *Business) Move(ctx context.Context, f formbus.Form, rider, driver, by t
 		return nil
 	}
 
-	if err := b.cfg.Store.Place(ctx, f.ID, rider, driver, r.Name, d.Seats, b.cfg.Now(), by); err != nil {
-		return err
-	}
+	var was types.ID
 
-	rides, err = b.cfg.Store.ByForm(ctx, f.ID)
-	if err != nil {
-		return fmt.Errorf("reading the rides: %w", err)
-	}
-
-	in := 0
 	for _, x := range rides {
-		if x.Driver == driver {
-			in++
+		if x.Rider == rider {
+			was = x.Driver
 		}
 	}
 
+	now := b.cfg.Now()
+
+	if err := b.cfg.Store.Place(ctx, f.ID, rider, driver, r.Name, d.Seats, now, by); err != nil {
+		return err
+	}
+
+	// The rider at once, since somebody else moved them; both drivers in
+	// their next summary.
 	t := b.texts(ctx, f)
-	t.placed(r, d, d.Seats-in)
+	t.placed(r, d)
+	t.changed(was)
+	t.finish(now)
 
 	return nil
 }
@@ -648,14 +694,33 @@ func (b *Business) Retext(ctx context.Context, f formbus.Form, rider types.ID) e
 		return ErrNotFound
 	}
 
-	in := 0
-	for _, x := range rides {
-		if x.Driver == rides[i].Driver {
-			in++
-		}
+	b.texts(ctx, f).riderText(r, d)
+
+	return nil
+}
+
+// RetextDriver tells a driver who is in their car now, for an organiser after
+// a summary did not go.
+func (b *Business) RetextDriver(ctx context.Context, f formbus.Form, driver types.ID) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	everyone, _, _, err := b.people(ctx, f)
+	if err != nil {
+		return err
 	}
 
-	b.texts(ctx, f).pair(r, d, d.Seats-in)
+	d, ok := everyone[driver]
+	if !ok || !d.Driving() || d.Seats < 1 {
+		return ErrNotFound
+	}
+
+	rides, err := b.cfg.Store.ByForm(ctx, f.ID)
+	if err != nil {
+		return fmt.Errorf("reading the rides: %w", err)
+	}
+
+	b.texts(ctx, f).summary(d, ridersIn(rides, everyone, driver), false, b.cfg.Now())
 
 	return nil
 }

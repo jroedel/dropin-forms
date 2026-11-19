@@ -217,6 +217,7 @@ func (o *office) Carpool(_ context.Context, _ formbus.Form, subject, says string
 }
 
 type harness struct {
+	clock   *time.Time
 	b       *carpoolbus.Business
 	f       formbus.Form
 	signups *signups
@@ -238,7 +239,8 @@ func newHarness(t *testing.T) harness {
 		t.Fatal(err)
 	}
 
-	h := harness{f: event(t), signups: &signups{}, texts: &texter{refuse: map[string]bool{}}, office: &office{}, store: carpooldb.NewStore(db)}
+	clock := start
+	h := harness{clock: &clock, f: event(t), signups: &signups{}, texts: &texter{refuse: map[string]bool{}}, office: &office{}, store: carpooldb.NewStore(db)}
 
 	h.b, err = carpoolbus.NewBusiness(carpoolbus.Config{
 		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -249,7 +251,7 @@ func newHarness(t *testing.T) harness {
 		Office:      h.office,
 		RideKey:     rideKey(t),
 		BaseURL:     "https://f.schoenstatt.test",
-		Now:         func() time.Time { return start },
+		Now:         func() time.Time { return *h.clock },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -257,6 +259,9 @@ func newHarness(t *testing.T) harness {
 
 	return h
 }
+
+// later moves the clock on, as the time between two passes would.
+func (h harness) later(d time.Duration) { *h.clock = h.clock.Add(d) }
 
 func (h harness) arrange(t *testing.T) carpoolbus.Plan {
 	t.Helper()
@@ -303,10 +308,14 @@ func TestRidersFillTheEarliestCarFirst(t *testing.T) {
 		t.Errorf("own way %d, waiting %d", plan.OwnWay, len(plan.Waiting))
 	}
 
-	if got := h.texts.to("5125550101"); len(got) != 1 || !strings.Contains(got[0], "Ana, (512) 555-0103, is riding with you") {
+	// A driver is welcomed once, with whoever is already in the car and the
+	// link to their page; a rider is told their car, with theirs.
+	if got := h.texts.to("5125550101"); len(got) != 1 || !strings.Contains(got[0], "thanks for driving! Riding with you: Ana, (512) 555-0103. The car is full.") ||
+		!strings.Contains(got[0], "Your car: https://f.schoenstatt.test/r/") {
 		t.Errorf("Damien was texted %q", got)
 	}
-	if got := h.texts.to("5125550103"); len(got) != 1 || !strings.Contains(got[0], "riding with Damien, (512) 555-0101.") {
+	if got := h.texts.to("5125550103"); len(got) != 1 || !strings.Contains(got[0], "riding with Damien, (512) 555-0101.") ||
+		!strings.Contains(got[0], "See or change your ride: https://f.schoenstatt.test/r/") {
 		t.Errorf("Ana was texted %q", got)
 	}
 	// The driver and the rider, and nobody else: a carpool that is working
@@ -375,6 +384,7 @@ func TestARiderWhoLeavesFreesTheSeatAndTheDriverIsTold(t *testing.T) {
 	ana := h.signups.add(t, h.f, "Ana", "5125550103", "need", 0)
 	h.signups.add(t, h.f, "Luis", "5125550104", "need", 0)
 	h.arrange(t)
+	h.later(time.Minute)
 
 	h.signups.drop(ana)
 	plan := h.arrange(t)
@@ -382,7 +392,16 @@ func TestARiderWhoLeavesFreesTheSeatAndTheDriverIsTold(t *testing.T) {
 	if got := ridersOf(plan.Cars[0]); strings.Join(got, ",") != "Luis" {
 		t.Errorf("Damien's car = %v, want Luis in Ana's seat", got)
 	}
-	if got := h.texts.to("5125550101"); len(got) != 3 || !strings.Contains(got[1], "Ana is no longer riding with you") {
+	// Damien hears nothing yet: his car has just changed twice, and he is
+	// told once it has been quiet.
+	if got := h.texts.to("5125550101"); len(got) != 1 {
+		t.Errorf("Damien was texted %q at once, want only his welcome", got)
+	}
+
+	h.later(10 * time.Minute)
+	h.arrange(t)
+
+	if got := h.texts.to("5125550101"); len(got) != 2 || !strings.Contains(got[1], "your car now: Luis, (512) 555-0104. The car is full.") {
 		t.Errorf("Damien was texted %q", got)
 	}
 }
@@ -450,8 +469,8 @@ func TestAnOptedOutRiderIsRecordedOnTheRide(t *testing.T) {
 	if p := plan.Cars[0].Riders[0].Ride.Problem; !strings.Contains(p, "replied STOP") {
 		t.Errorf("problem = %q", p)
 	}
-	if plan.Cars[0].Riders[0].Ride.DriverTexted.IsZero() {
-		t.Error("the driver's text was not recorded although it went")
+	if c := plan.Cars[0].Texts; c.SummarisedAt.IsZero() || c.Problem != "" {
+		t.Errorf("the driver's welcome was recorded as %+v, although it went", c)
 	}
 }
 
@@ -477,5 +496,76 @@ func TestAnOrganiserMovesARider(t *testing.T) {
 
 	if err := h.b.Move(t.Context(), h.f, luis, maria, types.NewID()); err == nil {
 		t.Error("moving a rider into a full car was allowed")
+	}
+}
+
+// However many times a car changes in a burst, its driver gets one summary,
+// and not before the car has been quiet for ten minutes.
+func TestADriverGetsOneSummaryAfterABurstOfChanges(t *testing.T) {
+	h := newHarness(t)
+
+	h.signups.add(t, h.f, "Damien", "5125550101", "drive", 3)
+	h.arrange(t)
+
+	if got := h.texts.to("5125550101"); len(got) != 1 || !strings.Contains(got[0], "We'll text you when riders join") {
+		t.Fatalf("Damien's welcome: %q", got)
+	}
+
+	ana := h.signups.add(t, h.f, "Ana", "5125550103", "need", 0)
+	h.arrange(t)
+	h.later(3 * time.Minute)
+	h.signups.add(t, h.f, "Luis", "5125550104", "need", 0)
+	h.arrange(t)
+	h.later(3 * time.Minute)
+	h.signups.drop(ana)
+	h.arrange(t)
+
+	h.later(9 * time.Minute)
+	h.arrange(t)
+
+	if got := h.texts.to("5125550101"); len(got) != 1 {
+		t.Fatalf("Damien was texted %q before his car had been quiet for ten minutes", got)
+	}
+
+	h.later(time.Minute)
+	h.arrange(t)
+	h.later(time.Hour)
+	h.arrange(t)
+
+	if got := h.texts.to("5125550101"); len(got) != 2 || !strings.Contains(got[1], "your car now: Luis, (512) 555-0104. 2 seats left.") {
+		t.Errorf("Damien was texted %q, want one summary with Luis", got)
+	}
+}
+
+// A rider with no car is told so once, with their link, and not again on
+// every pass.
+func TestAWaitingRiderIsToldOnceWithTheirLink(t *testing.T) {
+	h := newHarness(t)
+
+	ana := h.signups.add(t, h.f, "Ana", "5125550103", "need", 0)
+	h.arrange(t)
+	h.arrange(t)
+
+	got := h.texts.to("5125550103")
+	if len(got) != 1 || !strings.Contains(got[0], "every car is full") ||
+		!strings.Contains(got[0], "https://f.schoenstatt.test"+h.b.Link(ana)) {
+		t.Errorf("Ana was texted %q, want once that she is waiting, with her link", got)
+	}
+}
+
+// An organiser can send a driver their summary again.
+func TestAnOrganiserTextsADriverTheirCarAgain(t *testing.T) {
+	h := newHarness(t)
+
+	damien := h.signups.add(t, h.f, "Damien", "5125550101", "drive", 2)
+	h.signups.add(t, h.f, "Ana", "5125550103", "need", 0)
+	h.arrange(t)
+
+	if err := h.b.RetextDriver(t.Context(), h.f, damien); err != nil {
+		t.Fatalf("RetextDriver: %v", err)
+	}
+
+	if got := h.texts.to("5125550101"); len(got) != 2 || !strings.Contains(got[1], "your car now: Ana") {
+		t.Errorf("Damien was texted %q", got)
 	}
 }
