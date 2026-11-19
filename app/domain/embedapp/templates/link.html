@@ -6,23 +6,38 @@
 
 {{if .Sent}}
 <div class="summary" role="status">
-<p>If <strong>{{.Email}}</strong> has answered this form, a message with the
+{{with .Email}}<p>If <strong>{{.}}</strong> has answered this form, a message with the
 link to those answers is on its way to it. It can take a few minutes; if
 nothing arrives, look in the spam folder, or check the address and ask
-again.</p>
+again.</p>{{end}}
+{{with .Phone}}<p>If <strong>{{.}}</strong> signed up for this form, a text with the
+link to your ride page is on its way to it. If nothing arrives in a few
+minutes, check the number and ask again.</p>{{end}}
 </div>
 {{else}}
-<p class="intro">Already answered, and need the link to change your answers?
-Type the email address you gave, and we will send it there.</p>
+<p class="intro">Already signed up, and need your link?
+{{if and .ByEmail .ByPhone}}Give the email address or the mobile number you
+gave, and we will send it there.{{else if .ByPhone}}Give the mobile number you
+gave, and we will text you the link to your ride page, where you can change
+your ride or tell us you can't come.{{else}}Type the email address you gave,
+and we will send the link to change your answers there.{{end}}</p>
 
 {{with .Problem}}<div class="summary" role="alert"><p>{{.}}</p></div>{{end}}
 
 <form method="post" action="/f/{{.Form.ID}}/link">
 <input type="hidden" name="_grant" value="{{.Grant}}">
+{{if .ByEmail}}
 <div class="field">
 <label for="email">Your email address</label>
-<input id="email" type="email" name="email" value="{{.Email}}" autocomplete="email" required>
+<input id="email" type="email" name="email" value="{{.Email}}" autocomplete="email"{{if not .ByPhone}} required{{end}}>
 </div>
+{{end}}
+{{if .ByPhone}}
+<div class="field">
+<label for="phone">Your mobile number</label>
+<input id="phone" type="tel" name="phone" value="{{.Phone}}" autocomplete="tel" inputmode="tel"{{if not .ByEmail}} required{{end}}>
+</div>
+{{end}}
 <button class="go" type="submit" data-busy="Sending…">Send me the link</button>
 </form>
 {{end}}

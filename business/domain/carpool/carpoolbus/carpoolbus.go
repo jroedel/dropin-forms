@@ -102,6 +102,25 @@ type Ride struct {
 // Waiting reports whether the rider has no car yet.
 func (r Ride) Waiting() bool { return r.Driver.Zero() }
 
+// Out is the choice of somebody who said on their ride page that they are not
+// coming. It is not one of the form's options: nobody signs up to not come.
+const Out = "out"
+
+// Choice is what somebody said on their own ride page: one of the carpool's
+// three choices, or [Out]. It takes the place of their carpool answer until
+// they change their answers again, so the latest word is the one that counts.
+//
+// Kept apart from the answers rather than written into them. A paid form's
+// answers cannot be changed at all, and the record of what somebody submitted
+// is the office's, not this page's to rewrite.
+type Choice struct {
+	Sub    types.ID
+	Form   types.Slug
+	Choice string
+	Seats  int
+	At     time.Time
+}
+
 // Storer is what this package needs from storage.
 type Storer interface {
 	// ByForm lists a form's rides, waiting ones included, oldest first.
@@ -124,16 +143,24 @@ type Storer interface {
 
 	// Texted records who was told and what went wrong, if anything.
 	Texted(ctx context.Context, rider types.ID, riderAt, driverAt time.Time, problem string) error
+
+	// Choices lists what a form's people said on their ride pages, and
+	// SetChoice records what one of them said, in place of anything before.
+	Choices(ctx context.Context, form types.Slug) ([]Choice, error)
+	SetChoice(ctx context.Context, c Choice) error
 }
 
-// Submissions is what this package reads about the people in a carpool.
+// Submissions is what this package reads about the people in a carpool: a
+// form's, and the one a ride link names.
 type Submissions interface {
 	ByForm(ctx context.Context, form types.Slug) ([]submissionbus.Submission, error)
+	ByID(ctx context.Context, id types.ID) (submissionbus.Submission, error)
 }
 
 // Forms is every form being served, for the timer to find the carpools in.
 type Forms interface {
 	All() []formbus.Form
+	ByID(slug types.Slug) (formbus.Form, error)
 }
 
 // Texter sends one text, and is foundation/twilio's Sender. Nil means texting
@@ -161,6 +188,13 @@ type Config struct {
 	Texter Texter
 	Office Office
 
+	// RideKey signs the links to people's ride pages, and BaseURL is the
+	// public surface those pages are on, for the links in texts. Without
+	// either there are no ride links: the cars are still arranged and
+	// texted, as before there were pages to link to.
+	RideKey RideKey
+	BaseURL string
+
 	// Now is the clock. Nil means time.Now.
 	Now func() time.Time
 }
@@ -174,6 +208,11 @@ type Business struct {
 	// them, and the store's seat check stops the second only if the cars
 	// differ.
 	mu sync.Mutex
+
+	// sent is when each form and number was last sent its ride links again,
+	// so the page that asks cannot be used to text somebody over and over.
+	sentMu sync.Mutex
+	sent   map[string]time.Time
 }
 
 // NewBusiness constructs one.
@@ -189,24 +228,49 @@ func NewBusiness(cfg Config) (*Business, error) {
 		cfg.Now = time.Now
 	}
 
-	return &Business{cfg: cfg}, nil
+	return &Business{cfg: cfg, sent: map[string]time.Time{}}, nil
 }
 
 // Texting reports whether texts are sent at all.
 func (b *Business) Texting() bool { return b.cfg.Texter != nil }
 
 // person is one submission's part in the carpool.
+//
+// Choice is what counts now: their answer, or what they said on their ride
+// page since. Answered is what their answers say, and is empty for somebody
+// who did not answer the carpool question at all -- who still counts, and
+// can still ask for a ride from their page.
 type person struct {
 	sub submissionbus.Submission
 	formbus.Carpooler
+
+	Answered string
+	Said     bool
 }
+
+// out reports whether this person said they are not coming.
+func (p person) out() bool { return p.Choice == Out }
 
 // people reads the form's carpool from its submissions: everybody who counts,
 // by submission, and the drivers and riders among them in sign-up order.
+//
+// Everybody who counts is in the map, including those with no carpool answer
+// and those who said they are not coming; only drivers with seats and riders
+// are in the two lists.
 func (b *Business) people(ctx context.Context, f formbus.Form) (map[types.ID]person, []person, []person, error) {
 	subs, err := b.cfg.Submissions.ByForm(ctx, f.ID)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("reading the submissions: %w", err)
+	}
+
+	choices, err := b.cfg.Store.Choices(ctx, f.ID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	said := make(map[types.ID]Choice, len(choices))
+	for _, c := range choices {
+		said[c.Sub] = c
 	}
 
 	everyone := make(map[types.ID]person, len(subs))
@@ -217,12 +281,20 @@ func (b *Business) people(ctx context.Context, f formbus.Form) (map[types.ID]per
 			continue
 		}
 
-		c, ok := f.Carpooler(s.Answers)
-		if !ok {
-			continue
+		c, _ := f.Carpooler(s.Answers)
+		p := person{sub: s, Carpooler: c, Answered: c.Choice}
+
+		// What they said on their page counts over their answers, unless they
+		// changed their answers after saying it: the latest word wins. A
+		// submission's UpdatedAt is when its answers were last given.
+		if ch, ok := said[s.ID]; ok && !s.UpdatedAt.After(ch.At) {
+			p.Choice, p.Seats, p.Said = ch.Choice, 0, true
+
+			if ch.Choice == formbus.CarpoolDrive {
+				p.Seats = ch.Seats
+			}
 		}
 
-		p := person{sub: s, Carpooler: c}
 		everyone[s.ID] = p
 
 		switch {
@@ -250,6 +322,10 @@ type Car struct {
 	Driver formbus.Carpooler
 	ID     types.ID
 	Riders []Seat
+
+	// Said is whether the driver's seats came from their ride page rather
+	// than their answers.
+	Said bool
 }
 
 // Free is how many seats are left.
@@ -260,6 +336,10 @@ type Seat struct {
 	Rider formbus.Carpooler
 	ID    types.ID
 	Ride  Ride
+
+	// Said is whether this came from their ride page rather than their
+	// answers.
+	Said bool
 }
 
 // Plan is a form's carpool as it stands.
@@ -269,6 +349,13 @@ type Plan struct {
 
 	// OwnWay is how many have their own ride.
 	OwnWay int
+
+	// Coming is everybody who counts on the form and has not said they are
+	// not coming, whatever their carpool answer -- the number the office
+	// plans the day around. NotComing is the ones who said so on their ride
+	// page, by submission.
+	Coming    int
+	NotComing map[types.ID]bool
 }
 
 // PlanOf reads a form's carpool as it stands, for the office page. It
@@ -284,12 +371,12 @@ func (b *Business) PlanOf(ctx context.Context, f formbus.Form) (Plan, error) {
 		return Plan{}, fmt.Errorf("reading the rides: %w", err)
 	}
 
-	var plan Plan
+	plan := Plan{NotComing: map[types.ID]bool{}}
 
 	at := make(map[types.ID]int, len(drivers))
 	for i, d := range drivers {
 		at[d.sub.ID] = i
-		plan.Cars = append(plan.Cars, Car{Driver: d.Carpooler, ID: d.sub.ID})
+		plan.Cars = append(plan.Cars, Car{Driver: d.Carpooler, ID: d.sub.ID, Said: d.Said})
 	}
 
 	for _, r := range rides {
@@ -298,7 +385,7 @@ func (b *Business) PlanOf(ctx context.Context, f formbus.Form) (Plan, error) {
 			continue
 		}
 
-		seat := Seat{Rider: p.Carpooler, ID: r.Rider, Ride: r}
+		seat := Seat{Rider: p.Carpooler, ID: r.Rider, Ride: r, Said: p.Said}
 
 		if i, ok := at[r.Driver]; ok && !r.Waiting() {
 			plan.Cars[i].Riders = append(plan.Cars[i].Riders, seat)
@@ -307,10 +394,17 @@ func (b *Business) PlanOf(ctx context.Context, f formbus.Form) (Plan, error) {
 		}
 	}
 
-	for _, p := range everyone {
-		if p.Choice == formbus.CarpoolHave {
+	for id, p := range everyone {
+		switch {
+		case p.out():
+			plan.NotComing[id] = true
+
+			continue
+		case p.Choice == formbus.CarpoolHave:
 			plan.OwnWay++
 		}
+
+		plan.Coming++
 	}
 
 	return plan, nil

@@ -1,0 +1,128 @@
+{{define "title"}}{{.Form.Title}}: your ride{{end}}
+
+{{define "content"}}
+<div id="dropin-root" data-parent-origin="" class="form-shell ride">
+<h1>{{.Form.Title}}</h1>
+<p class="intro">Your ride{{with .Name}}, {{.}}{{end}}. Keep this page: it is
+where to change your ride, or to tell us you can't come.</p>
+
+{{with .Done}}<div class="outcome-line" role="status"><p>{{.}}</p></div>{{end}}
+{{with .Problem}}<div class="summary" role="alert"><p>{{.}}</p></div>{{end}}
+
+{{/* ---- driving ---- */}}
+{{if .Driving}}
+<h2>You're driving</h2>
+{{with .Car}}
+<p>{{len .Riders}} of {{.Seats}} {{if eq .Seats 1}}seat{{else}}seats{{end}} taken.</p>
+{{if .Riders}}
+<ul class="riders">
+{{range .Riders}}
+<li><strong>{{.Name}}</strong>{{with .Phone}}, {{.}}{{end}}
+{{with .Tel}}<span class="reach"><a href="sms:{{.}}">Text</a> · <a href="tel:{{.}}">Call</a></span>{{end}}</li>
+{{end}}
+</ul>
+<p class="note">Arrange where and when to meet with them yourself: text or
+call each of them from your phone.</p>
+{{else}}
+<p>Nobody is riding with you yet. We'll text you when somebody is.</p>
+{{end}}
+{{end}}
+
+<form method="post" action="/r/{{.Token}}" class="ride-action">
+<input type="hidden" name="choice" value="drive">
+<div class="field">
+<label for="seats">How many people can you take?</label>
+<input id="seats" type="number" name="seats" value="{{.Seats}}" min="1" max="{{.MaxSeats}}" step="1" inputmode="numeric" required>
+</div>
+<button class="go quiet" type="submit">Change seats</button>
+</form>
+
+<form method="post" action="/r/{{.Token}}" class="ride-action">
+<input type="hidden" name="choice" value="have">
+<button class="go quiet" type="submit">I can't drive after all</button>
+<p class="note">Anybody riding with you is put in another car, or waits for one.</p>
+</form>
+{{end}}
+
+{{/* ---- riding ---- */}}
+{{if .Riding}}
+{{with .Car}}
+<h2>You're riding with {{.Driver}}</h2>
+<p>{{.Phone}}{{with .Tel}} <span class="reach"><a href="sms:{{.}}">Text</a> · <a href="tel:{{.}}">Call</a></span>{{end}}</p>
+{{$others := len .Riders}}
+{{if gt $others 1}}<p>Riders in this car: {{range $i, $r := .Riders}}{{if $i}}, {{end}}{{$r.Name}}{{end}}.</p>{{end}}
+{{else}}
+<h2>Waiting for a car</h2>
+<p>Every car is full right now. We'll text you as soon as there's a seat for
+you{{if .Room}}, or choose one of these{{end}}.</p>
+{{end}}
+
+{{if .Room}}
+<h3>{{if .Car}}Rather go with somebody else?{{else}}Cars with room{{end}}</h3>
+<ul class="room">
+{{range .Room}}
+<li>
+<form method="post" action="/r/{{$.Token}}">
+<input type="hidden" name="driver" value="{{.ID}}">
+<span>{{.Driver}}, {{.Free}} {{if eq .Free 1}}seat{{else}}seats{{end}} left</span>
+<button class="go quiet" type="submit">Ride with {{.Driver}}</button>
+</form>
+</li>
+{{end}}
+</ul>
+{{end}}
+
+<form method="post" action="/r/{{.Token}}" class="ride-action">
+<input type="hidden" name="choice" value="have">
+<button class="go quiet" type="submit">I have another ride</button>
+</form>
+{{end}}
+
+{{/* ---- their own way, or not said ---- */}}
+{{if or .OwnWay .NotSaid .NotGoing}}
+{{if .OwnWay}}<h2>You're getting there your own way</h2>{{end}}
+{{if .NotSaid}}<h2>You haven't asked for a ride</h2>{{end}}
+{{if .NotGoing}}<h2>You told us you're not coming</h2>
+<p>The organisers know. Changed your mind? Tell us how you're getting there.</p>{{end}}
+
+<form method="post" action="/r/{{.Token}}" class="ride-action">
+<input type="hidden" name="choice" value="need">
+<button class="go quiet" type="submit">I need a ride</button>
+</form>
+
+<form method="post" action="/r/{{.Token}}" class="ride-action">
+<input type="hidden" name="choice" value="drive">
+<div class="field">
+<label for="seats">I can drive. How many people can you take?</label>
+<input id="seats" type="number" name="seats" value="{{.Seats}}" min="1" max="{{.MaxSeats}}" step="1" inputmode="numeric" required>
+</div>
+<button class="go quiet" type="submit">I can drive</button>
+</form>
+
+{{if .NotGoing}}
+<form method="post" action="/r/{{.Token}}" class="ride-action">
+<input type="hidden" name="choice" value="have">
+<button class="go quiet" type="submit">I have my own way there</button>
+</form>
+{{end}}
+{{end}}
+
+{{/* Not coming is behind a second press: it tells the organisers, and a
+     thumb on a phone should not do that by brushing a button. <details>
+     needs no script, which this page has none of. */}}
+{{if not .NotGoing}}
+<details class="not-coming">
+<summary>I'm not coming</summary>
+<p>We'll take you out of the carpool and tell the organisers. Your sign-up
+stays with them; ask them if anything else needs undoing.</p>
+<form method="post" action="/r/{{.Token}}">
+<input type="hidden" name="choice" value="out">
+<button class="go" type="submit">Yes, I'm not coming</button>
+</form>
+</details>
+{{end}}
+
+<p class="note">We text you about your ride from our number. Reply STOP to
+stop the texts.</p>
+</div>
+{{end}}

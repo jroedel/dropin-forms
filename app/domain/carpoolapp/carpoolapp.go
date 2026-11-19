@@ -91,9 +91,10 @@ type view struct {
 	Texting bool
 	CanMove bool
 
-	Cars    []carView
-	Waiting []riderView
-	OwnWay  int
+	Cars      []carView
+	Waiting   []riderView
+	OwnWay    int
+	NotComing int
 
 	Done    string
 	Problem string
@@ -106,6 +107,10 @@ type carView struct {
 	Seats  int
 	Free   int
 	Riders []riderView
+
+	// Said is a driver whose seats came from their ride page rather than
+	// their answers, which is why the two may disagree.
+	Said bool
 }
 
 type riderView struct {
@@ -115,6 +120,10 @@ type riderView struct {
 	Phone   string
 	Problem string
 	Texted  bool
+
+	// Said is a rider whose ride came from their own page: a car they chose,
+	// or needing a ride after answering otherwise.
+	Said bool
 
 	// MoveTo is the other cars with a seat free.
 	MoveTo []carView
@@ -143,8 +152,10 @@ func (a app) page(w http.ResponseWriter, r *http.Request, status int, done, prob
 		Texting: a.cfg.Carpool.Texting(),
 		CanMove: a.admin(r, f),
 		OwnWay:  plan.OwnWay,
-		Done:    done,
-		Problem: problem,
+
+		NotComing: len(plan.NotComing),
+		Done:      done,
+		Problem:   problem,
 	}
 
 	for _, c := range plan.Cars {
@@ -154,6 +165,7 @@ func (a app) page(w http.ResponseWriter, r *http.Request, status int, done, prob
 			Phone:  c.Driver.Phone.National(),
 			Seats:  c.Driver.Seats,
 			Free:   c.Free(),
+			Said:   c.Said,
 		})
 	}
 
@@ -170,6 +182,7 @@ func (a app) page(w http.ResponseWriter, r *http.Request, status int, done, prob
 				Phone:   s.Rider.Phone.National(),
 				Problem: s.Ride.Problem,
 				Texted:  !s.Ride.RiderTexted.IsZero(),
+				Said:    s.Said || s.Ride.PlacedBy == s.ID,
 			}
 
 			for _, c := range v.Cars {

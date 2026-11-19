@@ -19,14 +19,21 @@ import (
 // organisers, which is most of what it is for. Texting is the part that is
 // switched by the configuration. The organisers are told about riders left
 // without a car by email, through the same notifier as submissions.
+//
+// The links to people's ride pages are signed with a key derived from the
+// answer-link key, and point at the public surface: without
+// server.embed_base_url the pages still work from the thank-you page, but no
+// text can carry a link to one.
 func newCarpool(cfg config, log *slog.Logger, db *sql.DB, forms *formbus.Business, subs *submissionbus.Business,
-	office *notifybus.Business) (*carpoolbus.Business, error) {
+	office *notifybus.Business, answers submissionbus.AnswerKey) (*carpoolbus.Business, error) {
 	c := carpoolbus.Config{
 		Log:         log,
 		Store:       carpooldb.NewStore(db),
 		Submissions: subs,
 		Forms:       forms,
 		Office:      office,
+		RideKey:     carpoolbus.NewRideKey(answers),
+		BaseURL:     cfg.Server.EmbedBaseURL,
 	}
 
 	// Assigned only when there is one, so that a nil *twilio.Sender is not

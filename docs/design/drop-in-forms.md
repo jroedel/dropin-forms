@@ -2750,9 +2750,59 @@ and sending a text again are behind admin, because both text people on the
 form's behalf. An organiser's move is kept unless the car later loses the
 seat.
 
+**Each person has a ride page,** at `/r/{token}` on the public surface (#95).
+The first live test showed there was no way out: the only way back to one's
+answers was the change link, which exists only on a free form with a changes
+date, and arrives only by email. A carpool form usually has neither. And a
+rider who wanted a different car could get one only by unregistering and
+signing up again until the timer put them there.
+
+- **The link** is the submission's 16 bytes and a 12-byte MAC, 38
+  characters, so it fits in a text. The form is found from the submission.
+  Its key is derived from the answer-link key under its own label
+  (`AnswerKey.Derive`), so it needs no new configuration. Holding it is the
+  credential, as with the change link, and hiding the submission ends it.
+  There is no grant on the page's forms: the token is the secret a forging
+  site cannot know, and the POST is behind the same-origin check.
+- **Where people get it:** on the thank-you page, for every choice, own way
+  included. And on the "send me my link again" page, which on a carpool form
+  asks for the mobile number and texts the link, at most once per number in
+  ten minutes, so the page cannot be used to text somebody over and over. On
+  a paid form, the page after payment does not know the submission, so only
+  the texts carry it.
+- **What a rider can do:**
+  - choose any other car with a seat free, as often as they like (the
+    driver joined and the driver left are texted, the rider is not, since
+    they are looking at the page);
+  - say they have another ride, or that they aren't coming.
+- **What a driver can do:** see their riders' names and numbers, with
+  tap-to-text and tap-to-call links, change their seats, or stop driving.
+  There is no "message all my riders" from our number. Arranging a pickup is
+  a conversation we cannot carry, since we receive no replies, and a
+  driver's own words would go out under the registered campaign.
+- **What they say is kept beside the answers, not in them,** in
+  `carpool_choices`. A paid form's answers cannot be changed, and what was
+  submitted is the office's record. `people` reads a choice in place of the
+  answer unless the answers were changed after it, so the latest word counts.
+  Arrange needs no new logic: every button is a choice it already handles,
+  and "not coming" is the choice `out`, which counts like a hidden
+  submission.
+- **"Not coming" leaves the sign-up alone,** by decision. It frees the seat
+  or the car and emails the office, which decides whether to hide or refund
+  it. A tap on a phone must not be able to undo a paid registration. The
+  sign-up still counts in the totals, the sheet and capacity until then. The
+  results list marks it, and the carpool summary leaves it out of "coming".
+
+**The results page shows the carpool** beneath the answers, to anybody who
+reads results:
+- who is coming (everybody who counts, less those not coming), driving,
+  riding and on their own way;
+- each car with phone numbers, and who is waiting.
+
+Moving somebody stays on the carpool page, behind admin.
+
 **What it does not do yet:** pick-up places (everybody is assumed to leave
-from about the same place), separate cars there and back, and a rider
-choosing their driver -- which would put drivers' names on a public page.
+from about the same place), and separate cars there and back.
 
 ## 10. Dependencies
 
